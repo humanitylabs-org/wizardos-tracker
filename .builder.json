@@ -1,0 +1,6 @@
+{
+  "request": "Board: a project board for Wizard development with GitHub as its only backend. Humans manage Goals and accept Bugs; agents write PRs. Each person connects their own GitHub token.",
+  "template": "hello-wizard",
+  "state": "local_draft",
+  "name": "Board"
+}

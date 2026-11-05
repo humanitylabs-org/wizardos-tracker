@@ -1,0 +1,29 @@
+{
+  "name": "Board",
+  "id": "board",
+  "wizard_type": "service",
+  "available": true,
+  "short_desc": "Project board for Wizard development on GitHub: Goals and Bugs, humans decide, agents write PRs.",
+  "author": "Humanity Labs",
+  "port": 18884,
+  "categories": [
+    "utilities"
+  ],
+  "description": "Goals and Bugs across a GitHub organisation. Each person connects their own GitHub token; add goals, report and accept bugs, tick done-lists and comment without opening GitHub. Agents get narrow MCP tools.",
+  "tipi_version": 1,
+  "version": "0.1.0",
+  "source": "https://github.com/humanitylabs-org/wizard-board",
+  "exposable": false,
+  "supported_architectures": [
+    "amd64",
+    "arm64"
+  ],
+  "created_at": 1793845776995,
+  "updated_at": 1793845776995,
+  "dynamic_config": true,
+  "min_tipi_version": "4.8.0",
+  "uid": 1000,
+  "gid": 1000,
+  "form_fields": [],
+  "no_gui": false
+}
