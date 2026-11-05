@@ -10,7 +10,7 @@
     "utilities"
   ],
   "description": "Goals and Bugs across a GitHub organisation. Each person connects their own GitHub token; add goals, report and accept bugs, tick done-lists and comment without opening GitHub. Agents get narrow MCP tools.",
-  "tipi_version": 1,
+  "tipi_version": 2,
   "version": "0.1.0",
   "source": "https://github.com/humanitylabs-org/wizard-board",
   "exposable": false,
@@ -19,7 +19,7 @@
     "arm64"
   ],
   "created_at": 1793845776995,
-  "updated_at": 1793845776995,
+  "updated_at": 1793852257514,
   "dynamic_config": true,
   "min_tipi_version": "4.8.0",
   "uid": 1000,
