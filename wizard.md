@@ -4,8 +4,8 @@ id: board
 name: Board
 type: service
 category: app
-version: 0.1.0
-summary: Project board for Wizard development on GitHub. Humans set Goals and accept Bugs; agents write the PRs.
+version: 0.2.0
+summary: Team board for Wizard development on GitHub. Goals, things to test, and open issues in three tabs.
 tags: [developer, productivity]
 license: GPL-3.0-only
 source: https://github.com/humanitylabs-org/wizard-board
@@ -45,6 +45,6 @@ Humans manage the work; agents write the PRs. Board shows two kinds of GitHub is
 
 Each person connects their own GitHub account with a personal access token. The token is kept on the box only (file mode 0600), validated with `GET /user`, never returned to the view or MCP. Board sees exactly what that token can see. GitHub is the only backend: the app keeps no copy of issues, only a 60-second read cache.
 
-In the app: add a goal, report a bug, accept a bug, close/reopen, tick done-list items and comment, without opening GitHub. Agents use the MCP tools (`board_list`, `board_get`, `board_report_bug`, `board_comment`; `board_add_goal`, `board_accept_bug`, `board_close`, `board_reopen` only on a human's explicit request, and never to close or reopen goals). The Boxes panel shows wizard-ux `main`; this box's own version is marked coming soon because it is outside the app's container.
+In the app (0.2): three tabs. **Goals** (open issues labelled `goal`: owner, progress from linked issues, status); **To test** (open issues labelled `ready-to-test` that someone else wrote: what the builder `wizardosbuilder` says to check, the PR, and Works / Doesn't work, which comment, drop `ready-to-test` and on Works add `approved`, never close); **Issues** (open bugs and unlabelled issues, filter by repo). One **+ New** button adds an Issue (label `bug`) or, for people listed in `GOAL_AUTHORS` (default `jdefleur`), a Goal. Screenshots wait for `humanitylabs-org/wizard-issue-media`. Agents use the MCP tools (`board_list`, `board_get`, `board_report_bug`, `board_comment`; `board_add_goal`, `board_accept_bug`, `board_close`, `board_reopen` only on a human's explicit request, and never to close or reopen goals).
 
 Built from the hello-wizard template (stdlib Python, vanilla view, shared Wizard kit and `/wizard-os-home/core/app-client.js`).

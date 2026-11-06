@@ -20,10 +20,16 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'board'
-VERSION = '0.1.0'
+VERSION = '0.2.0'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
+# Only these people may open Goals in the app (GitHub logins, comma separated).
+GOAL_AUTHORS = {x.strip().lower() for x in os.environ.get('GOAL_AUTHORS', 'jdefleur').split(',') if x.strip()}
+# The builder agent's GitHub account: it labels finished work ready-to-test and says what to check.
+BUILDER = os.environ.get('BOARD_BUILDER', 'wizardosbuilder').strip().lower()
+DEFAULT_REPO = os.environ.get('BOARD_DEFAULT_REPO', 'wizard-ux')
+MEDIA_REPO = os.environ.get('BOARD_MEDIA_REPO', 'humanitylabs-org/wizard-issue-media')
 CACHE_SECONDS = 60
 STATIC_TYPES = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml'}
 NAME = re.compile(r'^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,99})$')
@@ -224,7 +230,18 @@ def status(person=None):
     acct = a['people'].get(person_key(person))
     return {'connected': bool(acct and acct.get('token')), 'account': public_account(acct) if acct else None,
             'org': settings()['org'], 'token_url': TOKEN_URL,
-            'agent_account': (a['people'].get(a.get('default')) or {}).get('login'), 'version': VERSION}
+            'agent_account': (a['people'].get(a.get('default')) or {}).get('login'), 'version': VERSION,
+            'can_goal': bool(acct and (acct.get('login') or '').lower() in GOAL_AUTHORS),
+            'default_repo': DEFAULT_REPO, 'screenshots': bool(acct and acct.get('token') and _media_ready(acct['token']))}
+
+
+def _media_ready(token):
+    """Screenshots need the shared media repo. Board never creates it; it only checks it exists."""
+    try:
+        gh(token, 'GET', '/repos/' + MEDIA_REPO)
+        return True
+    except Problem:
+        return False
 
 
 def set_org(args):
@@ -597,6 +614,182 @@ def avatar(person):
     return data, kind
 
 
+
+# ---------- the three tabs (Goals, To test, Issues) ----------
+
+VIEW_FIELDS = (' number title url body createdAt updatedAt author { login } assignees(first: 1) { nodes { login } }'
+               ' repository { nameWithOwner } labels(first: 20) { nodes { name } }'
+               ' comments(last: 20) { nodes { author { login } body createdAt } }'
+               ' timelineItems(itemTypes: [CROSS_REFERENCED_EVENT, CONNECTED_EVENT], last: 60) { nodes {'
+               '  ... on CrossReferencedEvent { source { __typename'
+               '    ... on Issue { number url state repository { nameWithOwner } }'
+               '    ... on PullRequest { number url state title repository { nameWithOwner } } } }'
+               '  ... on ConnectedEvent { subject { __typename ... on PullRequest { number url state title repository { nameWithOwner } } } }'
+               ' } }')
+VIEW = 'query($q: String!) { search(query: $q, type: ISSUE, first: 80) { issueCount nodes { ... on Issue {' + VIEW_FIELDS + ' } } } }'
+VIEW_ONE = 'query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { issue(number: $n) {' + VIEW_FIELDS + ' } } }'
+_tested = {}   # (token id, issue id) -> time: tested here, hidden from To test while search catches up
+_made = {}     # (token id, issue id) -> (time, tab, item): created here, shown while search catches up
+
+
+def _plain(text, limit):
+    """Markdown-ish text to one short plain paragraph."""
+    t = re.sub(r'```.*?```', ' ', text or '', flags=re.S)
+    t = re.sub(r'<!--.*?-->', ' ', t, flags=re.S)
+    t = re.sub(r'!\[[^\]]*\]\([^)]*\)', ' ', t)
+    t = re.sub(r'\[([^\]]+)\]\([^)]*\)', r'\1', t)
+    t = re.sub(r'^\s{0,3}(#{1,6}|>|[-*+]\s+\[[ xX]\]|[-*+]|\d+\.)\s*', '', t, flags=re.M)
+    t = re.sub(r'[*_`]{1,3}', '', t)
+    t = re.sub(r'\s+', ' ', t).strip()
+    return t if len(t) <= limit else t[:limit - 1].rsplit(' ', 1)[0] + '…'
+
+
+def _refs(node):
+    """Issues and PRs that link to or mention this issue (deduplicated, not itself)."""
+    me, seen = node.get('url'), {}
+    for t in (node.get('timelineItems') or {}).get('nodes') or []:
+        x = (t or {}).get('source') or (t or {}).get('subject')
+        if x and x.get('url') and x['url'] != me:
+            seen[x['url']] = {'kind': 'pr' if x.get('__typename') == 'PullRequest' else 'issue', 'number': x.get('number'),
+                              'url': x['url'], 'state': (x.get('state') or '').lower(), 'title': x.get('title'),
+                              'repo': (x.get('repository') or {}).get('nameWithOwner')}
+    return list(seen.values())
+
+
+def _card(node, tab):
+    labels = [l['name'].lower() for l in (node.get('labels') or {}).get('nodes') or []]
+    author = (node.get('author') or {}).get('login')
+    assignee = next((a.get('login') for a in (node.get('assignees') or {}).get('nodes') or [] if a), None)
+    repo = node['repository']['nameWithOwner']
+    out = {'id': f"{repo}#{node['number']}", 'repo': repo, 'number': node['number'], 'title': node.get('title'),
+           'url': node.get('url'), 'author': author, 'updated_at': node.get('updatedAt'),
+           'kind': 'goal' if 'goal' in labels else 'bug' if 'bug' in labels else 'issue',
+           'waiting': 'ready-to-test' in labels, 'approved': 'approved' in labels}
+    refs = _refs(node)
+    if tab == 'goals':
+        linked = [r for r in refs if r['kind'] == 'issue']  # issues that link to or mention the goal
+        done = sum(1 for r in linked if r['state'] in ('closed', 'merged'))
+        tasks = tasks_of(node.get('body'))
+        if linked:
+            prog = {'done': done, 'total': len(linked), 'of': 'linked issues'}
+        elif tasks:
+            prog = {'done': sum(t['done'] for t in tasks), 'total': len(tasks), 'of': 'done-list items'}
+        else:
+            prog = {'done': 0, 'total': 0, 'of': ''}
+        status = ('ready' if 'ready-to-test' in labels else 'done' if prog['total'] and prog['done'] == prog['total']
+                  else 'doing' if prog['done'] or linked else 'new')
+        out.update(owner=assignee or author, progress=prog, status=status)
+    elif tab == 'test':
+        said = [c for c in (node.get('comments') or {}).get('nodes') or []
+                if ((c.get('author') or {}).get('login') or '').lower() == BUILDER]
+        out['check'] = re.sub(r'^(ready (to|for) test(ing)?)[.:!\s—-]*', '', _plain(said[-1]['body'], 320), flags=re.I) if said else ''
+        out['check_from'] = 'builder' if said else ''
+        if not said:
+            out['check'] = _plain(node.get('body'), 220)
+        prs = [r for r in refs if r['kind'] == 'pr']
+        pr = next((r for r in prs if r['state'] == 'open'), None) or next((r for r in prs if r['state'] == 'merged'), None) or (prs[0] if prs else None)
+        out['pr'] = {'url': pr['url'], 'number': pr['number'], 'repo': pr['repo']} if pr else None
+    return out
+
+
+def board_view(person, args):
+    """One tab of the board, already filtered for the person looking."""
+    _, acct = account_for(person)
+    tab = args.get('tab') or 'goals'
+    if tab not in ('goals', 'test', 'issues'):
+        raise Problem(400, 'tab must be goals, test or issues.')
+    org = settings()['org']
+    repo = _repo(org, args.get('repo'))
+    login = (acct.get('login') or '').strip()
+    scope = 'repo:' + repo if repo else 'org:' + org
+    q = {'goals': f'{scope} is:issue is:open label:goal',
+         'test': f'{scope} is:issue is:open label:ready-to-test' + (f' -author:{login}' if NAME.match(login) else ''),
+         'issues': f'{scope} is:issue is:open -label:goal'}[tab] + ' sort:updated-desc'
+    if args.get('refresh'):
+        _forget(acct['token'])
+    found = ((graphql(acct['token'], VIEW, {'q': q}).get('data') or {}).get('search') or {})
+    nodes = [n for n in found.get('nodes') or [] if n and n.get('number')]
+    if tab == 'issues':  # bugs and unlabelled issues; ones waiting for someone else's test live in To test
+        def plain_or_bug(n):
+            names = {l['name'].lower() for l in (n.get('labels') or {}).get('nodes') or []}
+            mine = ((n.get('author') or {}).get('login') or '').lower() == login.lower()
+            return names <= {'bug', 'ready-to-test', 'approved', 'accepted'} and ('ready-to-test' not in names or mine)
+        nodes = [n for n in nodes if plain_or_bug(n)]
+    items = [_card(n, tab) for n in nodes]
+    t, now = _tid(acct['token']), time.time()
+    with LOCK:
+        for k in [k for k, v in _tested.items() if now - v > RECENT_SECONDS]:
+            _tested.pop(k, None)
+        for k in [k for k, v in _made.items() if now - v[0] > RECENT_SECONDS]:
+            _made.pop(k, None)
+        hidden = {i for (k, i) in _tested if k == t}
+        made = [v for (k, _), v in _made.items() if k == t and v[1] == tab]
+    if tab == 'test':
+        items = [i for i in items if i['id'] not in hidden]
+    have = {i['id'] for i in items}
+    for _, _, it in made:
+        if it['id'] not in have and (not repo or it['repo'].lower() == repo.lower()):
+            items.insert(0, it)
+    return {'tab': tab, 'org': org, 'repo': repo, 'items': items, 'count': len(items),
+            'more': found.get('issueCount', len(items)) > len(nodes) and tab != 'issues', 'login': login}
+
+
+def _drop_label(acct, full, number, label):
+    try:
+        gh(acct['token'], 'DELETE', f'/repos/{full}/issues/{number}/labels/{label}')
+    except Problem as e:
+        if e.code != 404:  # already gone is fine
+            raise
+
+
+def tested(person, args, works):
+    _, acct = account_for(person)
+    full, number = _target(args)
+    login = acct.get('login') or 'someone'
+    names = [l.get('name', '').lower() for l in _current(acct, full, number).get('labels') or []]
+    if 'ready-to-test' not in names:
+        raise Problem(409, 'This is not waiting for a test any more. Refresh to see the latest.')
+    if works:
+        body = f'Tested: works — @{login}'
+    else:
+        note = _text(args.get('note'), 'What went wrong', 3, 4000)
+        body = f"Tested: doesn't work — @{login}\n\n{note}"
+    gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
+    _drop_label(acct, full, number, 'ready-to-test')
+    if works:
+        gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/labels', {'labels': ['approved']})
+    now = [l.get('name', '').lower() for l in _current(acct, full, number).get('labels') or []]
+    if 'ready-to-test' in now or (works and 'approved' not in now):
+        raise Problem(403, 'Your comment is saved, but GitHub did not change the labels (write access to this repo is needed).')
+    with LOCK:
+        _tested[(_tid(acct['token']), f'{full}#{number}')] = time.time()
+    return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'works': works, 'labels': now, 'saved': True}
+
+
+def new_item(person, args):
+    _, acct = account_for(person)
+    kind = args.get('type') or 'issue'
+    if kind not in ('goal', 'issue'):
+        raise Problem(400, 'type must be goal or issue.')
+    if kind == 'goal' and (acct.get('login') or '').lower() not in GOAL_AUTHORS:
+        raise Problem(403, 'Only goal authors can add Goals. Add it as an Issue instead.')
+    full = _repo(settings()['org'], args.get('repo') or DEFAULT_REPO)
+    title = _text(args.get('title'), 'Title', 3, 200)
+    body = args.get('body') or ''
+    if not isinstance(body, str) or len(body) > 8000:
+        raise Problem(400, 'The description is too long (8000 characters max).')
+    made = _create(acct, full, title, body.strip(), 'goal' if kind == 'goal' else 'bug')
+    owner, name = full.split('/')
+    node = ((graphql(acct['token'], VIEW_ONE, {'o': owner, 'r': name, 'n': made['number']}, cache=False).get('data') or {}).get('repository') or {}).get('issue')
+    tab = 'goals' if kind == 'goal' else 'issues'
+    card = _card(node, tab) if node else {'id': made['id'], 'repo': full, 'number': made['number'], 'title': made['title'], 'url': made['url'],
+                                         'author': made.get('author'), 'kind': 'goal' if kind == 'goal' else 'bug'}
+    if made.get('labelled'):
+        with LOCK:
+            _made[(_tid(acct['token']), card['id'])] = (time.time(), tab, card)
+    return {'tab': tab, 'item': card, 'warning': made.get('warning')}
+
+
 # ---------- MCP ----------
 
 FILTERS = {'repo': {'type': 'string', 'description': 'Repo name in the org, or owner/name.'},
@@ -712,6 +905,8 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if path == '/api/status':
                 return self.send(200, status(self.person()))
+            if path == '/api/view':
+                return self.send(200, board_view(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
             if path == '/api/board':
                 return self.send(200, board_list(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
             if path == '/api/issue':
@@ -766,10 +961,13 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/issue/reopen': lambda: set_state(who, body, 'open'),
                 '/api/issue/task': lambda: set_task(who, body),
                 '/api/issue/comment': lambda: add_comment(who, body),
+                '/api/new': lambda: new_item(who, body),
+                '/api/test/works': lambda: tested(who, body, True),
+                '/api/test/fails': lambda: tested(who, body, False),
             }
             if path not in routes:
                 return self.send(404, {'error': 'Not found.'})
-            return self.send(201 if path in ('/api/goals', '/api/bugs') else 200, routes[path]())
+            return self.send(201 if path in ('/api/goals', '/api/bugs', '/api/new') else 200, routes[path]())
         except Problem as e:
             self.send(e.code, {'error': e.message})
         except (ValueError, TypeError, AttributeError, KeyError):

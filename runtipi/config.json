@@ -3,15 +3,15 @@
   "id": "board",
   "wizard_type": "service",
   "available": true,
-  "short_desc": "Project board for Wizard development on GitHub: Goals and Bugs, humans decide, agents write PRs.",
+  "short_desc": "Team board for Wizard development on GitHub: Goals, To test, Issues.",
   "author": "Humanity Labs",
   "port": 18884,
   "categories": [
     "utilities"
   ],
-  "description": "Goals and Bugs across a GitHub organisation. Each person connects their own GitHub token; add goals, report and accept bugs, tick done-lists and comment without opening GitHub. Agents get narrow MCP tools.",
-  "tipi_version": 2,
-  "version": "0.1.0",
+  "description": "Three tabs over a GitHub organisation: Goals, things to test, and open issues. Each person signs in with their own GitHub token, so everything they add is written by them. Agents get narrow MCP tools.",
+  "tipi_version": 3,
+  "version": "0.2.0",
   "source": "https://github.com/humanitylabs-org/wizard-board",
   "exposable": false,
   "supported_architectures": [

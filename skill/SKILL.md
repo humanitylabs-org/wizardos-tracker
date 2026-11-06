@@ -1,7 +1,7 @@
 ---
 name: board
 description: Use when working with Wizard development Goals and Bugs on GitHub.
-version: 0.1.0
+version: 0.2.0
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -16,6 +16,8 @@ Humans manage the work; agents write the PRs. There are exactly two kinds of Git
 
 - **Goal** (label `goal`): a big outcome with a done-list (markdown task list). **Only humans open and close goals.**
 - **Bug** (label `bug`): small and specific. **Anyone may report.** Agents start work only after a human accepts it (label `accepted`).
+
+People see three tabs in the app: **Goals**, **To test** (issues labelled `ready-to-test`; a person taps Works, which comments, removes `ready-to-test` and adds `approved`, or Doesn't work, which comments what failed and removes `ready-to-test`) and **Issues** (bugs and unlabelled issues). When you finish work, label the issue `ready-to-test` and comment one short paragraph saying what to check; an `approved` label means a human tested it.
 
 ## Rules for agents
 1. Read freely: `board_list` (filters `repo`, `type` all|goal|bug, `state` open|closed, `accepted` any|yes|no) and `board_get` (`issue` "owner/repo#123", or `repo` + `number`).

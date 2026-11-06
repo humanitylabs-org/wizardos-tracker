@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Board",
-    "version": "0.1.0",
+    "version": "0.2.0",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin."
   },
   "paths": {
@@ -727,6 +727,107 @@
           },
           "403": {
             "description": "GitHub token cannot do that"
+          }
+        }
+      }
+    },
+    "/api/view": {
+      "get": {
+        "summary": "One tab, filtered for the signed-in person: goals (label goal, owner + progress), test (label ready-to-test, not yours, with what to check and PR), issues (bug or unlabelled).",
+        "parameters": [
+          {
+            "name": "tab",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "goals",
+                "test",
+                "issues"
+              ]
+            }
+          },
+          {
+            "name": "repo",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "items"
+          }
+        }
+      }
+    },
+    "/api/new": {
+      "post": {
+        "summary": "Add a Goal (goal authors only) or an Issue (label bug). Body: type goal|issue, repo, title, body.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "created"
+          },
+          "403": {
+            "description": "not a goal author"
+          }
+        }
+      }
+    },
+    "/api/test/works": {
+      "post": {
+        "summary": "Comment 'Tested: works \u2014 @login', remove ready-to-test, add approved. Does not close.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "saved"
+          }
+        }
+      }
+    },
+    "/api/test/fails": {
+      "post": {
+        "summary": "Comment what went wrong and remove ready-to-test. Body: repo, number, note.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "saved"
           }
         }
       }
