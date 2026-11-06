@@ -20,7 +20,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'board'
-VERSION = '0.2.0'
+VERSION = '0.3.0'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -684,8 +684,9 @@ def _card(node, tab):
                 if ((c.get('author') or {}).get('login') or '').lower() == BUILDER]
         out['check'] = re.sub(r'^(ready (to|for) test(ing)?)[.:!\s—-]*', '', _plain(said[-1]['body'], 320), flags=re.I) if said else ''
         out['check_from'] = 'builder' if said else ''
-        if not said:
-            out['check'] = _plain(node.get('body'), 220)
+        if not said:  # first real line of the description (not a "Part of #13" link line)
+            lines = [_plain(x, 220) for x in re.split(r'\n\s*\n|\r?\n', node.get('body') or '')]
+            out['check'] = next((x for x in lines if x and not re.fullmatch(r'(part of|closes|fixes|refs?)\s+\S*#\d+\.?', x, re.I)), '')
         prs = [r for r in refs if r['kind'] == 'pr']
         pr = next((r for r in prs if r['state'] == 'open'), None) or next((r for r in prs if r['state'] == 'merged'), None) or (prs[0] if prs else None)
         out['pr'] = {'url': pr['url'], 'number': pr['number'], 'repo': pr['repo']} if pr else None
@@ -732,6 +733,43 @@ def board_view(person, args):
             items.insert(0, it)
     return {'tab': tab, 'org': org, 'repo': repo, 'items': items, 'count': len(items),
             'more': found.get('issueCount', len(items)) > len(nodes) and tab != 'issues', 'login': login}
+
+
+def board_split(person, args):
+    """0.3 screen: Goals or Bugs, split into Ready to test (someone else's, waiting for a test) and In progress."""
+    _, acct = account_for(person)
+    view = args.get('view') or 'goals'
+    if view not in ('goals', 'bugs'):
+        raise Problem(400, 'view must be goals or bugs.')
+    org = settings()['org']
+    login = (acct.get('login') or '').strip()
+    q = f"org:{org} is:issue is:open {'label:goal' if view == 'goals' else '-label:goal'} sort:updated-desc"
+    if args.get('refresh'):
+        _forget(acct['token'])
+    found = ((graphql(acct['token'], VIEW, {'q': q}).get('data') or {}).get('search') or {})
+    nodes = [n for n in found.get('nodes') or [] if n and n.get('number')]
+    t, now = _tid(acct['token']), time.time()
+    with LOCK:
+        hidden = {i for (k, i), v in _tested.items() if k == t and now - v <= RECENT_SECONDS}
+        made = [v for (k, _), v in _made.items() if k == t and now - v[0] <= RECENT_SECONDS and v[1] == ('goals' if view == 'goals' else 'issues')]
+    test, doing = [], []
+    for n in nodes:
+        names = {l['name'].lower() for l in (n.get('labels') or {}).get('nodes') or []}
+        mine = ((n.get('author') or {}).get('login') or '').lower() == login.lower()
+        iid = f"{n['repository']['nameWithOwner']}#{n['number']}"
+        if 'ready-to-test' in names and not mine and iid not in hidden:
+            card = _card(n, 'test')
+            if view == 'goals':
+                card['owner'] = _card(n, 'goals')['owner']
+            test.append(card)
+        else:
+            doing.append(_card(n, 'goals' if view == 'goals' else 'issues'))
+    have = {i['id'] for i in test + doing}
+    for _, _, it in made:
+        if it['id'] not in have:
+            doing.insert(0, it)
+    return {'view': view, 'org': org, 'login': login, 'test': test, 'doing': doing,
+            'more': found.get('issueCount', len(nodes)) > len(nodes)}
 
 
 def _drop_label(acct, full, number, label):
@@ -907,6 +945,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, status(self.person()))
             if path == '/api/view':
                 return self.send(200, board_view(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
+            if path == '/api/split':
+                return self.send(200, board_split(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
             if path == '/api/board':
                 return self.send(200, board_list(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
             if path == '/api/issue':

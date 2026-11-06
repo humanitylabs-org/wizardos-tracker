@@ -1,8 +1,8 @@
 {
   "openapi": "3.0.3",
   "info": {
-    "title": "Board",
-    "version": "0.2.0",
+    "title": "Wizard OS Tracker",
+    "version": "0.3.0",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin."
   },
   "paths": {
@@ -828,6 +828,39 @@
         "responses": {
           "200": {
             "description": "saved"
+          }
+        }
+      }
+    },
+    "/api/split": {
+      "get": {
+        "summary": "One view (goals or bugs) split into Ready to test and In progress",
+        "parameters": [
+          {
+            "name": "view",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "goals",
+                "bugs"
+              ]
+            }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{view, org, login, test: [...], doing: [...], more}"
           }
         }
       }

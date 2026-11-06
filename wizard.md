@@ -1,11 +1,11 @@
 ---
 wizard: 0.2
 id: board
-name: Board
+name: Wizard OS Tracker
 type: service
 category: app
-version: 0.2.0
-summary: Team board for Wizard development on GitHub. Goals, things to test, and open issues in three tabs.
+version: 0.3.0
+summary: Wizard OS Goals and Bugs on GitHub, with what is ready to test on top.
 tags: [developer, productivity]
 license: GPL-3.0-only
 source: https://github.com/humanitylabs-org/wizard-board
@@ -36,7 +36,9 @@ needs: []
 health: /healthz
 ---
 
-# Board
+# Wizard OS Tracker
+
+Display name "Wizard OS Tracker"; the app id stays `board` and the path `/board/`, so installs and sign-ins carry over.
 
 Humans manage the work; agents write the PRs. Board shows two kinds of GitHub issue across one organisation (default `humanitylabs-org`):
 
@@ -45,6 +47,6 @@ Humans manage the work; agents write the PRs. Board shows two kinds of GitHub is
 
 Each person connects their own GitHub account with a personal access token. The token is kept on the box only (file mode 0600), validated with `GET /user`, never returned to the view or MCP. Board sees exactly what that token can see. GitHub is the only backend: the app keeps no copy of issues, only a 60-second read cache.
 
-In the app (0.2): three tabs. **Goals** (open issues labelled `goal`: owner, progress from linked issues, status); **To test** (open issues labelled `ready-to-test` that someone else wrote: what the builder `wizardosbuilder` says to check, the PR, and Works / Doesn't work, which comment, drop `ready-to-test` and on Works add `approved`, never close); **Issues** (open bugs and unlabelled issues, filter by repo). One **+ New** button adds an Issue (label `bug`) or, for people listed in `GOAL_AUTHORS` (default `jdefleur`), a Goal. Screenshots wait for `humanitylabs-org/wizard-issue-media`. Agents use the MCP tools (`board_list`, `board_get`, `board_report_bug`, `board_comment`; `board_add_goal`, `board_accept_bug`, `board_close`, `board_reopen` only on a human's explicit request, and never to close or reopen goals).
+In the app (0.3): one small **Goals | Bugs** switch. Each view has **Ready to test** on top (open issues of that kind labelled `ready-to-test` that someone else wrote: one line on what to check from the builder `wizardosbuilder`, else the description's first line; a Settings › Tweaks hint; Works / Doesn't work, which comment, drop `ready-to-test` and on Works add `approved`, never close) and **In progress** below (Goals: title, thin progress bar, owner; Bugs: title and repo). Goals are open issues labelled `goal`; Bugs are open issues without `goal` (labelled `bug` or unlabelled). Tapping a row opens it on GitHub. No create, filter, refresh or account UI: new goals and bugs are filed by the agent in chat; the view refreshes on focus and every minute. Agents use the MCP tools (`board_list`, `board_get`, `board_report_bug`, `board_comment`; `board_add_goal`, `board_accept_bug`, `board_close`, `board_reopen` only on a human's explicit request, and never to close or reopen goals).
 
 Built from the hello-wizard template (stdlib Python, vanilla view, shared Wizard kit and `/wizard-os-home/core/app-client.js`).

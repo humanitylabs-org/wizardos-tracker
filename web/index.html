@@ -4,69 +4,48 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark light">
-  <title>Board</title>
+  <title>Wizard OS Tracker</title>
   <script src="boot.js"></script>
   <link rel="stylesheet" href="wizard-tokens.css">
   <link rel="stylesheet" href="wizard-ui.css">
   <link rel="stylesheet" href="standalone.css">
   <link rel="stylesheet" href="styles.css">
   <script defer src="/wizard-os-home/core/app-client.js"></script>
-  <script defer src="wizard-sheet.js"></script>
   <script defer src="app.js"></script>
 </head>
 <body>
   <div class="wz-app bd-app">
-    <!-- Top: who you are, refresh, and the one main action. -->
-    <header class="bd-bar" id="bar" hidden>
-      <button type="button" class="bd-me" id="me" aria-label="Your account">
-        <span class="bd-avatar" aria-hidden="true"><img id="avatar" alt=""></span>
-        <span class="bd-me-name" id="me-login"></span>
-      </button>
-      <button type="button" class="wz-icon-button ghost bd-refresh" id="refresh" aria-label="Refresh"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 1 0-2.3 5.7M20 4v7h-7"/></svg></button>
-      <button type="button" class="wz-button bd-new" id="new">+ New</button>
-    </header>
-
-    <nav class="bd-tabs" id="tabs" role="tablist" aria-label="Board" hidden>
-      <button type="button" role="tab" id="tab-goals" data-tab="goals" aria-selected="true"><span>Goals</span><i class="bd-n" id="n-goals"></i></button>
-      <button type="button" role="tab" id="tab-test" data-tab="test" aria-selected="false"><span>To test</span><i class="bd-n" id="n-test"></i></button>
-      <button type="button" role="tab" id="tab-issues" data-tab="issues" aria-selected="false"><span>Issues</span><i class="bd-n" id="n-issues"></i></button>
-    </nav>
-
     <main class="wz-scroll bd-scroll" id="scroll">
-      <!-- Sign in: one field, one action, three plain steps. -->
-      <section id="signin" class="bd-signin" hidden>
-        <h1 class="bd-h1">Sign in to Board</h1>
-        <p class="bd-lead">Board uses your own GitHub account, so everything you add is written by you.</p>
+      <!-- Not signed in: one card, one field. -->
+      <section id="signin" class="wz-card bd-signin" hidden>
+        <h1 class="bd-h1">Sign in with GitHub</h1>
         <form id="connect-form" class="bd-form" autocomplete="off">
-          <label class="bd-label" for="token">Your GitHub token</label>
-          <input id="token" class="wz-input" type="password" autocomplete="new-password" spellcheck="false" autocapitalize="none" minlength="20" maxlength="400" required placeholder="Paste it here">
+          <input id="token" class="wz-input" type="password" autocomplete="new-password" spellcheck="false" autocapitalize="none" minlength="20" maxlength="400" required placeholder="Paste your GitHub token" aria-label="Your GitHub token">
           <button class="wz-button" type="submit" id="connect">Sign in</button>
         </form>
-        <ol class="bd-steps">
-          <li><a class="bd-link" id="token-link" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Make a token on GitHub ↗</a></li>
-          <li>Owner: the team organisation. Repositories: all. Permissions: Issues “Read and write”.</li>
-          <li>Copy it and paste it above. It stays on this box and is never shown again.</li>
-        </ol>
+        <p class="bd-meta"><a class="bd-link" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Make a token ↗</a> · the team org, all repos, Issues read and write.</p>
       </section>
 
-      <section id="pane" hidden>
-        <div class="bd-filter" id="filter" hidden>
-          <select id="f-repo" class="wz-input bd-select" aria-label="Repo"><option value="">All repos</option></select>
+      <div id="board" class="bd-board" hidden>
+        <div class="bd-switch" role="tablist" aria-label="Show">
+          <button type="button" role="tab" data-view="goals" aria-selected="true">Goals</button>
+          <button type="button" role="tab" data-view="bugs" aria-selected="false">Bugs</button>
         </div>
-        <p class="bd-hint" id="hint" hidden>Turn the feature on in Settings › Tweaks to try it.</p>
-        <div id="list" class="bd-list"></div>
-        <p id="empty" class="bd-empty" hidden></p>
-      </section>
+
+        <section class="bd-sec" id="sec-test" hidden>
+          <h2 class="bd-sec-h">Ready to test <span class="bd-n" id="n-test"></span></h2>
+          <div class="bd-list" id="list-test"></div>
+        </section>
+
+        <section class="bd-sec" id="sec-doing">
+          <h2 class="bd-sec-h">In progress <span class="bd-n" id="n-doing"></span></h2>
+          <div class="bd-list rows" id="list-doing"></div>
+          <p class="bd-empty" id="empty" hidden></p>
+        </section>
+      </div>
       <p id="loading" class="bd-empty">Loading…</p>
     </main>
     <p id="status" class="wz-status" role="status" aria-live="polite"></p>
   </div>
-
-  <!-- The one pop-up: New and your account share it. -->
-  <dialog class="wz-sheet bd-sheet" id="sheet" aria-labelledby="sheet-h">
-    <h2 id="sheet-h"></h2>
-    <div id="sheet-body"></div>
-    <p class="wz-status" id="sheet-msg" role="status" aria-live="polite"></p>
-  </dialog>
 </body>
 </html>

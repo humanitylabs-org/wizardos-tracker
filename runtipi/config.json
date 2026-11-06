@@ -1,17 +1,17 @@
 {
-  "name": "Board",
+  "name": "Wizard OS Tracker",
   "id": "board",
   "wizard_type": "service",
   "available": true,
-  "short_desc": "Team board for Wizard development on GitHub: Goals, To test, Issues.",
+  "short_desc": "Wizard OS Goals and Bugs on GitHub, with what is ready to test on top.",
   "author": "Humanity Labs",
   "port": 18884,
   "categories": [
     "utilities"
   ],
-  "description": "Three tabs over a GitHub organisation: Goals, things to test, and open issues. Each person signs in with their own GitHub token, so everything they add is written by them. Agents get narrow MCP tools.",
-  "tipi_version": 3,
-  "version": "0.2.0",
+  "description": "Two views over a GitHub organisation: Goals and Bugs. Each shows what is ready for you to test (Works / Doesn't work) above what is in progress. Each person signs in with their own GitHub token. New goals and bugs are filed by the agent in chat through narrow MCP tools.",
+  "tipi_version": 4,
+  "version": "0.3.0",
   "source": "https://github.com/humanitylabs-org/wizard-board",
   "exposable": false,
   "supported_architectures": [
@@ -19,7 +19,7 @@
     "arm64"
   ],
   "created_at": 1793845776995,
-  "updated_at": 1793852257514,
+  "updated_at": 1793981634712,
   "dynamic_config": true,
   "min_tipi_version": "4.8.0",
   "uid": 1000,
