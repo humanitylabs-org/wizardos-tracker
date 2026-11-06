@@ -5,6 +5,7 @@ Stdlib only. GitHub is the only backend; this app stores just each person's toke
 authentication; direct ports stay loopback.
 """
 import hashlib
+import html as htmllib
 import json
 import os
 import re
@@ -12,6 +13,8 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timedelta, timezone
+from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -20,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'board'
-VERSION = '0.3.0'
+VERSION = '0.4.0'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -128,16 +131,16 @@ def _forget(token):
             _cache.pop(k, None)
 
 
-def gh(token, method, path, body=None, cache=True):
+def gh(token, method, path, body=None, cache=True, accept='application/vnd.github+json'):
     url = GITHUB + path
-    key = (_tid(token), method, url, json.dumps(body, sort_keys=True) if body is not None else '')
+    key = (_tid(token), method, url, json.dumps(body, sort_keys=True) if body is not None else '', accept)
     if cache and method in ('GET', 'GRAPHQL'):
         with LOCK:
             hit = _cache.get(key)
         if hit and time.time() - hit[0] < CACHE_SECONDS:
             return hit[1]
     data = None if body is None else json.dumps(body).encode()
-    headers = {'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json',
+    headers = {'Authorization': 'Bearer ' + token, 'Accept': accept,
                'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'wizard-board/' + VERSION}
     if data is not None:
         headers['Content-Type'] = 'application/json'
@@ -627,7 +630,17 @@ VIEW_FIELDS = (' number title url body createdAt updatedAt author { login } assi
                '  ... on ConnectedEvent { subject { __typename ... on PullRequest { number url state title repository { nameWithOwner } } } }'
                ' } }')
 VIEW = 'query($q: String!) { search(query: $q, type: ISSUE, first: 80) { issueCount nodes { ... on Issue {' + VIEW_FIELDS + ' } } } }'
-VIEW_ONE = 'query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { issue(number: $n) {' + VIEW_FIELDS + ' } } }'
+MAX_ITEMS = 300
+# Lists page through search: light rows (no timeline or comments) 100 at a time for Bugs; the heavy
+# fields (linked issues for goal progress, the builder's last comment for Ready to test) only where shown.
+LIGHT_FIELDS = VIEW_FIELDS.split(' comments(last')[0]
+HEAVY_FIELDS = VIEW_FIELDS.replace('comments(last: 20)', 'comments(last: 10)')
+_PAGE = 'search(query: $q, type: ISSUE, first: %d, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on Issue {%s } } }'
+PAGES = {heavy: ('query($q: String!, $after: String) { ' + _PAGE % (size, fields) + ' }',
+                 # first page also counts what closed this week (authors too, so the who-wrote-it filter applies)
+                 'query($q: String!, $after: String, $c: String!) { ' + _PAGE % (size, fields)
+                 + ' closed: search(query: $c, type: ISSUE, first: 100) { issueCount nodes { ... on Issue { author { login } } } } }')
+         for heavy, size, fields in ((False, 100, LIGHT_FIELDS), (True, 40, HEAVY_FIELDS))}
 _tested = {}   # (token id, issue id) -> time: tested here, hidden from To test while search catches up
 _made = {}     # (token id, issue id) -> (time, tab, item): created here, shown while search catches up
 
@@ -735,41 +748,206 @@ def board_view(person, args):
             'more': found.get('issueCount', len(items)) > len(nodes) and tab != 'issues', 'login': login}
 
 
+def _view_nodes(token, q, closed_q=None, heavy=False, limit=MAX_ITEMS):
+    """Up to `limit` issues for one view, page by page, plus (if asked) this week's closed count."""
+    nodes, after, total, closed = [], None, 0, {'issueCount': 0, 'nodes': []}
+    rest, first = PAGES[heavy]
+    while len(nodes) < limit:
+        if after is None and closed_q:
+            data = graphql(token, first, {'q': q, 'after': None, 'c': closed_q}).get('data') or {}
+            closed = data.get('closed') or closed
+        else:
+            data = graphql(token, rest, {'q': q, 'after': after}).get('data') or {}
+        found = data.get('search') or {}
+        total = found.get('issueCount', total)
+        nodes += [n for n in found.get('nodes') or [] if n and n.get('number')]
+        page = found.get('pageInfo') or {}
+        if not page.get('hasNextPage') or not page.get('endCursor'):
+            break
+        after = page['endCursor']
+    return nodes[:limit], total, closed
+
+
 def board_split(person, args):
-    """0.3 screen: Goals or Bugs, split into Ready to test (someone else's, waiting for a test) and In progress."""
+    """0.4 screen: Goals or Bugs in status groups: Ready to test (label ready-to-test), Building (label
+    building), Queued (every other open one), plus how many of that kind closed in the last 7 days."""
     _, acct = account_for(person)
     view = args.get('view') or 'goals'
     if view not in ('goals', 'bugs'):
         raise Problem(400, 'view must be goals or bugs.')
     org = settings()['org']
     login = (acct.get('login') or '').strip()
-    q = f"org:{org} is:issue is:open {'label:goal' if view == 'goals' else '-label:goal'} sort:updated-desc"
+    kind = 'label:goal' if view == 'goals' else '-label:goal'
+    q = f"org:{org} is:issue is:open {kind} sort:updated-desc"
+    week = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%d')
+    cq = f"org:{org} is:issue is:closed {kind} closed:>={week}"
     if args.get('refresh'):
         _forget(acct['token'])
-    found = ((graphql(acct['token'], VIEW, {'q': q}).get('data') or {}).get('search') or {})
-    nodes = [n for n in found.get('nodes') or [] if n and n.get('number')]
+    nodes, total, closed = _view_nodes(acct['token'], q, cq, heavy=view == 'goals')
+    if view == 'bugs':  # the few waiting for a test get the heavy fields (what to check)
+        full, _, _ = _view_nodes(acct['token'], q.replace(' sort:', ' label:ready-to-test sort:'), heavy=True, limit=80)
+        by = {(n['repository']['nameWithOwner'], n['number']): n for n in full}
+        nodes = [by.get((n['repository']['nameWithOwner'], n['number']), n) for n in nodes]
     t, now = _tid(acct['token']), time.time()
     with LOCK:
         hidden = {i for (k, i), v in _tested.items() if k == t and now - v <= RECENT_SECONDS}
         made = [v for (k, _), v in _made.items() if k == t and now - v[0] <= RECENT_SECONDS and v[1] == ('goals' if view == 'goals' else 'issues')]
-    test, doing = [], []
+    groups = {'test': [], 'building': [], 'queued': []}
     for n in nodes:
         names = {l['name'].lower() for l in (n.get('labels') or {}).get('nodes') or []}
-        mine = ((n.get('author') or {}).get('login') or '').lower() == login.lower()
+        author = (n.get('author') or {}).get('login') or ''
+        mine = bool(login) and author.lower() == login.lower()
         iid = f"{n['repository']['nameWithOwner']}#{n['number']}"
-        if 'ready-to-test' in names and not mine and iid not in hidden:
-            card = _card(n, 'test')
+        if 'ready-to-test' in names and iid not in hidden:
+            group, card = 'test', _card(n, 'test')
             if view == 'goals':
                 card['owner'] = _card(n, 'goals')['owner']
-            test.append(card)
         else:
-            doing.append(_card(n, 'goals' if view == 'goals' else 'issues'))
-    have = {i['id'] for i in test + doing}
+            group = 'building' if 'building' in names else 'queued'
+            card = _card(n, 'goals' if view == 'goals' else 'issues')
+        card.update(group=group, mine=mine, created_at=n.get('createdAt'),
+                    labels=[l['name'] for l in (n.get('labels') or {}).get('nodes') or []])
+        groups[group].append(card)
+    have = {i['id'] for g in groups.values() for i in g}
     for _, _, it in made:
         if it['id'] not in have:
-            doing.insert(0, it)
-    return {'view': view, 'org': org, 'login': login, 'test': test, 'doing': doing,
-            'more': found.get('issueCount', len(nodes)) > len(nodes)}
+            groups['queued'].insert(0, {**it, 'group': 'queued', 'mine': True})
+    shown = sum(len(g) for g in groups.values())
+    others_test = [c for c in groups['test'] if not c['mine']]
+    return {'view': view, 'org': org, 'login': login, 'groups': groups,
+            'counts': {k: len(v) for k, v in groups.items()},
+            'closed_week': {'count': closed.get('issueCount', 0), 'since': week,
+                            'authors': [((x or {}).get('author') or {}).get('login') or '' for x in closed.get('nodes') or []]},
+            'total': total, 'shown': shown, 'more': total > len(nodes),
+            # 0.3 shape, kept for older views and scripts
+            'test': others_test, 'doing': [c for c in groups['test'] if c['mine']] + groups['building'] + groups['queued']}
+
+
+# ---------- one issue in full, on tap (rendered by GitHub, cleaned here) ----------
+
+class _Clean(HTMLParser):
+    """Whitelist HTML cleaner for GitHub's body_html: no scripts, frames, styles, event handlers or
+    javascript: links. Images and videos become plain links (the view only loads from itself)."""
+    KEEP = {'a', 'p', 'br', 'hr', 'strong', 'b', 'em', 'i', 'del', 's', 'code', 'pre', 'blockquote', 'ul', 'ol', 'li',
+            'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'span', 'div', 'sup', 'sub',
+            'kbd', 'details', 'summary', 'input', 'dl', 'dt', 'dd', 'tt', 'g-emoji', 'mark', 'ins'}
+    DROP = {'script', 'style', 'iframe', 'object', 'embed', 'svg', 'math', 'form', 'noscript', 'template', 'textarea',
+            'select', 'button', 'frame', 'frameset', 'head', 'title', 'link', 'meta', 'base', 'audio', 'canvas', 'option'}
+    VOID = {'br', 'hr', 'input', 'img', 'source', 'wbr', 'track', 'area', 'col', 'param'}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.out, self.stack, self.skip, self.links = [], [], 0, 0
+
+    @staticmethod
+    def url(v):
+        v = (v or '').strip()
+        if v.startswith('/') and not v.startswith('//'):
+            v = 'https://github.com' + v
+        return v if re.match(r'^(https?://|mailto:)', v, re.I) and not any(c in v for c in '\x00\n\r\t') else ''
+
+    def handle_starttag(self, tag, attrs):
+        a = dict(attrs)
+        if self.skip:
+            if tag in self.DROP and tag not in self.VOID:
+                self.skip += 1
+            return
+        if tag in self.DROP:
+            self.skip = 1
+            return
+        if tag in ('img', 'video'):
+            src = self.url(a.get('data-canonical-src') or a.get('src'))
+            label = ('Video' if tag == 'video' else 'Image') + (f": {a['alt']}" if a.get('alt') and tag == 'img' and a['alt'] != 'image' else '')
+            if src and not self.links:
+                self.out.append(f'<a class="bd-media" href="{htmllib.escape(src)}" target="_blank" rel="noopener noreferrer">{htmllib.escape(label)} ↗</a>')
+            else:
+                self.out.append(htmllib.escape(f'[{label}]'))
+            if tag == 'video':
+                self.skip = 1  # drop any fallback/source children
+            return
+        if tag not in self.KEEP:
+            return
+        name = 'span' if tag == 'g-emoji' else tag
+        keep = ''
+        if tag == 'a':
+            href = self.url(a.get('href'))
+            if self.links:
+                return  # no nested links
+            keep = (f' href="{htmllib.escape(href)}" target="_blank" rel="noopener noreferrer"' if href else '')
+            self.links += 1
+        elif tag == 'input':
+            if (a.get('type') or '').lower() != 'checkbox':
+                return
+            keep = ' type="checkbox" disabled' + (' checked' if 'checked' in a else '')
+        elif tag in ('td', 'th') and (a.get('align') or '') in ('left', 'right', 'center'):
+            keep = f' align="{a["align"]}"'
+        elif tag == 'ol' and (a.get('start') or '').isdigit():
+            keep = f' start="{a["start"]}"'
+        self.out.append(f'<{name}{keep}>')
+        if tag not in self.VOID:
+            self.stack.append(tag)
+
+    def handle_startendtag(self, tag, attrs):
+        self.handle_starttag(tag, attrs)
+        if tag not in self.VOID and self.stack and self.stack[-1] == tag:
+            self.handle_endtag(tag)
+
+    def handle_endtag(self, tag):
+        if self.skip:
+            if tag in self.DROP or tag == 'video':
+                self.skip -= 1
+            return
+        if tag not in self.stack:
+            return
+        while self.stack:
+            t = self.stack.pop()
+            if t == 'a':
+                self.links -= 1
+            self.out.append(f"</{'span' if t == 'g-emoji' else t}>")
+            if t == tag:
+                break
+
+    def handle_data(self, data):
+        if not self.skip:
+            self.out.append(htmllib.escape(data, quote=False))
+
+    def result(self):
+        self.close()
+        while self.stack:
+            t = self.stack.pop()
+            self.out.append(f"</{'span' if t == 'g-emoji' else t}>")
+        return ''.join(self.out)
+
+
+def clean_html(raw):
+    c = _Clean()
+    c.feed(raw or '')
+    return c.result()
+
+
+HTML_JSON = 'application/vnd.github.html+json'
+
+
+def issue_detail(person, args):
+    """Full issue for the in-app detail: GitHub-rendered body and comments, cleaned. Two REST calls,
+    cached 60 s per token like every other read."""
+    _, acct = account_for(person)
+    full, number = _target(args or {})
+    if args.get('refresh'):
+        _forget(acct['token'])
+    it = gh(acct['token'], 'GET', f'/repos/{full}/issues/{number}', accept=HTML_JSON)
+    if it.get('pull_request'):
+        raise Problem(400, 'That is a pull request, not an issue.')
+    count = it.get('comments') or 0
+    rows = gh(acct['token'], 'GET', f'/repos/{full}/issues/{number}/comments?per_page=100', accept=HTML_JSON) if count else []
+    who = lambda x: ((x or {}).get('user') or {}).get('login')
+    return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'title': it.get('title'), 'url': it.get('html_url'),
+            'state': it.get('state'), 'author': who(it), 'created_at': it.get('created_at'), 'updated_at': it.get('updated_at'),
+            'labels': [l.get('name') for l in it.get('labels') or [] if isinstance(l, dict)],
+            'body_html': clean_html(it.get('body_html')),
+            'comments': [{'author': who(c), 'created_at': c.get('created_at'), 'url': c.get('html_url'),
+                          'body_html': clean_html(c.get('body_html'))} for c in rows if isinstance(c, dict)],
+            'comments_total': count}
 
 
 def _drop_label(acct, full, number, label):
@@ -945,6 +1123,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, status(self.person()))
             if path == '/api/view':
                 return self.send(200, board_view(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
+            if path == '/api/detail':
+                return self.send(200, issue_detail(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
             if path == '/api/split':
                 return self.send(200, board_split(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
             if path == '/api/board':

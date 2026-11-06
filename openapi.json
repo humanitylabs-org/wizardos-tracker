@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Wizard OS Tracker",
-    "version": "0.3.0",
+    "version": "0.4.0",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin."
   },
   "paths": {
@@ -834,7 +834,7 @@
     },
     "/api/split": {
       "get": {
-        "summary": "One view (goals or bugs) split into Ready to test and In progress",
+        "summary": "Goals or Bugs grouped by status: Ready to test (ready-to-test), Building (building), Queued (other open). Up to 300 items, paged from GitHub search.",
         "parameters": [
           {
             "name": "view",
@@ -860,7 +860,49 @@
         ],
         "responses": {
           "200": {
-            "description": "{view, org, login, test: [...], doing: [...], more}"
+            "description": "view, org, login, groups {test, building, queued}, counts, closed_week {count, since, authors}, total, shown, more; plus 0.3 keys test (others' ready-to-test) and doing."
+          }
+        }
+      }
+    },
+    "/api/detail": {
+      "get": {
+        "summary": "One issue in full for the in-app sheet: GitHub-rendered body and comments (cleaned HTML), author, dates, labels.",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "owner/name or a repo in the org"
+          },
+          {
+            "name": "number",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer"
+            }
+          },
+          {
+            "name": "refresh",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "id, repo, number, title, url, state, author, created_at, updated_at, labels, body_html, comments [{author, created_at, url, body_html}], comments_total"
+          },
+          "404": {
+            "description": "Not found or not visible to this token"
           }
         }
       }

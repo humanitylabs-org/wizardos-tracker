@@ -1,7 +1,7 @@
 ---
 name: board
 description: Use when working with Wizard development Goals and Bugs on GitHub.
-version: 0.3.0
+version: 0.4.0
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -17,7 +17,7 @@ Humans manage the work; agents write the PRs. There are exactly two kinds of Git
 - **Goal** (label `goal`): a big outcome with a done-list (markdown task list). **Only humans open and close goals.**
 - **Bug** (label `bug`): small and specific. **Anyone may report.** Agents start work only after a human accepts it (label `accepted`).
 
-People see the app as **Wizard OS Tracker**: a Goals | Bugs switch, each with **Ready to test** on top (issues labelled `ready-to-test` that someone else wrote; Works comments, removes `ready-to-test` and adds `approved`; Doesn't work comments what failed and removes `ready-to-test`) and **In progress** below. The app has no New button: when the owner asks in chat for a goal or bug, file it with these tools. When you finish work, label the issue `ready-to-test` and comment one short paragraph saying what to check; an `approved` label means a human tested it.
+People see the app as **Wizard OS Tracker**: a Goals | Bugs switch, a totals line and an Everyone ▾ (who wrote it) picker; each view is grouped **Ready to test** (label `ready-to-test`; Works comments, removes `ready-to-test` and adds `approved`; Doesn't work comments what failed and removes `ready-to-test`), **Building** (label `building`) and **Queued** (any other open issue). Tapping an issue shows its body and comments in the app. The app has no New button: when the owner asks in chat for a goal or bug, file it with these tools. When you start work on an issue, add the `building` label on GitHub; when you finish, swap it for `ready-to-test` and comment one short paragraph saying what to check (that paragraph is what testers see). An `approved` label means a human tested it.
 
 ## Rules for agents
 1. Read freely: `board_list` (filters `repo`, `type` all|goal|bug, `state` open|closed, `accepted` any|yes|no) and `board_get` (`issue` "owner/repo#123", or `repo` + `number`).

@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="standalone.css">
   <link rel="stylesheet" href="styles.css">
   <script defer src="/wizard-os-home/core/app-client.js"></script>
+  <script defer src="wizard-sheet.js"></script>
   <script defer src="app.js"></script>
 </head>
 <body>
@@ -32,20 +33,38 @@
           <button type="button" role="tab" data-view="bugs" aria-selected="false">Bugs</button>
         </div>
 
+        <div class="bd-sub">
+          <p class="bd-totals" id="totals" aria-live="polite"></p>
+          <label class="bd-who" id="who-wrap" hidden><span class="wz-sr">Written by</span><select id="who"><option value="">Everyone</option></select></label>
+        </div>
+
         <section class="bd-sec" id="sec-test" hidden>
           <h2 class="bd-sec-h">Ready to test <span class="bd-n" id="n-test"></span></h2>
           <div class="bd-list" id="list-test"></div>
         </section>
-
-        <section class="bd-sec" id="sec-doing">
-          <h2 class="bd-sec-h">In progress <span class="bd-n" id="n-doing"></span></h2>
-          <div class="bd-list rows" id="list-doing"></div>
-          <p class="bd-empty" id="empty" hidden></p>
+        <section class="bd-sec" id="sec-building" hidden>
+          <h2 class="bd-sec-h">Building <span class="bd-n" id="n-building"></span></h2>
+          <div class="bd-list rows" id="list-building"></div>
         </section>
+        <section class="bd-sec" id="sec-queued" hidden>
+          <h2 class="bd-sec-h">Queued <span class="bd-n" id="n-queued"></span></h2>
+          <div class="bd-list rows" id="list-queued"></div>
+        </section>
+        <p class="bd-empty" id="empty" hidden></p>
       </div>
       <p id="loading" class="bd-empty">Loading…</p>
     </main>
     <p id="status" class="wz-status" role="status" aria-live="polite"></p>
+    <!-- The one pop-up: the issue in full. Bottom sheet on phones, side panel on wide screens. -->
+    <dialog id="detail" class="wz-sheet bd-detail" aria-labelledby="d-title">
+      <h2 id="d-title" class="bd-d-title"></h2>
+      <p id="d-meta" class="bd-meta"></p>
+      <p id="d-labels" class="bd-meta bd-labels"></p>
+      <div id="d-body" class="bd-d-body"></div>
+      <h3 id="d-comments-h" class="bd-sec-h bd-d-h" hidden>Comments <span class="bd-n" id="d-n-comments"></span></h3>
+      <ol id="d-comments" class="bd-comments"></ol>
+      <p class="bd-d-foot"><a id="d-gh" class="bd-link" href="#" target="_blank" rel="noopener noreferrer">Open on GitHub ↗</a></p>
+    </dialog>
   </div>
 </body>
 </html>
