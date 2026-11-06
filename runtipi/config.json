@@ -10,8 +10,8 @@
     "utilities"
   ],
   "description": "Two views over a GitHub organisation: Goals and Bugs, each grouped Ready to test (Works / Doesn't work), Building and Queued, with a who-wrote-it picker. Tap an issue to read it and its comments in the app. Each person signs in with their own GitHub token. New goals and bugs are filed by the agent in chat through narrow MCP tools.",
-  "tipi_version": 5,
-  "version": "0.4.0",
+  "tipi_version": 6,
+  "version": "0.4.1",
   "source": "https://github.com/humanitylabs-org/wizard-board",
   "exposable": false,
   "supported_architectures": [

@@ -46,6 +46,10 @@ const when = iso => {
   if (days < 30) return days + ' days ago';
   return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: d.getFullYear() === new Date().getFullYear() ? undefined : 'numeric' });
 };
+// Rows open in-app only: no href, so no native shell or link handler can send them to GitHub.
+const tapTarget = (cls, fn) => { const a = make('a', cls); a.setAttribute('role', 'button'); a.tabIndex = 0;
+  a.onclick = e => { e.preventDefault(); fn(); };
+  a.onkeydown = e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } }; return a; };
 const plainClick = e => !(e.metaKey || e.ctrlKey || e.shiftKey || e.button);
 
 // ---------- sign in ----------
@@ -126,8 +130,7 @@ function render(d) {
 }
 
 function row(i, kind) {
-  const a = link('bd-item', i.url);
-  a.onclick = e => { if (!plainClick(e)) return; e.preventDefault(); openDetail(i); };
+  const a = tapTarget('bd-item', () => openDetail(i));
   const top = make('span', 'bd-top'); top.append(make('b', 'bd-title', i.title));
   const waiting = i.mine && i.group === 'test' ? 'waiting for a tester' : '';
   if (kind === 'goals') {
@@ -149,8 +152,7 @@ function row(i, kind) {
 
 function testCard(t) {
   const c = make('article', 'bd-card');
-  const h = link('bd-title', t.url); h.textContent = t.title;
-  h.onclick = e => { if (!plainClick(e)) return; e.preventDefault(); openDetail(t); };
+  const h = tapTarget('bd-title', () => openDetail(t)); h.textContent = t.title;
   c.append(h);
   if (t.check) c.append(make('p', 'bd-check', t.check));
   c.append(make('p', 'bd-hint', [repoName(t.repo), t.author, 'turn it on in Settings › Tweaks'].filter(Boolean).join(' · ')));

@@ -4,7 +4,7 @@ id: board
 name: Wizard OS Tracker
 type: service
 category: app
-version: 0.4.0
+version: 0.4.1
 summary: Wizard OS Goals and Bugs on GitHub, grouped by status, with the full issue on tap.
 tags: [developer, productivity]
 license: GPL-3.0-only
