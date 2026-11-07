@@ -22,11 +22,23 @@
       <!-- Not signed in: one card, one field. -->
       <section id="signin" class="wz-card bd-signin" hidden>
         <h1 class="bd-h1">Sign in with GitHub</h1>
+        <!-- 0.13: GitHub device flow when a client id is set (one button, then a code to type on GitHub). -->
+        <div id="oauth" class="bd-oauth" hidden>
+          <button class="wz-button" type="button" id="oauth-go">Sign in with GitHub</button>
+          <div id="oauth-code" class="bd-oauth-code" hidden>
+            <p class="bd-meta">Enter this code on GitHub:</p>
+            <p class="bd-code"><b id="oauth-user-code" aria-live="polite"></b> <button type="button" class="wz-button secondary bd-copy" id="oauth-copy">Copy</button></p>
+            <a class="wz-button bd-open-gh" id="oauth-open" href="https://github.com/login/device" target="_blank" rel="noopener noreferrer">Open GitHub ↗</a>
+            <p class="bd-meta" id="oauth-wait">Waiting for GitHub…</p>
+            <button type="button" class="bd-acct-act" id="oauth-cancel">Cancel</button>
+          </div>
+          <p class="bd-meta"><button type="button" class="bd-acct-act bd-use-token" id="oauth-token">Use a token instead</button></p>
+        </div>
         <form id="connect-form" class="bd-form" autocomplete="off">
           <input id="token" class="wz-input" type="password" autocomplete="new-password" spellcheck="false" autocapitalize="none" minlength="20" maxlength="400" required placeholder="Paste your GitHub token" aria-label="Your GitHub token">
           <button class="wz-button" type="submit" id="connect">Sign in</button>
         </form>
-        <p class="bd-meta"><a class="bd-link" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Make a token ↗</a> · the team org, all repos, Issues read and write.</p>
+        <p class="bd-meta" id="token-help"><a class="bd-link" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Make a token ↗</a> · the team org, all repos, Issues read and write.</p>
       </section>
 
       <!-- 0.12: refused sign-in (not on the team, or an agent's account). Nothing was saved. -->
@@ -50,12 +62,13 @@
           </button>
         </div>
 
-        <!-- The assembly line: Queued → Building → Review → Done, numbers first, each bin with its own tiny stat.
-             Tap a bin to show only that stage; ⓘ says who does it. The return arrow carries the kick-back rate. -->
+        <!-- The assembly line (0.13): Queued → Building → AI review → Human review → Done, numbers first, each bin with
+             its own tiny stat. Tap a bin to show only that stage; ⓘ says who does it. Two return arrows to Building
+             (from AI review and from Human review) carry their kick-back rates. -->
         <div class="bd-flow" id="flow" role="group" aria-label="How work moves">
           <ol class="bd-steps" id="steps"></ol>
           <div class="bd-ctls" id="ctl" role="group" aria-label="Targets and who does each step"></div>
-          <p class="bd-loop" id="loop"><button type="button" class="bd-kick" id="kick" aria-label="Doesn't work goes back to Building" hidden></button></p>
+          <p class="bd-loop bd-loops" id="loop"><i class="bd-loop2" aria-hidden="true"></i><button type="button" class="bd-kick bd-kick-ai" id="kick-ai" aria-label="AI review fail goes back to Building" hidden></button><button type="button" class="bd-kick bd-kick-h" id="kick" aria-label="Doesn't work goes back to Building" hidden></button></p>
         </div>
 
         <!-- Bugs only: Who and Repo chip rows (multi-select, counts, All resets), and a tiny sort control. -->
@@ -70,8 +83,12 @@
         </div>
 
         <section class="bd-sec" id="sec-test" hidden>
-          <h2 class="bd-sec-h">Review <span class="bd-n" id="n-test"></span></h2>
+          <h2 class="bd-sec-h">Human review <span class="bd-n" id="n-test"></span></h2>
           <div class="bd-list" id="list-test"></div>
+        </section>
+        <section class="bd-sec" id="sec-airev" hidden>
+          <h2 class="bd-sec-h">AI review <span class="bd-n" id="n-airev"></span></h2>
+          <div class="bd-list rows" id="list-airev"></div>
         </section>
         <section class="bd-sec" id="sec-building" hidden>
           <h2 class="bd-sec-h">Building <span class="bd-n" id="n-building"></span></h2>

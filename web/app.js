@@ -1,4 +1,7 @@
 'use strict';
+// Wizard OS Tracker 0.13: two-step review. The line is Queued → Building → AI review → Human review → Done, with
+// two return arrows to Building (AI review fail, Human review Doesn't work), optional second human review
+// ('1 of 2 reviews' on cards), and Sign in with GitHub (device flow) when the box has a client id.
 // Wizard OS Tracker 0.10: stable chip order (sorted once by the unfiltered totals), goal owners as name chips on
 // the title line, shared step targets editable from a thin row under the bins (no control inside a bin).
 // 0.9: Goals | Bugs + a small Builder switch; the assembly line Queued → Building →
@@ -9,8 +12,7 @@ const el = id => document.getElementById(id);
 const make = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 const link = (cls, href) => { const a = make('a', cls); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; return a; };
 const EMPTY = { goals: 'No open goals.', bugs: 'No open bugs. Nice.' };
-const GROUPS = ['test', 'building', 'queued'];
-const stageOf = { queued: 'queued', building: 'building', test: 'test', done: 'done' };
+const GROUPS = ['test', 'airev', 'building', 'queued'];
 const stage = { goals: null, bugs: null };   // tap a bin: show only that stage (not remembered)
 const doneCache = {};   // view -> { at, items } recently closed, loaded when the Done bin is tapped
 let me = null, view = location.hash === '#bugs' ? 'bugs' : 'goals', gen = 0, held = null, lastLoad = 0, who = '';
@@ -18,11 +20,13 @@ const NO_DATA = 'starts once the builder runs';
 const BINS = [
   { key: 'open', group: 'queued', word: 'Queued' },
   { key: 'build', group: 'building', word: 'Building' },
-  { key: 'review', group: 'test', word: 'Review' },
+  { key: 'ai', group: 'airev', word: 'AI review' },
+  { key: 'review', group: 'test', word: 'Human review' },
   { key: 'done', group: null, word: 'Done' },
 ];
 const POP = {
   build: ['Wizard OS Builder', 'Writes the code, then hands it to Review.'],
+  ai: ['The opener’s agent', 'Checks the build matches the issue: on to Human review, or back to Building. A goal’s owner’s agent checks goals; anyone outside the team gets any team agent.'],
   review: ['The team, not whoever opened it', 'Someone else tries it: Works, or back to Building.'],
   done: ['Closed', 'The opener closes it once it works.'],
 };
@@ -139,6 +143,8 @@ function show(s) {
   el('refused').hidden = true;
   el('signin').hidden = on; el('board').hidden = !on; el('loading').hidden = true;
   if (!on && s.notice) say(s.notice, 'error');
+  signinMode(s);
+  if (!on && s.oauth && !devTimer) api('api/device').then(r => { if (r.state === 'pending') showCode(r); }).catch(() => {});
 }
 // 0.12.2: one tiny account control, top right. Signed in: "Signed in as <name>" and Sign out; signed out: Sign in.
 function account(s) {
@@ -151,14 +157,14 @@ el('acct-act').onclick = async () => {
   unpop();
   if (!(me && me.connected)) {
     el('refused').hidden = true; el('board').hidden = true; el('loading').hidden = true; el('signin').hidden = false;
-    return el('token').focus();
+    return (me && me.oauth && !tokenWanted ? el('oauth-go') : el('token')).focus();
   }
   const b = el('acct-act'); b.disabled = true;
   try { show(await api('api/disconnect', {})); say(''); }
   catch (err) { pop(b, '', err.message); }
   finally { b.disabled = false; }
 };
-el('refused-back').onclick = () => { el('refused').hidden = true; el('signin').hidden = false; el('token').focus(); };
+el('refused-back').onclick = () => { el('refused').hidden = true; el('signin').hidden = false; signinMode(me); (me && me.oauth && !tokenWanted ? el('oauth-go') : el('token')).focus(); };
 el('connect-form').onsubmit = async e => {
   e.preventDefault();
   const t = el('token'), b = el('connect');
@@ -167,6 +173,52 @@ el('connect-form').onsubmit = async e => {
   catch (err) { if (err.reason) { t.value = ''; refuse(err.reason, err.message); } else say(err.message, 'error'); }
   finally { b.disabled = false; t.disabled = false; }
 };
+
+// ---------- 0.13: Sign in with GitHub (device flow): one button, a code to type on GitHub, the box polls ----------
+let devTimer = null, tokenWanted = false;
+function signinMode(s) {
+  const oauth = !!(s && s.oauth), tokenMode = !oauth || tokenWanted;
+  el('oauth').hidden = !oauth;
+  el('connect-form').hidden = !tokenMode; el('token-help').hidden = !tokenMode;
+  el('oauth-go').hidden = tokenWanted || !el('oauth-code').hidden;
+  if (tokenWanted) el('oauth-code').hidden = true;
+  el('oauth-token').textContent = tokenWanted ? 'Sign in with GitHub instead' : 'Use a token instead';
+}
+function stopDevice() { clearTimeout(devTimer); devTimer = null; el('oauth-code').hidden = true; signinMode(me); }
+function showCode(r) {
+  el('oauth-user-code').textContent = r.user_code;
+  el('oauth-open').href = /^https:\/\//.test(r.verification_uri || '') ? r.verification_uri : 'https://github.com/login/device';
+  el('oauth-wait').textContent = 'Waiting for GitHub…';
+  el('oauth-code').hidden = false; el('oauth-go').hidden = true;
+  clearTimeout(devTimer); devTimer = setTimeout(pollDevice, 2500);
+}
+async function pollDevice() {
+  devTimer = null;
+  let r;
+  try { r = await api('api/device'); } catch (err) { devTimer = setTimeout(pollDevice, 5000); return; }
+  if (r.state === 'pending') { devTimer = setTimeout(pollDevice, 2500); return; }
+  stopDevice();
+  if (r.state === 'done' && r.status) { say(''); show(r.status); load(view); loadSide(); return; }
+  if (r.state === 'refused') return refuse(r.reason, r.message);
+  if (r.state !== 'none' && r.state !== 'cancelled') say(r.message || 'Sign-in did not finish. Try again.', 'error');
+}
+el('oauth-go').onclick = async () => {
+  const b = el('oauth-go'); b.disabled = true; say('Asking GitHub for a code…', 'note');
+  try { showCode(await api('api/device/start', {})); say(''); }
+  catch (err) { say(err.message, 'error'); }
+  finally { b.disabled = false; }
+};
+el('oauth-copy').onclick = async () => {
+  const code = el('oauth-user-code').textContent;
+  let ok = false;
+  try { await navigator.clipboard.writeText(code); ok = true; } catch (_) {
+    try { const r = document.createRange(); r.selectNodeContents(el('oauth-user-code')); const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); ok = document.execCommand('copy'); } catch (_) {}
+  }
+  el('oauth-copy').textContent = ok ? 'Copied' : 'Select it';
+  setTimeout(() => { el('oauth-copy').textContent = 'Copy'; }, 2000);
+};
+el('oauth-cancel').onclick = () => { api('api/device/cancel', {}).catch(() => {}); stopDevice(); say(''); };
+el('oauth-token').onclick = () => { tokenWanted = !tokenWanted; if (tokenWanted) { api('api/device/cancel', {}).catch(() => {}); clearTimeout(devTimer); devTimer = null; } signinMode(me); (tokenWanted ? el('token') : el('oauth-go')).focus(); };
 
 // ---------- Goals | Bugs ----------
 const sw = document.querySelector('.bd-switch');
@@ -346,11 +398,12 @@ const arrow = () => {
 };
 const STAT_HELP = {
   open: 'Time queued: opened → first building label',
-  build: 'Build time: first building → ready-to-test',
-  review: 'Time in review: ready-to-test → closed or kicked back',
+  build: 'Build time: first building → hand-off to AI review',
+  ai: 'Time in AI review: ai-review → passed on or sent back',
+  review: 'Time in Human review: ready-to-test → closed or kicked back',
   done: 'Total time: opened → closed',
 };
-const STAT_KEY = { open: 'queued', build: 'building', review: 'review', done: 'done' };
+const STAT_KEY = { open: 'queued', build: 'building', ai: 'ai', review: 'review', done: 'done' };
 // Same maths as the server's line_stats(), run after the view's own filters.
 function spread(xs) {
   xs = xs.filter(x => x != null).sort((a, b) => a - b);
@@ -362,11 +415,15 @@ function spread(xs) {
 function lineStats(items) {
   const reviewed = items.filter(i => i.tries), kicked = items.filter(i => i.kicks);
   const toDone = kicked.map(i => i.kick_to_done).filter(x => x != null);
+  const aiSeen = items.filter(i => i.ai_tries), aiKicked = items.filter(i => i.ai_kicks);
   return { queued: spread(items.map(i => i.wait)), building: spread(items.map(i => i.build)),
+    ai: spread(items.flatMap(i => i.ai_rounds || [])),
     review: spread(items.flatMap(i => i.review_rounds || [])), done: spread(items.map(i => i.total)),
     kick: { reviewed: reviewed.length, kicked: kicked.length, rate: reviewed.length ? kicked.length / reviewed.length : null,
       per: kicked.length ? kicked.reduce((a, i) => a + i.kicks, 0) / kicked.length : null,
-      toDone: toDone.length ? toDone.reduce((a, b) => a + b, 0) / toDone.length : null } };
+      toDone: toDone.length ? toDone.reduce((a, b) => a + b, 0) / toDone.length : null },
+    aiKick: { reviewed: aiSeen.length, kicked: aiKicked.length, rate: aiSeen.length ? aiKicked.length / aiSeen.length : null,
+      per: aiKicked.length ? aiKicked.reduce((a, i) => a + i.ai_kicks, 0) / aiKicked.length : null } };
 }
 // A tiny range bar: the typical middle half p25 → p75, a dot at the median, a thin accent tick at the target.
 // Log scale over whichever is wider, the range or the target, so the tick always sits on the bar.
@@ -409,7 +466,7 @@ const infoIcon = () => {
   const p = document.createElementNS(NS, 'path'); p.setAttribute('d', 'M8 7.2v4M8 4.9v.1'); svg.append(c, p); return svg;
 };
 function flow(d, groups, done, st, hist) {
-  steps = d.steps && d.steps.length === 3 ? d.steps : [];
+  steps = d.steps && d.steps.length >= 3 ? d.steps : [];
   const ls = st.pending || st.error ? null : lineStats(hist || []);
   const only = stage[d.view], out = [];
   BINS.forEach((x, n) => {
@@ -433,7 +490,9 @@ function flow(d, groups, done, st, hist) {
   el('ctl').replaceChildren(...BINS.map(x => {
     const c = make('div', 'bd-ctl'); c.dataset.step = x.key;
     const t = make('button', 'bd-tgt'); t.type = 'button';
-    t.append(make('span', 'bd-tgt-v', target(x.key) ? 'target ' + dur(target(x.key)) : 'set target'), make('span', 'bd-tgt-e', '✎'));
+    const tv = make('span', 'bd-tgt-v');
+    if (target(x.key)) tv.append(make('span', 'bd-tgt-k', 'target '), document.createTextNode(dur(target(x.key)))); else tv.textContent = 'set target';
+    t.append(tv, make('span', 'bd-tgt-e', '✎'));
     t.setAttribute('aria-label', `${x.word} target: ${target(x.key) ? 'under ' + dur(target(x.key)) : 'none'}. Change it`);
     t.onclick = () => editTarget(t, d.view, x);
     const info = make('button', 'bd-i'); info.type = 'button'; info.setAttribute('aria-label', `Who does ${x.word}?`); info.append(infoIcon());
@@ -486,17 +545,18 @@ function editTarget(anchor, which, x) {
 const pct = r => Math.round(r * 100) + '%';
 const times = x => (Math.round(x * 10) / 10) + '×';
 function kickLabel(ls, st) {
-  const k = el('kick');
-  const kk = ls && ls.kick;
-  k.hidden = !!st.pending;
-  if (st.pending) return;
-  const text = !kk || kk.rate == null ? '—' : kk.kicked ? `${pct(kk.rate)} · ${times(kk.per)}` : '0%';
-  k.textContent = text;
-  const why = !kk || kk.rate == null ? `Kicked back: ${NO_DATA}`
-    : `${pct(kk.rate)} of ${kk.reviewed} reviewed item${kk.reviewed === 1 ? '' : 's'} came back at least once` + (kk.kicked ? `, ${times(kk.per)} on average` : '')
-      + (kk.toDone != null ? `. ${dur(kk.toDone)} on average from first kick-back to done.` : '.');
-  k.title = why; k.setAttribute('aria-label', 'Doesn’t work goes back to Building. ' + why);
-  k.onclick = () => pop(k, 'Doesn’t work → back to Building', why);
+  // 0.13: two return arrows into Building: from AI review (fail) and from Human review (Doesn't work)
+  for (const [id, kk, from, word] of [['kick-ai', ls && ls.aiKick, 'AI review', 'AI review fail'], ['kick', ls && ls.kick, 'Human review', 'Doesn’t work']]) {
+    const k = el(id);
+    k.hidden = !!st.pending;
+    if (st.pending) continue;
+    k.textContent = !kk || kk.rate == null ? '—' : kk.kicked ? `${pct(kk.rate)} · ${times(kk.per)}` : '0%';
+    const why = !kk || kk.rate == null ? `Sent back from ${from}: ${NO_DATA}`
+      : `${pct(kk.rate)} of ${kk.reviewed} item${kk.reviewed === 1 ? '' : 's'} in ${from} came back at least once` + (kk.kicked ? `, ${times(kk.per)} on average` : '')
+        + (kk.toDone != null ? `. ${dur(kk.toDone)} on average from first kick-back to done.` : '.');
+    k.title = why; k.setAttribute('aria-label', `${word} goes back to Building. ` + why);
+    k.onclick = () => pop(k, `${word} → back to Building`, why);
+  }
 }
 function openStep(x, anchor, kind, extra = []) {
   if (x.key === 'open') {
@@ -504,8 +564,14 @@ function openStep(x, anchor, kind, extra = []) {
     const who = s ? s.role : kind === 'goals' ? 'James' : 'Anyone on the team';
     return pop(anchor, who, [kind === 'goals' ? 'Opens goals. They wait here until the builder picks them up.' : 'Opens bugs. They wait here until the builder picks them up.', ...extra]);
   }
-  const [who, text] = POP[x.key];
-  pop(anchor, x.key === 'build' && steps && steps[1] ? steps[1].role : who, [text, ...extra]);
+  const s = (steps || []).find(y => y.key === x.key);
+  let [who, text] = POP[x.key];
+  if (x.key === 'review') {
+    const n = (cache[kind] || {}).human_reviews || 1;
+    if (kind === 'goals') { who = s ? s.role : 'Goal owner or James'; text = 'The goal’s owner, or James, tries it: Works, or back to Building.'; }
+    if (n > 1) text += ` ${n} different people say Works before it’s done.`;
+  }
+  pop(anchor, (x.key === 'build' || x.key === 'ai') && s ? s.role : who, [text, ...extra]);
 }
 
 const dur = sec => {
@@ -545,7 +611,7 @@ function ownerChips(i) {
 
 // Try it (mock-up): a small switch on every row, live only in Review; never opens the row.
 function trySwitch(i) {
-  const live = i.group === 'test' || (i.labels || []).some(l => String(l).toLowerCase() === 'ready-to-test');
+  const live = i.group === 'test' || (i.group == null && (i.labels || []).some(l => String(l).toLowerCase() === 'ready-to-test'));  // Human review only
   const on = live && !!tries[tryKey(i)];
   const b = make('button', 'bd-try'); b.type = 'button'; b.setAttribute('role', 'switch');
   b.setAttribute('aria-checked', String(on)); b.setAttribute('aria-label', 'Try it');
@@ -555,7 +621,7 @@ function trySwitch(i) {
   b.addEventListener('keydown', stop); b.addEventListener('pointerdown', stop);
   b.onclick = async e => {
     e.preventDefault(); e.stopPropagation();
-    if (!live) return pop(b, '', 'Can be switched on once it’s in Review.');
+    if (!live) return pop(b, '', 'Can be switched on once it’s in Human review.');
     const next = b.getAttribute('aria-checked') !== 'true', k = tryKey(i);
     b.setAttribute('aria-checked', String(next)); b.disabled = true;
     try {
@@ -599,6 +665,7 @@ function row(i, kind) {
   }
   if (i.group === 'done' && i.closed_at) meta.append(make('span', 'bd-repo', ' · closed ' + when(i.closed_at)));
   a.append(meta);
+  if (i.group === 'airev') a.append(make('span', 'bd-aiwho', 'AI check: ' + (i.ai_reviewer || 'the opener’s agent')));
   wrap.append(a);
   if (i.group !== 'done') wrap.append(trySwitch(i));   // 0.9: no Try it on Done rows
   return wrap;
@@ -634,13 +701,20 @@ function testCard(t, kind) {
   if (kind === 'goals' && (t.assignees || []).length > 1) top.classList.add('multi');
   if (t.check) c.append(make('p', 'bd-check' + (kind === 'bugs' ? ' one' : ''), t.check));
   c.append(make('p', 'bd-hint', [repoName(t.repo), t.mine ? 'you' : nameOf(t.author) || t.opener || '', kind === 'bugs' ? age(t.created_at) : '', `${t.comments || 0} comments`].filter(Boolean).join(' · ')));
+  const rv = t.reviews || { done: 0, need: 1, by: [] };
+  if (rv.need > 1) {  // 0.13: a second, different human reviews it too
+    const pr = make('p', 'bd-revs'); pr.append(make('b', '', `${rv.done} of ${rv.need} reviews`));
+    if (rv.by && rv.by.length) pr.append(document.createTextNode(' · Works from ' + rv.by.join(', ')));
+    c.append(pr);
+  }
   // 0.12.2: the same buttons for everyone; on your own item (or your agent's) they explain who reviews it.
   const btns = make('div', 'bd-btns');
   const ok = make('button', 'wz-button', 'Works'); ok.type = 'button';
   const no = make('button', 'wz-button secondary', 'Doesn’t work'); no.type = 'button';
   btns.append(ok, no); c.append(btns);
-  if (t.mine) {
-    const why = e => { e.preventDefault(); pop(e.currentTarget, '', 'Someone else reviews this — you opened it.'); };
+  const rule = t.can_review === false ? (t.review_rule || 'Someone else reviews this — you opened it.') : t.can_review == null && t.mine ? 'Someone else reviews this — you opened it.' : '';
+  if (rule) {
+    const why = e => { e.preventDefault(); pop(e.currentTarget, '', rule); };
     ok.onclick = why; no.onclick = why;
     return c;
   }
@@ -653,9 +727,14 @@ function testCard(t, kind) {
     toast(msg); setTimeout(() => load(view, true), 1500);
   };
   ok.onclick = async () => {
+    if (t.reviewed_by_me) return pop(ok, '', `You already said Works. A second, different person reviews it too (${rv.done} of ${rv.need}).`);
     busy(true); status.textContent = '';
-    try { await api('api/test/works', { repo: t.repo, number: t.number }); done('Thanks — marked as working.'); }
-    catch (err) { busy(false); if (err.status === 403) pop(ok, '', err.message); else status.textContent = err.message; }
+    try {
+      const r = await api('api/test/works', { repo: t.repo, number: t.number });
+      if (r.final === false) { busy(false); hold(false); t.reviewed_by_me = true; toast(`Thanks — ${r.reviews.done} of ${r.reviews.need} reviews.`); setTimeout(() => load(view, true), 1500); return; }
+      done('Thanks — marked as working.');
+    }
+    catch (err) { busy(false); if (err.status === 403 || err.status === 409) pop(ok, '', err.message); else status.textContent = err.message; }
   };
   no.onclick = () => {
     const f = make('form', 'bd-fail'); f.autocomplete = 'off';
@@ -705,7 +784,8 @@ let openId = null;
 function roles(i) {
   const r = el('d-roles'), who = i.opener || i.author;
   r.hidden = !who;
-  r.textContent = who ? `Opened by ${who} · reviewed by anyone else on the team` : '';
+  const goal = i.kind === 'goal' || (i.labels || []).some(l => String(l).toLowerCase() === 'goal') || view === 'goals';
+  r.textContent = who ? `Opened by ${who} · AI review by their agent · ` + (goal ? 'human review by the goal’s owner or James' : 'human review by anyone else on the team') : '';
 }
 function openDetail(i) {
   const dlg = el('detail');
@@ -772,7 +852,7 @@ el('detail').addEventListener('close', () => { openId = null; unpop(); });
 
 // ---------- one item's own assembly line (its label timeline, fetched on tap, cached briefly) ----------
 const flows = new Map();
-const CUR = { queued: 'open', building: 'build', review: 'review', done: 'done' };
+const CUR = { queued: 'open', building: 'build', ai: 'ai', review: 'review', done: 'done' };
 function itemFlow(i) {
   const box = el('d-flow');
   box.replaceChildren(make('p', 'bd-meta bd-dflow-wait', ' '));
@@ -789,25 +869,26 @@ function drawItemFlow(f) {
   const val = {
     open: staged ? dur(f.spent.queued) : 'for ' + dur(f.spent.queued),
     build: staged && (f.spent.building || f.build != null) ? dur(f.spent.building) : '—',
+    ai: staged && (f.spent.ai || f.ai_tries) ? dur(f.spent.ai) : '—',
     review: staged && (f.spent.review || f.tries) ? dur(f.spent.review) : '—',
     done: closedDate ? closedDate.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '—',
   };
   const cur = CUR[f.stage] || 'open';
   BINS.forEach((x, n) => {
     if (n) ol.append(arrow());
-    const reached = x.key === 'open' || (x.key === 'build' && val.build !== '—') || (x.key === 'review' && val.review !== '—') || (x.key === 'done' && !!closedDate);
+    const reached = x.key === 'open' || (['build', 'ai', 'review'].includes(x.key) && val[x.key] !== '—') || (x.key === 'done' && !!closedDate);
     const li = make('li', 'bd-dbin' + (x.key === cur ? ' cur' : '') + (!reached && x.key !== cur ? ' dim' : ''));
     li.append(make('span', 'bd-dbin-v', val[x.key]), make('span', 'bd-dbin-w', x.word));
-    li.title = { open: 'Time spent queued', build: 'Time spent building', review: 'Time spent in review', done: 'Closed on' }[x.key];
+    li.title = { open: 'Time spent queued', build: 'Time spent building', ai: 'Time spent in AI review', review: 'Time spent in Human review', done: 'Closed on' }[x.key];
     li.setAttribute('aria-label', `${x.word}: ${val[x.key]}${x.key === cur ? ' (now)' : ''}`);
     ol.append(li);
   });
-  const loop = make('p', 'bd-loop bd-dloop'); loop.setAttribute('role', 'img');
-  const k = make('span', 'bd-kick', f.kicks ? f.kicks + '×' : '0×');
-  loop.setAttribute('aria-label', `Kicked back ${f.kicks || 0} time${f.kicks === 1 ? '' : 's'}`);
-  loop.title = `Kicked back ${f.kicks || 0}×` + (f.kick_to_done != null ? ` · ${dur(f.kick_to_done)} from first kick-back to done` : '');
-  loop.classList.toggle('none', !f.kicks);
-  loop.append(k);
+  const loop = make('p', 'bd-loop bd-loops bd-dloop'); loop.setAttribute('role', 'img');
+  const ka = make('span', 'bd-kick bd-kick-ai', (f.ai_kicks || 0) + '×'), k = make('span', 'bd-kick bd-kick-h', (f.kicks || 0) + '×');
+  loop.setAttribute('aria-label', `Sent back by AI review ${f.ai_kicks || 0} time${f.ai_kicks === 1 ? '' : 's'}, by Human review ${f.kicks || 0} time${f.kicks === 1 ? '' : 's'}`);
+  loop.title = `AI review sent it back ${f.ai_kicks || 0}× · Human review ${f.kicks || 0}×` + (f.kick_to_done != null ? ` · ${dur(f.kick_to_done)} from first kick-back to done` : '');
+  loop.classList.toggle('none', !f.kicks && !f.ai_kicks);
+  loop.append(make('i', 'bd-loop2'), ka, k);
   const wrap = make('div', 'bd-flow bd-dflowx'); wrap.append(ol, loop);
   box.replaceChildren(wrap);
   if (!staged && f.state === 'open') box.append(make('p', 'bd-meta bd-dflow-note', `Queued for ${dur(f.spent.queued)} · no build yet`));
@@ -817,7 +898,7 @@ function drawItemFlow(f) {
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizard-os-tracker', version: '0.12.2' });
+  WizardApp.ready({ name: 'wizard-os-tracker', version: '0.13.0' });
   WizardApp.back.register({ canGoBack: () => false, back: () => false });
 }
 for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));

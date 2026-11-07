@@ -397,3 +397,47 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
 .bd-acct-act:disabled { opacity: .45; }
 .bd-d-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--wz-space-3); flex-wrap: wrap; }
 .bd-d-close[hidden] { display: none !important; }
+
+/* 0.13: five bins (Queued → Building → AI review → Human review → Done) and two return arrows into Building:
+   a short one from AI review and a deeper one from Human review, each with its kick-back label. */
+.bd-flow { grid-template-columns: 1fr var(--ga) 1fr var(--ga) 1fr var(--ga) 1fr var(--ga) 1fr; }
+.bd-ctl[data-step="ai"] { grid-column: 5; }
+.bd-ctl[data-step="review"] { grid-column: 7; }
+.bd-ctl[data-step="done"] { grid-column: 9; }
+.bd-bin-w { text-align: center; line-height: 1.15; }
+.bd-loop.bd-loops { grid-column: 3 / 8; height: 46px; --c2: calc((100% - 2 * var(--ga)) / 6); }
+.bd-loop.bd-loops::before { left: var(--c2); right: 50%; height: 11px; border-radius: 0 0 8px 8px; }
+.bd-loop.bd-loops::after { left: calc(var(--c2) - 4.25px); }
+.bd-loop2 { position: absolute; left: var(--c2); right: var(--c2); top: 0; height: 26px; border: 1.5px solid var(--ink-3); border-top: 0; border-radius: 0 0 12px 12px; pointer-events: none; }
+.bd-loops .bd-kick { min-height: 0; height: 16px; line-height: 16px; padding: 0 6px; }
+.bd-loops .bd-kick-ai { left: calc((var(--c2) + 50%) / 2); top: 10px; }
+.bd-loops .bd-kick-h { left: 50%; top: 27px; }
+.bd-dloop.bd-loops { height: 44px; }
+.bd-dloop.none .bd-loop2 { opacity: .5; }
+@media (max-width: 640px) {
+  .bd-flow { --ga: 13px; }
+  .bd-arrow svg { width: 11px; }
+  .bd-bin-w { font-size: 10.5px; }
+  .bd-tgt-k { display: none; }
+  .bd-bin-n { font-size: 1.6rem; }
+}
+@media (max-width: 380px) { .bd-flow { --ga: 11px; } .bd-bin-w { font-size: 10px; } }
+.bd-aiwho { display: block; margin-top: 2px; font-size: 12px; color: var(--ink-3); }
+.bd-revs { margin: 0 0 8px; font-size: 12.5px; color: var(--ink-2); }
+.bd-revs b { color: var(--accent); font-variant-numeric: tabular-nums; }
+/* 0.13: Sign in with GitHub (device flow) */
+.bd-oauth { display: grid; gap: var(--wz-space-3, 12px); justify-items: start; }
+.bd-oauth[hidden], .bd-oauth-code[hidden], #connect-form[hidden], #token-help[hidden] { display: none !important; }
+.bd-oauth-code { display: grid; gap: 8px; justify-items: start; }
+.bd-oauth-code .bd-meta { margin: 0; }
+.bd-code { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0; }
+.bd-code b { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 2rem; font-weight: 700; letter-spacing: .12em; color: var(--ink); user-select: all; }
+.bd-copy { min-height: 36px; }
+.bd-open-gh { text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+.bd-use-token { font-size: var(--wz-text-xs, .75rem); }
+.bd-oauth + .bd-form { margin-top: var(--wz-space-3, 12px); }
+/* Five bins on a phone: only the median stays (p25/p75 live in the ⓘ popover and the tooltip). */
+@media (max-width: 640px) { .bd-rn .lo, .bd-rn .hi { display: none; } .bd-rn { justify-content: center; } }
+.bd-signin:has(#oauth:not([hidden])) .bd-h1 { display: none; }
+.bd-oauth, .bd-oauth-code { justify-items: center; text-align: center; }
+.bd-oauth { margin-top: 4px; }

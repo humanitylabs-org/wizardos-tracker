@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Wizard OS Tracker",
-    "version": "0.12.2",
-    "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged."
+    "version": "0.13.0",
+    "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged. 0.13: two-step review (Queued → Building → AI review [label ai-review] → Human review [label ready-to-test] → Done; AI review is agents-only via MCP ai_review_pass / ai_review_fail; policy human_reviews 1|2) and Sign in with GitHub via the OAuth device flow (no client secret)."
   },
   "paths": {
     "/healthz": {
@@ -798,7 +798,7 @@
     },
     "/api/test/works": {
       "post": {
-        "summary": "Comment 'Tested: works — @login', remove ready-to-test, add approved. Does not close.",
+        "summary": "Comment 'Tested: works — @login', remove ready-to-test, add approved. Does not close. 0.13 Human review: bugs = anyone but the opener; goals = goal owners (assignees) or James. Works counts toward policy human_reviews (1|2): returns reviews {done, need} and final; with 2, approved is added only after a second, different person (409 already_reviewed if you said Works already). Doesn't work goes back to Building (adds building). 409 reason ai_review while still in AI review.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -820,7 +820,7 @@
     },
     "/api/test/fails": {
       "post": {
-        "summary": "Comment what went wrong and remove ready-to-test. Body: repo, number, note.",
+        "summary": "Comment what went wrong and remove ready-to-test. Body: repo, number, note. 0.13: Doesn't work removes ready-to-test and adds building (back to Building).",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1146,7 +1146,7 @@
     },
     "/api/targets": {
       "get": {
-        "summary": "Shared step targets (seconds) for both views: {targets: {bugs: {queued, building, review, done}, goals: {...}}}. The same for everyone.",
+        "summary": "Shared step targets (seconds) for both views: {targets: {bugs: {queued, building, ai, review, done}, goals: {...}}}. The same for everyone. 0.13 defaults: ai 30m, review (Human review) 1d.",
         "responses": {
           "200": {
             "description": "Targets"
@@ -1174,10 +1174,11 @@
                     "enum": [
                       "queued",
                       "building",
+                      "ai",
                       "review",
                       "done"
                     ],
-                    "description": "Aliases open, build, test accepted."
+                    "description": "ai = AI review, review = Human review. Aliases open, build, ai-review, human, test accepted."
                   },
                   "seconds": {
                     "oneOf": [
@@ -1214,6 +1215,220 @@
           },
           "403": {
             "description": "Not a signed-in human member of humanitylabs-org (reason not_member or agent; the saved account is signed out)"
+          }
+        }
+      }
+    },
+    "/api/device/start": {
+      "post": {
+        "summary": "Sign in with GitHub (0.13, OAuth device flow, no client secret). The box POSTs https://github.com/login/device/code (scope \"repo read:org\") with the configured client id and starts polling https://github.com/login/oauth/access_token server-side (respecting interval, slow_down, expired_token, access_denied). Returns the user_code to type at verification_uri; the device_code never leaves the box.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Pending flow",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "pending",
+                        "done",
+                        "refused",
+                        "expired",
+                        "denied",
+                        "error",
+                        "cancelled"
+                      ]
+                    },
+                    "user_code": {
+                      "type": "string"
+                    },
+                    "verification_uri": {
+                      "type": "string"
+                    },
+                    "interval": {
+                      "type": "integer"
+                    },
+                    "expires_in": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "status": {
+                      "type": "object",
+                      "description": "The /api/status body once done."
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No client id set (reason no_client_id): use the token paste flow."
+          },
+          "502": {
+            "description": "GitHub refused or unreachable (reason = the GitHub error, e.g. device_flow_disabled)."
+          }
+        }
+      }
+    },
+    "/api/device": {
+      "get": {
+        "summary": "This person's device-flow sign-in: pending (keep showing the code), done (signed in; includes status), refused (not on the team or an agent account: reason not_member | agent; nothing saved), expired, denied, error, or none. The token goes through the same team + human-only checks as POST /api/connect and is stored the same way.",
+        "responses": {
+          "200": {
+            "description": "Flow state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "enum": [
+                        "none",
+                        "pending",
+                        "done",
+                        "refused",
+                        "expired",
+                        "denied",
+                        "error",
+                        "cancelled"
+                      ]
+                    },
+                    "user_code": {
+                      "type": "string"
+                    },
+                    "verification_uri": {
+                      "type": "string"
+                    },
+                    "interval": {
+                      "type": "integer"
+                    },
+                    "expires_in": {
+                      "type": "integer"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "reason": {
+                      "type": "string",
+                      "nullable": true
+                    },
+                    "status": {
+                      "type": "object",
+                      "description": "The /api/status body once done."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/device/cancel": {
+      "post": {
+        "summary": "Stop a pending device-flow sign-in.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {}
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{state: none, oauth}"
+          }
+        }
+      }
+    },
+    "/api/settings/github-client-id": {
+      "get": {
+        "summary": "Is Sign in with GitHub set up? {set, client_id, source: policy | env | null, scope, note}. The client id is public; no client secret is used or stored.",
+        "responses": {
+          "200": {
+            "description": "Client id info"
+          }
+        }
+      },
+      "post": {
+        "summary": "Set the GitHub OAuth App client id (Device Flow enabled) for this box, saved to DATA_DIR/policy.json github_client_id (overrides env GITHUB_CLIENT_ID). Signed-in team members only. '' clears it. Refuses anything that looks like a token or a client secret.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "client_id": {
+                    "type": "string",
+                    "description": "Like Ov23li… or Iv1.…"
+                  }
+                },
+                "required": [
+                  "client_id"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Client id info"
+          },
+          "400": {
+            "description": "Not a client id (or looks like a token/secret)."
+          },
+          "401": {
+            "description": "Sign in first."
+          },
+          "403": {
+            "description": "Not a signed-in human team member."
+          }
+        }
+      }
+    },
+    "/api/ai-review/pass": {
+      "post": {
+        "summary": "AI review pass is for agents only: always 403 reason agents_only here. Agents use the MCP tool ai_review_pass {issue, note} on /mcp.",
+        "responses": {
+          "403": {
+            "description": "agents_only"
+          }
+        }
+      }
+    },
+    "/api/ai-review/fail": {
+      "post": {
+        "summary": "AI review fail is for agents only: always 403 reason agents_only here. Agents use the MCP tool ai_review_fail {issue, note} on /mcp.",
+        "responses": {
+          "403": {
+            "description": "agents_only"
           }
         }
       }

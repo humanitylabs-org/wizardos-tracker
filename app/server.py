@@ -9,6 +9,7 @@ import html as htmllib
 import json
 import os
 import re
+import secrets
 import threading
 import time
 import urllib.error
@@ -17,16 +18,21 @@ from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Path(os.environ.get('APP_ROOT', '.')).resolve()
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'wizard-os-tracker'  # 0.12: id follows the name (was board; renamed_from in wizard.md)
-VERSION = '0.12.2'
+VERSION = '0.13.0'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
+# 0.13: Sign in with GitHub (OAuth device flow). No client secret: only a public client id, set by a team
+# member (POST /api/settings/github-client-id), in DATA_DIR/policy.json `github_client_id`, or env GITHUB_CLIENT_ID.
+GITHUB_WEB = os.environ.get('GITHUB_WEB', 'https://github.com').rstrip('/')
+DEVICE_SCOPE = 'repo read:org'
+CLIENT_ID = re.compile(r'^[A-Za-z0-9._-]{8,80}$')
 # Only these people may open Goals in the app (GitHub logins, comma separated).
 GOAL_AUTHORS = {x.strip().lower() for x in os.environ.get('GOAL_AUTHORS', 'jdefleur').split(',') if x.strip()}
 # The builder agent's GitHub account: it labels finished work ready-to-test and says what to check.
@@ -342,7 +348,7 @@ def graphql(token, query, variables, cache=True):
 
 # ---------- account ----------
 
-def connect(person, args):
+def connect(person, args, via='token'):
     token = args.get('token')
     if not isinstance(token, str) or not 20 <= len(token.strip()) <= 400 or any(c.isspace() for c in token.strip()):
         raise Problem(400, 'Paste a GitHub personal access token (it starts with github_pat_ or ghp_).')
@@ -365,9 +371,10 @@ def connect(person, args):
         raise Problem(403, NOT_HUMAN, 'agent')
     if not team_member(token, login):
         raise not_member_problem(token, login)
-    kind = 'fine-grained' if token.startswith('github_pat_') else 'classic' if token.startswith('ghp_') else 'token'
+    kind = ('fine-grained' if token.startswith('github_pat_') else 'classic' if token.startswith('ghp_')
+            else 'oauth' if token.startswith('gho_') or via == 'github' else 'token')
     acct = {'token': token, 'login': user.get('login'), 'name': user.get('name'), 'avatar_url': user.get('avatar_url'),
-            'html_url': user.get('html_url'), 'kind': kind, 'scopes': scopes, 'saved_at': int(time.time())}
+            'html_url': user.get('html_url'), 'kind': kind, 'scopes': scopes, 'saved_at': int(time.time()), 'via': via}
     with LOCK:
         a = accounts()
         key = person_key(person)
@@ -376,6 +383,160 @@ def connect(person, args):
             a['default'] = key
         _write('accounts.json', a)
     return status(person)
+
+
+# ---------- 0.13: Sign in with GitHub (OAuth device flow, no client secret) ----------
+
+_device = {}  # person key -> flow (device_code stays on the box, never returned)
+
+
+def github_client_id():
+    """policy.json `github_client_id` (set from the app by a team member), else env GITHUB_CLIENT_ID; None = token paste only."""
+    for v in (_policy_file().get('github_client_id'), os.environ.get('GITHUB_CLIENT_ID')):
+        if isinstance(v, str) and CLIENT_ID.match(v.strip()):
+            return v.strip()
+    return None
+
+
+def client_id_info():
+    pv = _policy_file().get('github_client_id')
+    src = 'policy' if isinstance(pv, str) and CLIENT_ID.match(pv.strip()) else 'env' if github_client_id() else None
+    return {'set': bool(src), 'client_id': github_client_id(), 'source': src, 'scope': DEVICE_SCOPE,
+            'note': 'A GitHub OAuth App client id with Device Flow enabled. No client secret is used or stored.'}
+
+
+def set_client_id(person, args):
+    """POST /api/settings/github-client-id {client_id}: team members only (gated); '' clears it."""
+    v = args.get('client_id')
+    if not isinstance(v, str) or (v.strip() and not CLIENT_ID.match(v.strip())):
+        raise Problem(400, 'Paste the OAuth App client id (letters, digits, dots; for example Ov23li…). Never the client secret.')
+    if v.strip().lower().startswith(('ghp_', 'gho_', 'github_pat_')) or len(v.strip()) == 40 and re.fullmatch(r'[0-9a-f]{40}', v.strip()):
+        raise Problem(400, 'That looks like a token or a client secret. Paste only the client id.')
+    with LOCK:
+        over = _policy_file()
+        if v.strip():
+            over['github_client_id'] = v.strip()
+        else:
+            over.pop('github_client_id', None)
+        over['github_client_id_changed'] = {'by': (accounts()['people'].get(person_key(person)) or {}).get('login') or person_key(person), 'at': int(time.time())}
+        _write_policy(over)
+    return client_id_info()
+
+
+def _gh_form(url, fields):
+    """POST a form to github.com (device flow endpoints), JSON back. -> (status, dict or None)."""
+    req = urllib.request.Request(url, data=urlencode(fields).encode(), method='POST',
+                                 headers={'Accept': 'application/json', 'Content-Type': 'application/x-www-form-urlencoded',
+                                          'User-Agent': 'wizard-board/' + VERSION})
+    try:
+        with urllib.request.urlopen(req, timeout=20) as r:
+            return r.status, json.loads(r.read(1 << 16) or b'{}')
+    except urllib.error.HTTPError as e:
+        try:
+            return e.code, json.loads(e.read(1 << 16) or b'{}')
+        except ValueError:
+            return e.code, None
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return 0, None
+
+
+DEVICE_ERRORS = {
+    'device_flow_disabled': 'Device flow is turned off for this GitHub app. An owner turns on "Enable Device Flow" in its settings.',
+    'incorrect_client_credentials': 'GitHub does not know this client id. Check the id in the Tracker settings.',
+    'unsupported_grant_type': 'GitHub refused the sign-in request.', 'incorrect_device_code': 'GitHub lost this sign-in. Start again.',
+    'access_denied': 'You cancelled on GitHub. Start again to sign in.', 'expired_token': 'The code expired. Start again.',
+}
+
+
+def device_public(flow, person=None):
+    if not flow:
+        return {'state': 'none', 'oauth': bool(github_client_id())}
+    out = {k: flow.get(k) for k in ('state', 'user_code', 'verification_uri', 'interval', 'message', 'reason')}
+    out['expires_in'] = max(0, int(flow['expires_at'] - time.time()))
+    if flow['state'] == 'done':
+        out['status'] = status(person)
+    return out
+
+
+def device_start(person):
+    """POST /api/device/start: ask GitHub for a device code; the box polls for the token in the background."""
+    cid = github_client_id()
+    if not cid:
+        raise Problem(404, 'Sign in with GitHub is not set up on this box yet. Use a token instead.', 'no_client_id')
+    code, d = _gh_form(GITHUB_WEB + '/login/device/code', {'client_id': cid, 'scope': DEVICE_SCOPE})
+    d = d if isinstance(d, dict) else {}
+    if code != 200 or not d.get('device_code') or not d.get('user_code'):
+        err = d.get('error')
+        raise Problem(502, DEVICE_ERRORS.get(err) or ('Could not reach GitHub. Try again.' if not code else f'GitHub answered {code}' + (f' ({err}).' if err else '.')), err)
+    uri = d.get('verification_uri') if str(d.get('verification_uri') or '').startswith('https://') else 'https://github.com/login/device'
+    flow = {'id': secrets.token_hex(8), 'device_code': d['device_code'], 'user_code': str(d['user_code'])[:20], 'verification_uri': uri,
+            'interval': max(5, int(d.get('interval') or 5)), 'expires_at': time.time() + max(60, min(int(d.get('expires_in') or 900), 1800)),
+            'state': 'pending', 'message': '', 'reason': None, 'client_id': cid, 'person': person}
+    key = person_key(person)
+    with LOCK:
+        old = _device.get(key)
+        if old and old['state'] == 'pending':
+            old['state'] = 'cancelled'
+        _device[key] = flow
+    threading.Thread(target=device_run, args=(flow,), daemon=True).start()
+    return device_public(flow, person)
+
+
+def device_poll_once(flow, now=None, wait=None):
+    """One poll of POST /login/oauth/access_token. Returns seconds to wait before the next poll, or None when the
+    flow finished (flow['state'] = done | refused | expired | denied | error | cancelled). Respects interval and slow_down."""
+    if flow['state'] != 'pending':
+        return None
+    now = now if now is not None else time.time()
+    if now >= flow['expires_at']:
+        flow.update(state='expired', message=DEVICE_ERRORS['expired_token'], device_code=None)
+        return None
+    code, d = _gh_form(GITHUB_WEB + '/login/oauth/access_token', {'client_id': flow['client_id'], 'device_code': flow['device_code'],
+                                                                  'grant_type': 'urn:ietf:params:oauth:grant-type:device_code'})
+    d = d if isinstance(d, dict) else {}
+    if flow['state'] != 'pending':  # cancelled while we waited
+        return None
+    if d.get('access_token'):
+        flow['device_code'] = None
+        try:
+            connect(flow['person'], {'token': d['access_token']}, via='github')  # the same checks as a pasted token
+            flow.update(state='done', message='Signed in.')
+        except Problem as e:
+            flow.update(state='refused' if e.reason in ('agent', 'not_member') else 'error', message=e.message, reason=e.reason)
+        return None
+    err = d.get('error')
+    if err == 'authorization_pending':
+        return flow['interval']
+    if err == 'slow_down':
+        flow['interval'] = max(flow['interval'] + 5, int(d.get('interval') or 0))
+        return flow['interval']
+    if err in ('expired_token', 'access_denied', 'incorrect_device_code', 'device_flow_disabled', 'incorrect_client_credentials', 'unsupported_grant_type'):
+        flow.update(state='expired' if err == 'expired_token' else 'denied' if err == 'access_denied' else 'error',
+                    message=DEVICE_ERRORS[err], reason=err, device_code=None)
+        return None
+    # GitHub unreachable or an unknown answer: keep trying (gently) until the code expires
+    return flow['interval'] + (5 if not code or code >= 500 else 0)
+
+
+def device_run(flow, sleep=time.sleep):
+    wait = flow['interval']
+    while wait is not None:
+        sleep(wait)
+        wait = device_poll_once(flow)
+
+
+def device_status(person):
+    with LOCK:
+        flow = _device.get(person_key(person))
+    return device_public(flow, person)
+
+
+def device_cancel(person):
+    with LOCK:
+        flow = _device.pop(person_key(person), None)
+    if flow and flow['state'] == 'pending':
+        flow.update(state='cancelled', device_code=None)
+    return {'state': 'none', 'oauth': bool(github_client_id())}
 
 
 def disconnect(person):
@@ -405,7 +566,7 @@ def status(person=None):
     a = accounts()
     acct = None if dead else a['people'].get(person_key(person))
     return {'refused': refused, 'notice': notice, 'team_org': TEAM_ORG, 'connected': bool(acct and acct.get('token')), 'account': public_account(acct) if acct else None,
-            'org': settings()['org'], 'token_url': TOKEN_URL,
+            'org': settings()['org'], 'token_url': TOKEN_URL, 'oauth': bool(github_client_id()),
             'agent_account': (a['people'].get(a.get('default')) or {}).get('login'), 'version': VERSION,
             'can_goal': bool(acct and (acct.get('login') or '').lower() in GOAL_AUTHORS),
             'default_repo': DEFAULT_REPO, 'screenshots': bool(acct and acct.get('token') and _media_ready(acct['token']))}
@@ -1038,30 +1199,43 @@ def board_split(person, args):
     if args.get('refresh'):
         _forget(acct['token'])
     nodes, total = _view_nodes(acct['token'], q, heavy=view == 'goals')
-    if view == 'bugs':  # the few waiting for a test get the heavy fields (what to check)
-        full, _ = _view_nodes(acct['token'], q.replace(' sort:', ' label:ready-to-test sort:'), heavy=True, limit=80)
+    if view == 'bugs':  # the few in AI or Human review get the heavy fields (what to check, review comments)
+        full, _ = _view_nodes(acct['token'], q.replace(' sort:', ' label:ready-to-test,ai-review sort:'), heavy=True, limit=80)
         by = {(n['repository']['nameWithOwner'], n['number']): n for n in full}
         nodes = [by.get((n['repository']['nameWithOwner'], n['number']), n) for n in nodes]
     t, now = _tid(acct['token']), time.time()
     with LOCK:
         hidden = {i for (k, i), v in _tested.items() if k == t and now - v <= RECENT_SECONDS}
         made = [v for (k, _), v in _made.items() if k == t and now - v[0] <= RECENT_SECONDS and v[1] == ('goals' if view == 'goals' else 'issues')]
-    groups = {'test': [], 'building': [], 'queued': []}
+    # 0.13: test = Human review (label ready-to-test, as before), airev = AI review (label ai-review)
+    groups = {'test': [], 'airev': [], 'building': [], 'queued': []}
     base = policy_base()
     for n in nodes:
         names = {l['name'].lower() for l in (n.get('labels') or {}).get('nodes') or []}
         author = (n.get('author') or {}).get('login') or ''
         mine = same_person(author, login, base)  # a person and their own agent count as one: they never review it
         iid = f"{n['repository']['nameWithOwner']}#{n['number']}"
-        if 'ready-to-test' in names and iid not in hidden:
+        assignees = [a.get('login') for a in (n.get('assignees') or {}).get('nodes') or [] if a and a.get('login')]
+        kind = 'goal' if view == 'goals' else 'bug'
+        extra = {}
+        if HUMAN_LABEL in names and iid not in hidden:
             group, card = 'test', _card(n, 'test')
             if view == 'goals':
                 card['owner'] = _card(n, 'goals')['owner']
+            ok, rule = human_rule(kind, author, assignees, login, base)
+            prog = review_progress(list(((n.get('comments') or {}).get('nodes') or [])), base)
+            extra = {'can_review': ok, 'review_rule': rule, 'reviews': prog,
+                     'reviewed_by_me': person_of(login, base).lower() in {b.lower() for b in prog['by']}}
+        elif AI_LABEL in names:
+            group, card = 'airev', _card(n, 'test')
+            if view == 'goals':
+                card['owner'] = _card(n, 'goals')['owner']
+            extra = {'ai_reviewer': ai_reviewers(kind, author, assignees, base)[1]}
         else:
             group = 'building' if 'building' in names else 'queued'
             card = _card(n, 'goals' if view == 'goals' else 'issues')
         card.update(group=group, mine=mine, can_close=mine, opener=person_of(author, base), created_at=n.get('createdAt'),
-                    labels=[l['name'] for l in (n.get('labels') or {}).get('nodes') or []])
+                    labels=[l['name'] for l in (n.get('labels') or {}).get('nodes') or []], **extra)
         groups[group].append(card)
     have = {i['id'] for g in groups.values() for i in g}
     for _, _, it in made:
@@ -1077,14 +1251,14 @@ def board_split(person, args):
     shown = sum(len(g) for g in groups.values())
     others_test = [c for c in groups['test'] if not c['mine']]
     return {'view': view, 'org': org, 'login': login, 'me_person': person_of(login, base), 'steps': steps_for(view, base), 'groups': groups,
-            'targets': base['targets'][view], 'names': display_names(base), 'since': base['since'],
+            'targets': base['targets'][view], 'names': display_names(base), 'since': base['since'], 'human_reviews': base['human_reviews'],
             # 0.9: Bugs shows a Repo chip for every non-archived org repo (owner/name), even with 0 open bugs
             'repos': org_repos(acct['token'], org) if view == 'bugs' else [],
             'counts': {k: len(v) for k, v in groups.items()}, 'done': stats.get('done', 0),
             'stats': {**stats, 'summary': None if stats.get('pending') else summarize(stats.get('items', []))},
             'total': total, 'shown': shown, 'more': total > len(nodes),
             # 0.3 shape, kept for older views and scripts
-            'test': others_test, 'doing': [c for c in groups['test'] if c['mine']] + groups['building'] + groups['queued']}
+            'test': others_test, 'doing': [c for c in groups['test'] if c['mine']] + groups['airev'] + groups['building'] + groups['queued']}
 
 
 # ---------- bottleneck stats (label history, cached 5 min per token/org/view) ----------
@@ -1102,25 +1276,34 @@ def _ts(iso):
 def history_of(ev, opened, closed_at, state, now=None):
     """One issue's workflow numbers from its sorted label/close events [(ts, kind, label)], kinds
     LabeledEvent | UnlabeledEvent | ClosedEvent | ReopenedEvent. Seconds; None when a step never happened.
-    wait = opened -> first `building`; build = first `building` -> first `ready-to-test`;
-    review_rounds = each `ready-to-test` stint that ended (closed or kicked back); total = opened -> closed;
-    tries = times labelled ready-to-test; kicks = ready-to-test removed without a close or `approved`
-    within 10 minutes (that is \"Doesn't work\"); kick_to_done = first kick-back -> closed;
-    spent = time this item spent in each stage (queued/building/review), done = closed time."""
+    0.13 line: queued -> building -> ai (label `ai-review`) -> review (label `ready-to-test`, human review) -> done.
+    wait = opened -> first `building`; build = first `building` -> first hand-off (`ai-review` or `ready-to-test`);
+    ai_rounds / review_rounds = each AI / human review stint that ended (passed on, closed or kicked back);
+    total = opened -> closed; tries = times labelled ready-to-test; ai_tries = times labelled ai-review;
+    kicks = ready-to-test removed without a close or `approved` within 10 minutes (Doesn't work);
+    ai_kicks = ai-review removed without ready-to-test or a close within 10 minutes (AI review fail);
+    kick_to_done = first human kick-back -> closed; spent = time in each stage; done = closed time.
+    Items from before 0.13 (ready-to-test straight from building) simply skip the AI step."""
     now = now or time.time()
     first_build = next((t for t, k, l in ev if k == 'LabeledEvent' and l == 'building'), None)
-    first_ready = next((t for t, k, l in ev if k == 'LabeledEvent' and l == 'ready-to-test'), None)
+    first_ready = next((t for t, k, l in ev if k == 'LabeledEvent' and l in ('ai-review', 'ready-to-test')), None)
     tries = sum(1 for t, k, l in ev if k == 'LabeledEvent' and l == 'ready-to-test')
-    kick_times = []
+    ai_tries = sum(1 for t, k, l in ev if k == 'LabeledEvent' and l == 'ai-review')
+    kick_times, ai_kick_times = [], []
     for t, k, l in ev:
         if k == 'UnlabeledEvent' and l == 'ready-to-test':
             soon = [x for x in ev if t <= x[0] <= t + 600]
             if not any(x[1] == 'ClosedEvent' or (x[1] == 'LabeledEvent' and x[2] == 'approved') for x in soon):
                 kick_times.append(t)
-    # Walk the timeline as a small state machine: queued -> building -> review -> (kick: building) -> done.
-    spent = {'queued': 0.0, 'building': 0.0, 'review': 0.0}
-    rounds, stage, since, built, review_from = [], 'queued', opened if opened is not None else (ev[0][0] if ev else now), False, None
-    kicks_set = set(kick_times)
+        elif k == 'UnlabeledEvent' and l == 'ai-review':
+            near = [x for x in ev if t - 600 <= x[0] <= t + 600]
+            if not any(x[1] == 'ClosedEvent' or (x[1] == 'LabeledEvent' and x[2] == 'ready-to-test') for x in near):
+                ai_kick_times.append(t)
+    # Walk the timeline as a small state machine: queued -> building -> ai -> review -> (kick: building) -> done.
+    spent = {'queued': 0.0, 'building': 0.0, 'ai': 0.0, 'review': 0.0}
+    rounds, ai_rounds = [], []
+    stage, since, built, review_from, ai_from = 'queued', opened if opened is not None else (ev[0][0] if ev else now), False, None, None
+    kicks_set, ai_kicks_set = set(kick_times), set(ai_kick_times)
     def move(to, t):
         nonlocal stage, since
         if stage in spent and t >= since:
@@ -1130,16 +1313,27 @@ def history_of(ev, opened, closed_at, state, now=None):
         if k == 'LabeledEvent' and l == 'building' and stage == 'queued':
             built = True
             move('building', t)
-        elif k == 'LabeledEvent' and l == 'ready-to-test' and stage in ('queued', 'building'):
+        elif k == 'LabeledEvent' and l == 'ai-review' and stage in ('queued', 'building'):
             built = True
+            ai_from = t
+            move('ai', t)
+        elif k == 'LabeledEvent' and l == 'ready-to-test' and stage in ('queued', 'building', 'ai'):
+            built = True
+            if stage == 'ai' and ai_from is not None:
+                ai_rounds.append(t - ai_from)
             review_from = t
             move('review', t)
+        elif k == 'UnlabeledEvent' and l == 'ai-review' and stage == 'ai' and t in ai_kicks_set:
+            ai_rounds.append(t - ai_from)
+            move('building', t)
         elif k == 'UnlabeledEvent' and l == 'ready-to-test' and stage == 'review' and t in kicks_set:
             rounds.append(t - review_from)
             move('building', t)
         elif k == 'ClosedEvent' and stage != 'done':
             if stage == 'review' and review_from is not None:
                 rounds.append(t - review_from)
+            if stage == 'ai' and ai_from is not None:
+                ai_rounds.append(t - ai_from)
             move('done', t)
         elif k == 'ReopenedEvent' and stage == 'done':
             move('building' if built else 'queued', t)
@@ -1153,18 +1347,21 @@ def history_of(ev, opened, closed_at, state, now=None):
             labelled.pop(l, None)
     is_open = (state or '').lower() == 'open'
     ready_since = labelled.get('ready-to-test') if is_open else None
+    ai_since = labelled.get('ai-review') if is_open and 'ready-to-test' not in labelled else None
     closed_ts = _ts(closed_at) if closed_at else None
     rnd = lambda x: None if x is None else int(x)
     # current stage by labels (what the board shows), not by the walk
-    current = 'done' if not is_open else 'review' if 'ready-to-test' in labelled else 'building' if 'building' in labelled else 'queued'
+    current = ('done' if not is_open else 'review' if 'ready-to-test' in labelled else 'ai' if 'ai-review' in labelled
+               else 'building' if 'building' in labelled else 'queued')
     has = lambda x: x is not None
     return {'wait': rnd(first_build - opened) if has(first_build) and has(opened) else None,
             'build': rnd(first_ready - first_build) if has(first_ready) and has(first_build) and first_ready >= first_build else None,
-            'review_rounds': [int(r) for r in rounds if r >= 0],
+            'review_rounds': [int(r) for r in rounds if r >= 0], 'ai_rounds': [int(r) for r in ai_rounds if r >= 0],
             'total': rnd(closed_ts - opened) if has(closed_ts) and has(opened) and not is_open else None,
-            'tries': tries, 'kicks': len(kick_times),
+            'tries': tries, 'kicks': len(kick_times), 'ai_tries': ai_tries, 'ai_kicks': len(ai_kick_times),
             'kick_to_done': rnd(closed_ts - kick_times[0]) if kick_times and has(closed_ts) and not is_open else None,
             'waiting_for': rnd(now - ready_since) if ready_since else None,
+            'ai_waiting_for': rnd(now - ai_since) if ai_since else None,
             'stage': current, 'spent': {k: int(v) for k, v in spent.items()}, 'staged': built or bool(first_build or first_ready),
             'opened_at': rnd(opened), 'closed_at': rnd(closed_ts) if not is_open else None}
 
@@ -1199,13 +1396,20 @@ def line_stats(items):
     reviewed = [i for i in items if i.get('tries')]
     kicked = [i for i in items if i.get('kicks')]
     to_done = [i['kick_to_done'] for i in kicked if i.get('kick_to_done') is not None]
+    ai_seen = [i for i in items if i.get('ai_tries')]
+    ai_kicked = [i for i in items if i.get('ai_kicks')]
     return {'queued': spread([i.get('wait') for i in items]), 'building': spread([i.get('build') for i in items]),
+            'ai': spread([r for i in items for r in i.get('ai_rounds') or []]),
             'review': spread([r for i in items for r in i.get('review_rounds') or []]),
             'done': spread([i.get('total') for i in items]),
+            # 0.13: two return arrows. `kick` = Human review -> Building (kept as before); `ai_kick` = AI review -> Building.
             'kick': {'reviewed': len(reviewed), 'kicked': len(kicked),
                      'rate': round(len(kicked) / len(reviewed), 3) if reviewed else None,
                      'per_item': round(sum(i['kicks'] for i in kicked) / len(kicked), 2) if kicked else None,
-                     'to_done': int(sum(to_done) / len(to_done)) if to_done else None}}
+                     'to_done': int(sum(to_done) / len(to_done)) if to_done else None},
+            'ai_kick': {'reviewed': len(ai_seen), 'kicked': len(ai_kicked),
+                        'rate': round(len(ai_kicked) / len(ai_seen), 3) if ai_seen else None,
+                        'per_item': round(sum(i['ai_kicks'] for i in ai_kicked) / len(ai_kicked), 2) if ai_kicked else None}}
 
 
 def summarize(items):
@@ -1217,7 +1421,7 @@ def summarize(items):
             'build_time': avg([i['build'] for i in items if i['build'] is not None]),
             'waiting_for_human': avg(waiting), 'waiting_longest': max(waiting) if waiting else None,
             'tries_per_item': round(sum(tried) / len(tried), 2) if tried else None,
-            'kicked_back': sum(i['kicks'] for i in items), 'done': sum(1 for i in items if i['state'] == 'closed'),
+            'kicked_back': sum(i['kicks'] for i in items), 'ai_kicked_back': sum(i.get('ai_kicks') or 0 for i in items), 'done': sum(1 for i in items if i['state'] == 'closed'),
             'items': len(items), 'line': line_stats(items)}
 
 
@@ -1356,14 +1560,19 @@ POLICY_DEFAULT = {
     'open': {'goals': ['James'], 'bugs': 'team'},
     # 0.9: target time per step (seconds). Drawn as a tick on each bin's range bar; the median turns
     # green-ish within target, amber over. DATA_DIR/policy.json `targets` overrides (seconds or '1h', '3d', '30m').
-    'targets': {'bugs': {'queued': 3600, 'building': 4 * 3600, 'review': 86400, 'done': 2 * 86400},
+    # 0.13: AI review 30m and Human review 1d for both views.
+    'targets': {'bugs': {'queued': 3600, 'building': 4 * 3600, 'ai': 1800, 'review': 86400, 'done': 2 * 86400},
                 # 0.10: Goals Queued 1h like Bugs (queue wait is builder pickup, the same for both)
-                'goals': {'queued': 3600, 'building': 3 * 86400, 'review': 3 * 86400, 'done': 14 * 86400}},
+                'goals': {'queued': 3600, 'building': 3 * 86400, 'ai': 1800, 'review': 86400, 'done': 14 * 86400}},
+    # 0.13: how many different humans must say Works before Done (1 or 2). DATA_DIR/policy.json `human_reviews`.
+    'human_reviews': 1,
     # 0.11: reset date. Done, the Done list and every line stat count only items closed on or after it
     # (open items always count). DATA_DIR/policy.json `since` overrides (ISO date/time, UTC if no zone).
     'since': '2026-11-07T00:00:00Z',
 }
-TARGET_KEYS = {'queued': 'queued', 'open': 'queued', 'building': 'building', 'build': 'building', 'review': 'review', 'test': 'review', 'done': 'done'}
+TARGET_KEYS = {'queued': 'queued', 'open': 'queued', 'building': 'building', 'build': 'building', 'ai': 'ai', 'ai-review': 'ai',
+               'ai_review': 'ai', 'review': 'review', 'human': 'review', 'human-review': 'review', 'human_review': 'review',
+               'test': 'review', 'done': 'done'}
 _UNIT = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400, 'w': 7 * 86400}
 
 
@@ -1392,8 +1601,10 @@ def _targets(over):
 STEP_TEXT = {
     'open': {'goals': '{who} opens goals and closes them once they work. Nobody else adds or closes a goal.',
              'bugs': 'Anyone on the team, or their own agent, opens a bug and closes it once it works.'},
-    'build': 'The Wizard OS Builder writes the code, then labels it ready-to-test and says what to check.',
-    'review': "Someone on the team, not whoever opened it, tries it and says Works or Doesn't work.",
+    'build': 'The Wizard OS Builder writes the code, then labels it ai-review and says what to check.',
+    'ai': "The opener's agent (a goal's owner's) checks the build matches the issue: pass to Human review, or back to Building.",
+    'review': {'bugs': "Someone on the team, not whoever opened it, tries it and says Works or Doesn't work.",
+               'goals': "The goal's owner, or {who}, tries it and says Works or Doesn't work."},
 }
 
 
@@ -1440,8 +1651,10 @@ def policy_base():
     opn = dict(POLICY_DEFAULT['open'])
     if isinstance(over.get('open'), dict):
         opn.update({k: v for k, v in over['open'].items() if k in ('goals', 'bugs') and (v == 'team' or isinstance(v, list))})
+    hr = over.get('human_reviews')
     return {'team': team, 'builder': builder, 'open': opn, 'targets': _targets(over.get('targets')),
-            'since': _since(over.get('since'))[0]}
+            'since': _since(over.get('since'))[0],
+            'human_reviews': hr if isinstance(hr, int) and not isinstance(hr, bool) and hr in (1, 2) else POLICY_DEFAULT['human_reviews']}
 
 
 def display_names(base=None):
@@ -1473,7 +1686,7 @@ def targets_set(person, args, agent=False):
         raise Problem(400, 'view must be goals or bugs.')
     step = TARGET_KEYS.get(str(args.get('step') or '').lower())
     if not step:
-        raise Problem(400, 'step must be queued, building, review or done.')
+        raise Problem(400, 'step must be queued, building, ai, review or done.')
     raw = args.get('seconds', args.get('value'))
     sec = _seconds(raw)
     if not sec or not TARGET_MIN <= sec <= TARGET_MAX:
@@ -1495,15 +1708,20 @@ def targets_set(person, args, agent=False):
         meta = over.get('targets_changed') if isinstance(over.get('targets_changed'), dict) else {}
         meta[f'{view}.{step}'] = {'by': who, 'at': int(time.time())}
         over['targets_changed'] = meta
-        DATA.mkdir(parents=True, exist_ok=True)
-        tmp = DATA / 'policy.json.tmp'
-        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, 'w') as f:
-            json.dump(over, f, indent=1)
-        tmp.replace(DATA / 'policy.json')
+        _write_policy(over)
     base = policy_base()
     return {'view': view, 'step': step, 'seconds': base['targets'][view][step], 'targets': base['targets'][view],
             'all': base['targets'], 'changed_by': who, 'note': 'Shared: the same targets for everyone. Permissions later.'}
+
+
+def _write_policy(over):
+    """DATA_DIR/policy.json, atomically, 0600. Call under LOCK."""
+    DATA.mkdir(parents=True, exist_ok=True)
+    tmp = DATA / 'policy.json.tmp'
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as f:
+        json.dump(over, f, indent=1)
+    tmp.replace(DATA / 'policy.json')
 
 
 def person_of(login, base=None):
@@ -1530,16 +1748,27 @@ def steps_for(view, base=None):
     o = base['open'][view]
     openers = team if o == 'team' else [t for t in team if t['name'].lower() in {str(n).lower() for n in o}]
     names = ' and '.join(t['name'] for t in openers) or 'Nobody'
+    g = base['open']['goals']
+    goal_names = 'anyone on the team' if g == 'team' else ' or '.join(t['name'] for t in team if t['name'].lower() in {str(n).lower() for n in g}) or 'James'
     return [
         {'key': 'open', 'n': 1, 'name': 'Open', 'group': 'queued', 'count_label': 'Queued',
          'role': 'Anyone on the team' if o == 'team' else names, 'who': [_who(t) for t in openers],
          'about': STEP_TEXT['open'][view].format(who=names), 'next': 'It waits in the queue until the builder picks it up.'},
         {'key': 'build', 'n': 2, 'name': 'Build', 'group': 'building', 'label': 'building', 'count_label': 'Building',
          'role': base['builder']['name'], 'who': [{'name': base['builder']['name'], 'logins': [{'login': x, 'kind': 'agent'} for x in base['builder']['logins']]}],
-         'about': STEP_TEXT['build'], 'next': 'Ready for review (label ready-to-test).'},
-        {'key': 'review', 'n': 3, 'name': 'Review', 'group': 'test', 'label': 'ready-to-test', 'count_label': 'Waiting for review',
-         'role': 'Team, not the opener', 'who': [_who(t) for t in team], 'except': 'whoever opened it (a person and their own agent count as one)',
-         'about': STEP_TEXT['review'], 'next': "Works: the opener closes it (Done). Doesn't work: back to Build."},
+         'about': STEP_TEXT['build'], 'next': 'AI review (label ai-review).'},
+        {'key': 'ai', 'n': 3, 'name': 'AI review', 'group': 'airev', 'label': 'ai-review', 'count_label': 'AI review',
+         'role': "The opener's agent" if view == 'bugs' else "The goal owner's agent",
+         'who': [{'name': t['name'], 'logins': [{'login': a['login'], 'kind': 'agent', 'name': a['name']} for a in t['agents']]} for t in team if t['agents']],
+         'except': 'outside the roster, or no agent listed: any team agent',
+         'about': STEP_TEXT['ai'], 'next': 'Pass: Human review (label ready-to-test). Fail: back to Building.'},
+        {'key': 'review', 'n': 4, 'name': 'Human review', 'group': 'test', 'label': 'ready-to-test', 'count_label': 'Human review',
+         'role': 'Team, not the opener' if view == 'bugs' else f'Goal owner or {goal_names}',
+         'who': [_who(t) for t in team] if view == 'bugs' else [_who(t) for t in openers],
+         'except': 'whoever opened it (a person and their own agent count as one)' if view == 'bugs' else '',
+         'about': STEP_TEXT['review'][view].format(who=goal_names), 'reviews': base['human_reviews'],
+         'next': ("Works: the opener closes it (Done). Doesn't work: back to Build." if base['human_reviews'] == 1
+                  else f"Works from {base['human_reviews']} different people: the opener closes it (Done). Doesn't work: back to Build.")},
     ]
 
 
@@ -1560,6 +1789,134 @@ def policy(person=None):
             # 0.5 shape, kept for scripts
             'goals': {'authors': [x['login'] for w in views['goals'][0]['who'] for x in w['logins']]},
             'builds': {'builders': base['builder']['logins']}, 'lines': lines, 'editable_file': 'DATA_DIR/policy.json'}
+
+
+# ---------- 0.13: two-step review (AI review, then Human review; optional second human) ----------
+
+AI_LABEL, HUMAN_LABEL = 'ai-review', 'ready-to-test'
+WORKS = re.compile(r"^\s*Tested:\s*works\b", re.I)
+RESET = re.compile(r"^\s*(Tested:\s*doesn.t work|AI review:)", re.I)
+
+
+def _goal_people(base):
+    g = base['open']['goals']
+    return {t['name'].lower() for t in base['team']} if g == 'team' else {str(n).lower() for n in g}
+
+
+def human_rule(kind, opener, assignees, me, base=None):
+    """(allowed, rule text) for a human saying Works / Doesn't work. Bugs: anyone on the team except the
+    opener (a person and their own agent are one person). Goals: the goal's owners (assignees) or James."""
+    base = base or policy_base()
+    mine = person_of(me, base).lower()
+    if kind == 'goal':
+        owners = [person_of(a, base) for a in assignees or []]
+        allowed = {o.lower() for o in owners} | _goal_people(base)
+        g = base['open']['goals']
+        others = [] if g == 'team' else [t['name'] for t in base['team'] if t['name'].lower() in {str(n).lower() for n in g}]
+        names = list(dict.fromkeys(owners + others)) or ['James']
+        rule = ('Only ' + (' or '.join(names) if len(names) < 3 else ', '.join(names[:-1]) + ' or ' + names[-1]) + ' review this goal.')
+        return mine in allowed, rule
+    if same_person(opener, me, base):
+        return False, 'Someone else reviews this — you opened it.'
+    return True, ''
+
+
+def _comment_rows(rows):
+    """GraphQL {author{login}, body} or REST {user{login}, body} -> [(login, body)] oldest first."""
+    out = []
+    for c in rows or []:
+        if isinstance(c, dict):
+            who = ((c.get('author') or c.get('user') or {}).get('login') or '')
+            out.append((who, c.get('body') or ''))
+    return out
+
+
+def review_progress(rows, base=None):
+    """Distinct people who said Works in this round of Human review (since the last Doesn't work or AI review
+    comment), from the issue's comments. -> {'done', 'need', 'by': [names]}."""
+    base = base or policy_base()
+    by = []
+    for who, body in _comment_rows(rows):
+        if RESET.match(body):
+            by = []
+        elif WORKS.match(body) and who:
+            name = person_of(who, base)
+            if name.lower() not in {b.lower() for b in by}:
+                by.append(name)
+    return {'done': len(by), 'need': base['human_reviews'], 'by': by}
+
+
+def ai_reviewers(kind, opener, assignees, base=None):
+    """Whose agent does the AI review: a goal's owners' (else its opener's), a bug's opener's. Returns
+    (team names whose agent may do it, display text); names None = any team agent."""
+    base = base or policy_base()
+    people = [person_of(a, base) for a in assignees or []] if kind == 'goal' else []
+    people = people or [person_of(opener, base)]
+    with_agents = []
+    for name in dict.fromkeys(people):
+        t = next((t for t in base['team'] if t['name'].lower() == name.lower()), None)
+        if t and t['agents']:
+            with_agents.append((t['name'], t['agents'][0]['name'] or t['name']))
+    if not with_agents:
+        return None, 'any team agent'
+    return {n.lower() for n, _ in with_agents}, ' or '.join(a for _, a in with_agents)
+
+
+def _issue_comments(acct, full, number, count):
+    """The last page or two of an issue's comments (REST, oldest first)."""
+    if not count:
+        return []
+    last = max(1, -(-int(count) // 100))
+    rows = []
+    for page in ([last - 1, last] if last > 1 else [1]):
+        got = gh(acct['token'], 'GET', f'/repos/{full}/issues/{number}/comments?per_page=100&page={page}', cache=False)
+        rows += got if isinstance(got, list) else []
+    return rows
+
+
+def ai_review(args, passed):
+    """MCP ai_review_pass / ai_review_fail (agents only). Needs the issue and a short note. The box's agent must be
+    the opener's (or goal owner's) agent per the roster; for openers outside the roster any team agent may."""
+    note = _text(args.get('note'), 'note', 3, 4000)
+    _, acct = account_for(None, agent=True)
+    full, number = _target(args)
+    base = policy_base()
+    cur = _current(acct, full, number)
+    names = [l.get('name', '').lower() for l in cur.get('labels') or []]
+    if AI_LABEL not in names:
+        raise Problem(409, f'{full}#{number} is not in AI review (label {AI_LABEL}). The builder adds it when it hands over.')
+    kind = 'goal' if 'goal' in names else 'bug'
+    opener = (cur.get('user') or {}).get('login') or ''
+    assignees = [a.get('login') for a in cur.get('assignees') or [] if isinstance(a, dict)]
+    allowed, who_text = ai_reviewers(kind, opener, assignees, base)
+    box_login = acct.get('login') or ''
+    box_person = person_of(box_login, base)
+    agent_name = next((t['agents'][0]['name'] for t in base['team'] if t['name'].lower() == box_person.lower() and t['agents']), '') or 'agent'
+    if allowed is not None and box_person.lower() not in allowed:
+        raise Problem(403, f'AI review of this {kind} is for {who_text}, not this box\'s agent ({agent_name} of {box_person}).', 'not_ai_reviewer')
+    head = f"AI review: {'pass' if passed else 'fail'} — {agent_name} (agent of {box_person})"
+    gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': head + '\n\n' + note})
+    if passed:  # add Human review first, then drop AI review, so the label timeline never shows a kick-back
+        gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/labels', {'labels': [HUMAN_LABEL]})
+        _drop_label(acct, full, number, AI_LABEL)
+    else:
+        _drop_label(acct, full, number, AI_LABEL)
+        try:
+            gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/labels', {'labels': ['building']})
+        except Problem:
+            pass  # the builder relabels it when it picks it up again
+    now = [l.get('name', '').lower() for l in _current(acct, full, number).get('labels') or []]
+    if AI_LABEL in now or (passed and HUMAN_LABEL not in now):
+        raise Problem(403, 'The comment is saved, but GitHub did not change the labels (Triage or write access to this repo is needed).')
+    with LOCK:
+        _flows.pop((_tid(acct['token']), full.lower(), number), None)
+    return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'passed': passed, 'labels': now,
+            'stage': 'review' if passed else 'building', 'saved': True}
+
+
+def ai_review_human(*_):
+    raise Problem(403, "AI review is done by agents, through the Tracker's tools (ai_review_pass / ai_review_fail). "
+                       'People review in Human review.', 'agents_only')
 
 
 def builder_status():
@@ -1771,31 +2128,54 @@ def _drop_label(acct, full, number, label):
 
 
 def tested(person, args, works):
+    """Human review. Works: comment; once `human_reviews` different people said Works (default 1) drop
+    ready-to-test and add approved (the opener then closes it). Doesn't work: comment, drop ready-to-test,
+    back to Building. Bugs: anyone but the opener; goals: the goal's owners or James."""
     _, acct = account_for(person)
     full, number = _target(args)
     login = acct.get('login') or 'someone'
+    base = policy_base()
     cur = _current(acct, full, number)
     names = [l.get('name', '').lower() for l in cur.get('labels') or []]
-    if 'ready-to-test' not in names:
+    if HUMAN_LABEL not in names:
+        if AI_LABEL in names:
+            raise Problem(409, 'This is still in AI review: the agent checks it first, then it comes to you.', 'ai_review')
         raise Problem(409, 'This is not waiting for a test any more. Refresh to see the latest.')
     opener = ((cur.get('user') or {}).get('login') or '')
-    if same_person(opener, login):
-        raise Problem(403, 'Someone else reviews this — you opened it.', 'own_item')
+    kind = 'goal' if 'goal' in names else 'bug'
+    assignees = [a.get('login') for a in cur.get('assignees') or [] if isinstance(a, dict)]
+    ok, rule = human_rule(kind, opener, assignees, login, base)
+    if not ok:
+        raise Problem(403, rule, 'own_item' if kind == 'bug' else 'not_reviewer')
+    need = base['human_reviews']
+    prog = review_progress(_issue_comments(acct, full, number, cur.get('comments') or 0), base) if need > 1 else {'done': 0, 'by': []}
+    me = person_of(login, base)
+    if works and me.lower() in {b.lower() for b in prog['by']}:
+        raise Problem(409, f'You already said Works. A second, different person reviews it too ({prog["done"]} of {need}).', 'already_reviewed')
+    final = not works or prog['done'] + 1 >= need
     if works:
-        body = f'Tested: works — @{login}'
+        body = f'Tested: works — @{login}' + (f' ({prog["done"] + 1} of {need} reviews)' if need > 1 else '')
     else:
         note = _text(args.get('note'), 'What went wrong', 3, 4000)
         body = f"Tested: doesn't work — @{login}\n\n{note}"
     gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
-    _drop_label(acct, full, number, 'ready-to-test')
-    if works:
-        gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/labels', {'labels': ['approved']})
+    if final:
+        _drop_label(acct, full, number, HUMAN_LABEL)
+        if works:
+            gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/labels', {'labels': ['approved']})
+        else:
+            try:  # 0.13: back to Building (the builder picks it up again)
+                gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/labels', {'labels': ['building']})
+            except Problem:
+                pass
     now = [l.get('name', '').lower() for l in _current(acct, full, number).get('labels') or []]
-    if 'ready-to-test' in now or (works and 'approved' not in now):
+    if final and (HUMAN_LABEL in now or (works and 'approved' not in now)):
         raise Problem(403, 'Your comment is saved, but GitHub did not change the labels (write access to this repo is needed).')
-    with LOCK:
-        _tested[(_tid(acct['token']), f'{full}#{number}')] = time.time()
-    return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'works': works, 'labels': now, 'saved': True}
+    if final:
+        with LOCK:
+            _tested[(_tid(acct['token']), f'{full}#{number}')] = time.time()
+    return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'works': works, 'labels': now, 'saved': True,
+            'reviews': {'done': prog['done'] + (1 if works else 0), 'need': need}, 'final': final}
 
 
 def new_item(person, args):
@@ -1845,7 +2225,9 @@ TOOLS = [
     {'name': 'try_status', 'description': "Which items the signed-in person switched 'Try it' on for (mock-up: records the wish, nothing runs yet).", 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'try_set', 'description': "Switch 'Try it' on or off for one item (repo owner/name + number) only when a human asked; pass their words as owner_request. Mock-up.", 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'number': {'type': 'integer'}, 'on': {'type': 'boolean'}, **ASKED}, 'required': ['repo', 'number', 'on', 'owner_request']}},
     {'name': 'board_flow', 'description': "One item's own assembly line from its GitHub label timeline: seconds spent in Queued, Building and Review, closed time, kick-backs (ready-to-test removed without a close), current stage.", 'inputSchema': {'type': 'object', 'properties': ISSUE}},
-    {'name': 'targets_set', 'description': "Change one step's target time for everyone (view goals|bugs, step queued|building|review|done, seconds or '4h'/'3d') only when a human asked; pass their words as owner_request. Current targets: GET /api/policy.", 'inputSchema': {'type': 'object', 'properties': {'view': {'type': 'string', 'enum': ['goals', 'bugs']}, 'step': {'type': 'string', 'enum': ['queued', 'building', 'review', 'done']}, 'seconds': {'description': 'Seconds (60 to 31536000) or a string like 30m, 4h, 3d, 2w.', 'type': ['integer', 'string']}, **ASKED}, 'required': ['view', 'step', 'seconds', 'owner_request']}},
+    {'name': 'targets_set', 'description': "Change one step's target time for everyone (view goals|bugs, step queued|building|ai|review|done (ai = AI review, review = Human review), seconds or '4h'/'3d') only when a human asked; pass their words as owner_request. Current targets: GET /api/policy.", 'inputSchema': {'type': 'object', 'properties': {'view': {'type': 'string', 'enum': ['goals', 'bugs']}, 'step': {'type': 'string', 'enum': ['queued', 'building', 'ai', 'review', 'done']}, 'seconds': {'description': 'Seconds (60 to 31536000) or a string like 30m, 4h, 3d, 2w.', 'type': ['integer', 'string']}, **ASKED}, 'required': ['view', 'step', 'seconds', 'owner_request']}},
+    {'name': 'ai_review_pass', 'description': "AI REVIEW (agents only). The builder hands work over with label ai-review. If you are the opener's agent (a goal's owner's agent; for openers outside the roster any team agent), check the build matches the issue's scope, then pass it on to Human review (ai-review -> ready-to-test) with a short note saying what you checked and what a human should try.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What you checked, and what the human reviewer should try.'}}, 'required': ['note']}},
+    {'name': 'ai_review_fail', 'description': "AI REVIEW (agents only). The build does not match the issue's scope: send it back to Building (removes ai-review, adds building) with a short note saying what is missing or wrong; the builder picks it up again. Counted on the AI review -> Building return arrow.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What is missing or wrong, for the builder.'}}, 'required': ['note']}},
     {'name': 'board_reopen', 'description': 'Reopen a Bug when a human asked you to (pass their words). Goals are refused: only humans reopen goals.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, **ASKED}, 'required': ['owner_request']}},
 ]
 CALLS = {
@@ -1863,6 +2245,8 @@ CALLS = {
     'try_set': lambda a: try_set(None, a, agent=True),
     'board_flow': lambda a: item_flow(None, a, agent=True),
     'targets_set': lambda a: targets_set(None, a, agent=True),
+    'ai_review_pass': lambda a: ai_review(a, True),
+    'ai_review_fail': lambda a: ai_review(a, False),
 }
 
 
@@ -1875,7 +2259,9 @@ def rpc(msg):
     try:
         if m == 'initialize':
             r = {'protocolVersion': '2025-06-18', 'capabilities': {'tools': {}}, 'serverInfo': {'name': APP_ID, 'version': VERSION},
-                 'instructions': 'Board rules: agents may list, read, report bugs and comment. Never open, close or reopen goals on your own; only humans accept bugs.'}
+                 'instructions': 'Tracker rules: agents may list, read, report bugs and comment. Never open, close or reopen goals on your own; only humans accept bugs. '
+                                 'Line: Queued -> Building -> AI review (label ai-review) -> Human review (label ready-to-test) -> Done. '
+                                 "The builder hands over with ai-review; the opener's (or goal owner's) agent then calls ai_review_pass or ai_review_fail with a short note."}
         elif m == 'tools/list':
             r = {'tools': TOOLS}
         elif m == 'tools/call':
@@ -1972,6 +2358,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, try_status(self.person()))
             if path == '/api/policy':
                 return self.send(200, policy(self.person()))
+            if path == '/api/device':
+                return self.send(200, device_status(self.person()))
+            if path == '/api/settings/github-client-id':
+                return self.send(200, client_id_info())
             if path == '/api/targets':
                 return self.send(200, {'targets': policy_base()['targets'], 'note': 'Shared: the same targets for everyone. Permissions later.'})
             if path == '/api/board':
@@ -2034,10 +2424,17 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/builder': lambda: builder_set(who, body),
                 '/api/try': lambda: try_set(who, body),
                 '/api/targets': lambda: targets_set(who, body),
+                '/api/device/start': lambda: device_start(who),
+                '/api/device/cancel': lambda: device_cancel(who),
+                '/api/settings/github-client-id': lambda: set_client_id(who, body),
+                '/api/ai-review/pass': ai_review_human,
+                '/api/ai-review/fail': ai_review_human,
             }
             if path not in routes:
                 return self.send(404, {'error': 'Not found.'})
-            if path not in ('/api/connect', '/api/disconnect'):
+            if path in ('/api/ai-review/pass', '/api/ai-review/fail'):
+                return routes[path]()
+            if path not in ('/api/connect', '/api/disconnect', '/api/device/start', '/api/device/cancel'):
                 gate(who)  # 0.12: signed in, a human login, an active team member (cached 10 min)
             return self.send(201 if path in ('/api/goals', '/api/bugs', '/api/new') else 200, routes[path]())
         except Problem as e:
