@@ -982,8 +982,7 @@ STEP_TEXT = {
     'open': {'goals': '{who} opens goals and closes them once they work. Nobody else adds or closes a goal.',
              'bugs': 'Anyone on the team, or their own agent, opens a bug and closes it once it works.'},
     'build': 'The Wizard OS Builder writes the code, then labels it ready-to-test and says what to check.',
-    'review': 'Someone on the team other than the opener tries it. Works: the opener closes it. '
-              "Doesn't work: it goes back to Build.",
+    'review': "Someone on the team other than the opener tries it and says Works or Doesn't work.",
 }
 
 
@@ -1038,13 +1037,13 @@ def steps_for(view, base=None):
     return [
         {'key': 'open', 'n': 1, 'name': 'Open', 'group': 'queued', 'count_label': 'Queued',
          'role': 'Anyone on the team' if o == 'team' else names, 'who': [_who(t) for t in openers],
-         'about': STEP_TEXT['open'][view].format(who=names), 'next': 'Queued for the builder.'},
+         'about': STEP_TEXT['open'][view].format(who=names), 'next': 'It waits in the queue until the builder picks it up.'},
         {'key': 'build', 'n': 2, 'name': 'Build', 'group': 'building', 'label': 'building', 'count_label': 'Building',
          'role': base['builder']['name'], 'who': [{'name': base['builder']['name'], 'logins': [{'login': x, 'kind': 'agent'} for x in base['builder']['logins']]}],
          'about': STEP_TEXT['build'], 'next': 'Ready for review (label ready-to-test).'},
         {'key': 'review', 'n': 3, 'name': 'Review', 'group': 'test', 'label': 'ready-to-test', 'count_label': 'Waiting for review',
          'role': 'Team, not the opener', 'who': [_who(t) for t in team], 'except': 'whoever opened it (a person and their own agent count as one)',
-         'about': STEP_TEXT['review'], 'next': "Works: the opener closes it. Doesn't work: back to Build."},
+         'about': STEP_TEXT['review'], 'next': "Works: the opener closes it (Done). Doesn't work: back to Build."},
     ]
 
 
