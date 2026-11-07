@@ -37,7 +37,8 @@ const picked = { bugs: new Set(store.get('board.repos.bugs') || []) };
 const pickedWho = { bugs: new Set(store.get('board.who.bugs') || []) };
 let repoMore = false;   // the Repo row's '+N more' is open (not remembered)
 const SORTS = [['oldest', 'Oldest'], ['newest', 'Newest'], ['discussed', 'Most discussed'], ['active', 'Recently active']];
-const sortBy = { goals: null, bugs: SORTS.some(([k]) => k === store.get('board.sort.bugs')) ? store.get('board.sort.bugs') : 'oldest' };
+const savedSort = v => SORTS.some(([k]) => k === store.get('board.sort.' + v)) ? store.get('board.sort.' + v) : 'oldest';
+const sortBy = { goals: savedSort('goals'), bugs: savedSort('bugs') };
 const ts = iso => { const t = Date.parse(iso || ''); return isNaN(t) ? 0 : t; };
 const SORT_FN = {
   oldest: (a, b) => ts(a.created_at) - ts(b.created_at),
@@ -280,7 +281,7 @@ function render(d) {
   for (const r of [...chosen]) if (!known.has(r)) chosen.delete(r);
   const byWho = i => !whoSet.size || whoSet.has((i.author || '').toLowerCase());
   const byRepo = i => !chosen.size || chosen.has(repoKey(i));
-  el('filters').hidden = !bugs; el('sort').hidden = !bugs || stage[d.view] === 'done';   // Done lists newest closed first
+  el('filters').hidden = !bugs; el('sort').hidden = stage[d.view] === 'done';   // Done lists newest closed first
   if (bugs) {
     // 0.10: each row's ORDER comes from the unfiltered totals (then name) and never changes with the other
     // row's picks; only the numbers do (zero dims). The collapsed Repo row's top few use the same totals.
@@ -294,8 +295,8 @@ function render(d) {
       .sort((a, b) => b[3] - a[3] || a[1].localeCompare(b[1]));
     chipRow('who', whoSet, people);
     chipRow('repo', chosen, repos);
-    sortControl();
   }
+  sortControl();
   const keep = i => byWho(i) && byRepo(i);
   const order = SORT_FN[sortBy[d.view]];
   const groups = Object.fromEntries(GROUPS.map(g => { const l = d.groups[g].filter(keep); return [g, order ? l.sort(order) : l]; }));

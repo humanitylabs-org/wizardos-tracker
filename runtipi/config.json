@@ -9,9 +9,9 @@
   "categories": [
     "utilities"
   ],
-  "description": "Two views over a GitHub organisation, Goals and Bugs, each showing the assembly line Queued → Building → AI review → Human review → Done as big numbers with arrows, each bin with its typical time range and a target tick and two return arrows (from AI review and from Human review) with their kick-back rates (tap a bin to filter to that stage; under each bin its shared target, editable, and ⓘ for who does it), a Builder switch (mock-up), Who and repo chip filters (stable order) and a sort on Bugs, and a Try it switch on items in Review (mock-up). Tap an issue to read it and its comments in the app. Each person signs in with their own GitHub token. Team members only: you sign in with your own GitHub account and must be an active member of humanitylabs-org; agent accounts use the MCP tools instead. Sign in with GitHub (device flow) when the box has a client id, or with a token.",
-  "tipi_version": 20,
-  "version": "0.13.0",
+  "description": "Two views over a GitHub organisation, Goals and Bugs, each showing the assembly line Queued \u2192 Building \u2192 AI review \u2192 Human review \u2192 Done as big numbers with arrows, each bin with its typical time range and a target tick and two return arrows (from AI review and from Human review) with their kick-back rates (tap a bin to filter to that stage; under each bin its shared target, editable, and \u24d8 for who does it), a Builder switch (mock-up), Who and repo chip filters (stable order) and a sort on Bugs, and a Try it switch on items in Review (mock-up). Tap an issue to read it and its comments in the app. Each person signs in with their own GitHub token. Team members only: you sign in with your own GitHub account and must be an active member of humanitylabs-org; agent accounts use the MCP tools instead. Sign in with GitHub (device flow) when the box has a client id, or with a token.",
+  "tipi_version": 21,
+  "version": "0.13.1",
   "source": "https://github.com/oscarhenrycollins/wizard-board",
   "exposable": false,
   "supported_architectures": [

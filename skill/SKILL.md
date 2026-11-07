@@ -1,7 +1,7 @@
 ---
 name: wizard-os-tracker
 description: Use when working with Wizard development Goals and Bugs on GitHub.
-version: 0.13.0
+version: 0.13.1
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
