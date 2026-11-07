@@ -28,38 +28,34 @@
       </section>
 
       <div id="board" class="bd-board" hidden>
-        <div class="bd-switch" role="tablist" aria-label="Show">
-          <button type="button" role="tab" data-view="goals" aria-selected="true">Goals</button>
-          <button type="button" role="tab" data-view="bugs" aria-selected="false">Bugs</button>
-        </div>
-
-        <!-- Builder switch, compact. -->
-        <div class="bd-ctl">
-          <button type="button" class="bd-toggle" id="builder" role="switch" aria-checked="false" aria-describedby="builder-state">
+        <!-- Goals | Bugs and the small Builder switch, one row. -->
+        <div class="bd-head">
+          <div class="bd-switch" role="tablist" aria-label="Show">
+            <button type="button" role="tab" data-view="goals" aria-selected="true">Goals</button>
+            <button type="button" role="tab" data-view="bugs" aria-selected="false">Bugs</button>
+          </div>
+          <button type="button" class="bd-toggle" id="builder" role="switch" aria-checked="false" aria-label="Builder" aria-describedby="builder-state">
+            <span class="bd-ctl-name" aria-hidden="true">Builder</span>
             <span class="bd-track" aria-hidden="true"><i></i></span>
-            <span class="bd-ctl-name">Wizard OS Builder</span>
             <span class="bd-ctl-state" id="builder-state">Paused</span>
           </button>
-          <p class="bd-ctl-note" id="builder-note" hidden>Not connected to the builder yet</p>
         </div>
 
-        <!-- The workflow, three hand-off steps: Open → Build → Review, then Done. Tap a step for who does it. -->
+        <!-- The assembly line: Queued → Building → Review → Done, numbers first. Tap a bin for who does it. -->
         <div class="bd-flow" id="flow" role="group" aria-label="How work moves">
           <ol class="bd-steps" id="steps"></ol>
-          <p class="bd-loop" id="loop"><span class="bd-loop-t">Doesn’t work → back to Build</span></p>
-          <p class="bd-works" id="works"></p>
-          <p class="bd-done" id="done"></p>
+          <p class="bd-loop" id="loop" role="img" aria-label="Doesn't work goes back to Building"></p>
         </div>
         <dl class="bd-stats" id="stats" aria-label="Where work waits"></dl>
 
         <div class="bd-sub">
-          <label class="bd-who" id="who-wrap" hidden><span class="wz-sr">Written by</span><select id="who"><option value="">Everyone</option></select></label>
-          <button type="button" class="bd-pick" id="repo-btn" aria-haspopup="dialog" hidden>All repos</button>
+          <div class="bd-f" id="f-who"><button type="button" class="bd-pick" data-filter="who" aria-expanded="false" aria-controls="fp-who">Everyone</button><div class="bd-fp" id="fp-who" hidden></div></div>
+          <div class="bd-f" id="f-repo"><button type="button" class="bd-pick" data-filter="repo" aria-expanded="false" aria-controls="fp-repo">All repos</button><div class="bd-fp" id="fp-repo" hidden></div></div>
           <p class="bd-totals" id="totals" aria-live="polite"></p>
         </div>
 
         <section class="bd-sec" id="sec-test" hidden>
-          <h2 class="bd-sec-h">Waiting for review <span class="bd-n" id="n-test"></span></h2>
+          <h2 class="bd-sec-h">Review <span class="bd-n" id="n-test"></span></h2>
           <div class="bd-list" id="list-test"></div>
         </section>
         <section class="bd-sec" id="sec-building" hidden>
@@ -75,21 +71,8 @@
       <p id="loading" class="bd-empty">Loading…</p>
     </main>
     <p id="status" class="wz-status" role="status" aria-live="polite"></p>
-    <!-- Repo filter: pick one or several repos (only repos with items in this view). -->
-    <dialog id="repos" class="wz-sheet bd-repos" aria-labelledby="r-title">
-      <h2 id="r-title">Repos</h2>
-      <div class="bd-r-list" id="r-list"></div>
-      <div class="bd-btns"><button type="button" class="wz-button secondary" id="r-all">All repos</button><button type="button" class="wz-button" id="r-done">Done</button></div>
-    </dialog>
-    <!-- One step of the workflow: who does it and what it means. -->
-    <dialog id="step" class="wz-sheet bd-stepsheet" aria-labelledby="s-title">
-      <h2 id="s-title"></h2>
-      <p id="s-about" class="bd-s-about"></p>
-      <h3 class="bd-sec-h bd-s-h" id="s-who-h">Who</h3>
-      <ul id="s-who" class="bd-s-who"></ul>
-      <p id="s-except" class="bd-meta" hidden></p>
-      <p id="s-next" class="bd-s-next"></p>
-    </dialog>
+    <!-- Small anchored note (bins, Builder, Try it). -->
+    <div id="pop" class="bd-pop" role="status" aria-live="polite" hidden></div>
     <!-- The one pop-up: the issue in full. Bottom sheet on phones, side panel on wide screens. -->
     <dialog id="detail" class="wz-sheet bd-detail" aria-labelledby="d-title">
       <h2 id="d-title" class="bd-d-title"></h2>

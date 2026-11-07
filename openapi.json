@@ -1,1006 +1,1054 @@
 {
-  "openapi": "3.0.3",
-  "info": {
-    "title": "Wizard OS Tracker",
-    "version": "0.6.0",
-    "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin."
-  },
-  "paths": {
-    "/healthz": {
-      "get": {
-        "summary": "Health",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "No GitHub account connected / token refused"
-          },
-          "403": {
-            "description": "GitHub token cannot do that"
-          }
+ "openapi": "3.0.3",
+ "info": {
+  "title": "Wizard OS Tracker",
+  "version": "0.7.0",
+  "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin."
+ },
+ "paths": {
+  "/healthz": {
+   "get": {
+    "summary": "Health",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
         }
+       }
       }
-    },
-    "/api/status": {
-      "get": {
-        "summary": "Connection status for the signed-in person (never includes the token)",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "No GitHub account connected / token refused"
-          },
-          "403": {
-            "description": "GitHub token cannot do that"
-          }
-        }
-      }
-    },
-    "/api/connect": {
-      "post": {
-        "summary": "Validate a GitHub personal access token with GET /user and store it 0600",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "No GitHub account connected / token refused"
-          },
-          "403": {
-            "description": "GitHub token cannot do that"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "token": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/disconnect": {
-      "post": {
-        "summary": "Forget this person's token",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "No GitHub account connected / token refused"
-          },
-          "403": {
-            "description": "GitHub token cannot do that"
-          }
-        }
-      }
-    },
-    "/api/settings": {
-      "post": {
-        "summary": "Set the GitHub organisation",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "No GitHub account connected / token refused"
-          },
-          "403": {
-            "description": "GitHub token cannot do that"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "org": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/board": {
-      "get": {
-        "summary": "Open/closed Goals and Bugs in the org",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "No GitHub account connected / token refused"
-          },
-          "403": {
-            "description": "GitHub token cannot do that"
-          }
-        },
-        "parameters": [
-          {
-            "name": "type",
-            "in": "query",
-            "schema": {
-              "type": {
-                "type": "string"
-              }
-            }
-          },
-          {
-            "name": "state",
-            "in": "query",
-            "schema": {
-              "type": {
-                "type": "string"
-              }
-            }
-          },
-          {
-            "name": "accepted",
-            "in": "query",
-            "schema": {
-              "type": {
-                "type": "string"
-              }
-            }
-          },
-          {
-            "name": "repo",
-            "in": "query",
-            "schema": {
-              "type": {
-                "type": "string"
-              }
-            }
-          },
-          {
-            "name": "refresh",
-            "in": "query",
-            "schema": {
-              "type": {
-                "type": "string"
-              }
-            }
-          }
-        ]
-      }
-    },
-    "/api/issue": {
-      "get": {
-        "summary": "One goal or bug with done-list, PRs and comments",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "No GitHub account connected / token refused"
-          },
-          "403": {
-            "description": "GitHub token cannot do that"
-          }
-        },
-        "parameters": [
-          {
-            "name": "repo",
-            "in": "query",
-            "schema": {
-              "type": {
-                "type": "string"
-              }
-            }
-          },
-          {
-            "name": "number",
-            "in": "query",
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "fresh",
-            "in": "query",
-            "schema": {
-              "type": {
-                "type": "string"
-              }
-            }
-          }
-        ]
-      }
-    },
-    "/api/repos": {
-      "get": {
-        "summary": "Repos in the org visible to the token",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "No GitHub account connected / token refused"
-          },
-          "403": {
-            "description": "GitHub token cannot do that"
-          }
-        }
-      }
-    },
-    "/api/boxes": {
-      "get": {
-        "summary": "wizard-ux main commit; this box version is coming soon",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "No GitHub account connected / token refused"
-          },
-          "403": {
-            "description": "GitHub token cannot do that"
-          }
-        }
-      }
-    },
-    "/api/avatar": {
-      "get": {
-        "summary": "Connected account picture (proxied)",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "No GitHub account connected / token refused"
-          },
-          "403": {
-            "description": "GitHub token cannot do that"
-          }
-        }
-      }
-    },
-    "/api/goals": {
-      "post": {
-        "summary": "Add a goal (label goal, done-list as task list)",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "No GitHub account connected / token refused"
-          },
-          "403": {
-            "description": "GitHub token cannot do that"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "repo": {
-                    "type": "string"
-                  },
-                  "title": {
-                    "type": "string"
-                  },
-                  "done": {
-                    "type": "array",
-                    "items": {
-                      "type": "string"
-                    }
-                  },
-                  "body": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/bugs": {
-      "post": {
-        "summary": "Report a bug (label bug)",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "No GitHub account connected / token refused"
-          },
-          "403": {
-            "description": "GitHub token cannot do that"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "repo": {
-                    "type": "string"
-                  },
-                  "title": {
-                    "type": "string"
-                  },
-                  "body": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/issue/accept": {
-      "post": {
-        "summary": "Accept a bug (label accepted)",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "No GitHub account connected / token refused"
-          },
-          "403": {
-            "description": "GitHub token cannot do that"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "repo": {
-                    "type": "string"
-                  },
-                  "number": {
-                    "type": "integer"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/issue/close": {
-      "post": {
-        "summary": "Close an issue",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "No GitHub account connected / token refused"
-          },
-          "403": {
-            "description": "GitHub token cannot do that"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "repo": {
-                    "type": "string"
-                  },
-                  "number": {
-                    "type": "integer"
-                  },
-                  "reason": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/issue/reopen": {
-      "post": {
-        "summary": "Reopen an issue",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "No GitHub account connected / token refused"
-          },
-          "403": {
-            "description": "GitHub token cannot do that"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "repo": {
-                    "type": "string"
-                  },
-                  "number": {
-                    "type": "integer"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/issue/task": {
-      "post": {
-        "summary": "Tick or untick a done-list item",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "No GitHub account connected / token refused"
-          },
-          "403": {
-            "description": "GitHub token cannot do that"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "repo": {
-                    "type": "string"
-                  },
-                  "number": {
-                    "type": "integer"
-                  },
-                  "index": {
-                    "type": "integer"
-                  },
-                  "done": {
-                    "type": "boolean"
-                  },
-                  "text": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/issue/comment": {
-      "post": {
-        "summary": "Add a comment",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "No GitHub account connected / token refused"
-          },
-          "403": {
-            "description": "GitHub token cannot do that"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "repo": {
-                    "type": "string"
-                  },
-                  "number": {
-                    "type": "integer"
-                  },
-                  "body": {
-                    "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/mcp": {
-      "post": {
-        "summary": "MCP streamable HTTP (JSON-RPC)",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "No GitHub account connected / token refused"
-          },
-          "403": {
-            "description": "GitHub token cannot do that"
-          }
-        }
-      }
-    },
-    "/api/view": {
-      "get": {
-        "summary": "One tab, filtered for the signed-in person: goals (label goal, owner + progress), test (label ready-to-test, not yours, with what to check and PR), issues (bug or unlabelled).",
-        "parameters": [
-          {
-            "name": "tab",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "goals",
-                "test",
-                "issues"
-              ]
-            }
-          },
-          {
-            "name": "repo",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "refresh",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "1"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "items"
-          }
-        }
-      }
-    },
-    "/api/new": {
-      "post": {
-        "summary": "Add a Goal (goal authors only) or an Issue (label bug). Body: type goal|issue, repo, title, body.",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        },
-        "responses": {
-          "201": {
-            "description": "created"
-          },
-          "403": {
-            "description": "not a goal author"
-          }
-        }
-      }
-    },
-    "/api/test/works": {
-      "post": {
-        "summary": "Comment 'Tested: works — @login', remove ready-to-test, add approved. Does not close.",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "saved"
-          }
-        }
-      }
-    },
-    "/api/test/fails": {
-      "post": {
-        "summary": "Comment what went wrong and remove ready-to-test. Body: repo, number, note.",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "saved"
-          }
-        }
-      }
-    },
-    "/api/split": {
-      "get": {
-        "summary": "Goals or Bugs grouped by status: Waiting for review (ready-to-test, key test), Building (building), Queued (other open). Up to 300 items. Rows carry desc (first paragraph as plain text), assignees, comments (count). Also returns steps (the three workflow steps for this view), me_person, and per item opener (team name of whoever opened it); mine is true when you or your own agent opened it.",
-        "parameters": [
-          {
-            "name": "view",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "goals",
-                "bugs"
-              ]
-            }
-          },
-          {
-            "name": "refresh",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "1"
-              ]
-            }
-          },
-          {
-            "name": "repos",
-            "in": "query",
-            "description": "Optional comma-separated repo names to keep (the view filters itself).",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "view, org, login, groups {test, building, queued} (each item: id, repo, number, title, author, assignees[], comments, desc, group, mine, labels; goals add progress, owner), counts, done (closed all time, null while stats are pending), stats (same shape as /api/stats, or {pending:true} until computed: then call /api/stats), total, shown, more; plus 0.3 keys test and doing. closed_week was removed in 0.5."
-          }
-        }
-      }
-    },
-    "/api/detail": {
-      "get": {
-        "summary": "One issue in full for the in-app sheet: GitHub-rendered body and comments (cleaned HTML), author, dates, labels.",
-        "parameters": [
-          {
-            "name": "repo",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string"
-            },
-            "description": "owner/name or a repo in the org"
-          },
-          {
-            "name": "number",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "integer"
-            }
-          },
-          {
-            "name": "refresh",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "1"
-              ]
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "id, repo, number, title, url, state, author, created_at, updated_at, labels, body_html, comments [{author, created_at, url, body_html}], comments_total"
-          },
-          "404": {
-            "description": "Not found or not visible to this token"
-          }
-        }
-      }
-    },
-    "/api/stats": {
-      "get": {
-        "summary": "Bottleneck stats for one view from GitHub label history (LABELED/UNLABELED/CLOSED/REOPENED events), all open and closed issues of that kind, cached 5 minutes per account.",
-        "parameters": [
-          {
-            "name": "view",
-            "in": "query",
-            "schema": {
-              "type": "string",
-              "enum": [
-                "goals",
-                "bugs"
-              ]
-            }
-          },
-          {
-            "name": "author",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "repos",
-            "in": "query",
-            "description": "Comma-separated repo names.",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "items [{id, repo, author, state, wait (s opened→first building), build (s first building→first ready-to-test), tries (times labelled ready-to-test), kicks (ready-to-test removed without close/approved within 10 min), waiting_for (s since ready-to-test, open items only)}], done, counted, total, computed_at, summary {wait_before_build, build_time, waiting_for_human, waiting_longest, tries_per_item, kicked_back, done, items}. Null means no data yet."
-          }
-        }
-      }
-    },
-    "/api/builder": {
-      "get": {
-        "summary": "Wizard OS Builder switch (mock-up; the builder host will poll this). Default Paused.",
-        "responses": {
-          "200": {
-            "description": "{running: bool, state: Running|Paused, updated_at, updated_by, connected: false, note}"
-          }
-        }
-      },
-      "post": {
-        "summary": "Set the builder switch.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "running": {
-                    "type": "boolean"
-                  }
-                },
-                "required": [
-                  "running"
-                ]
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Same as GET."
-          },
-          "400": {
-            "description": "running must be a boolean."
-          }
-        }
-      }
-    },
-    "/api/policy": {
-      "get": {
-        "summary": "The workflow policy: team roster (person -> logins, agents), the builder, who opens each view, and the three steps (Open, Build, Review) per view. Defaults in code; DATA_DIR/policy.json overrides keys team, builder, open.",
-        "responses": {
-          "200": {
-            "description": "version 2; team [{name, logins, agents [{login, name}]}], builder {name, logins}, open {goals, bugs}, steps {goals: [step], bugs: [step]} where step = {key open|build|review, n, name, group queued|building|test, label, count_label, role, who [{name, logins [{login, kind person|agent, name}]}], except, about, next}, me {login, person}, org; 0.5 keys kept: goals.authors, builds.builders, lines."
-          }
-        }
-      }
+     },
+     "400": {
+      "description": "Invalid request"
+     },
+     "401": {
+      "description": "No GitHub account connected / token refused"
+     },
+     "403": {
+      "description": "GitHub token cannot do that"
+     }
     }
+   }
+  },
+  "/api/status": {
+   "get": {
+    "summary": "Connection status for the signed-in person (never includes the token)",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Invalid request"
+     },
+     "401": {
+      "description": "No GitHub account connected / token refused"
+     },
+     "403": {
+      "description": "GitHub token cannot do that"
+     }
+    }
+   }
+  },
+  "/api/connect": {
+   "post": {
+    "summary": "Validate a GitHub personal access token with GET /user and store it 0600",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Invalid request"
+     },
+     "401": {
+      "description": "No GitHub account connected / token refused"
+     },
+     "403": {
+      "description": "GitHub token cannot do that"
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "token": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/disconnect": {
+   "post": {
+    "summary": "Forget this person's token",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Invalid request"
+     },
+     "401": {
+      "description": "No GitHub account connected / token refused"
+     },
+     "403": {
+      "description": "GitHub token cannot do that"
+     }
+    }
+   }
+  },
+  "/api/settings": {
+   "post": {
+    "summary": "Set the GitHub organisation",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Invalid request"
+     },
+     "401": {
+      "description": "No GitHub account connected / token refused"
+     },
+     "403": {
+      "description": "GitHub token cannot do that"
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "org": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/board": {
+   "get": {
+    "summary": "Open/closed Goals and Bugs in the org",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Invalid request"
+     },
+     "401": {
+      "description": "No GitHub account connected / token refused"
+     },
+     "403": {
+      "description": "GitHub token cannot do that"
+     }
+    },
+    "parameters": [
+     {
+      "name": "type",
+      "in": "query",
+      "schema": {
+       "type": {
+        "type": "string"
+       }
+      }
+     },
+     {
+      "name": "state",
+      "in": "query",
+      "schema": {
+       "type": {
+        "type": "string"
+       }
+      }
+     },
+     {
+      "name": "accepted",
+      "in": "query",
+      "schema": {
+       "type": {
+        "type": "string"
+       }
+      }
+     },
+     {
+      "name": "repo",
+      "in": "query",
+      "schema": {
+       "type": {
+        "type": "string"
+       }
+      }
+     },
+     {
+      "name": "refresh",
+      "in": "query",
+      "schema": {
+       "type": {
+        "type": "string"
+       }
+      }
+     }
+    ]
+   }
+  },
+  "/api/issue": {
+   "get": {
+    "summary": "One goal or bug with done-list, PRs and comments",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Invalid request"
+     },
+     "401": {
+      "description": "No GitHub account connected / token refused"
+     },
+     "403": {
+      "description": "GitHub token cannot do that"
+     }
+    },
+    "parameters": [
+     {
+      "name": "repo",
+      "in": "query",
+      "schema": {
+       "type": {
+        "type": "string"
+       }
+      }
+     },
+     {
+      "name": "number",
+      "in": "query",
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "fresh",
+      "in": "query",
+      "schema": {
+       "type": {
+        "type": "string"
+       }
+      }
+     }
+    ]
+   }
+  },
+  "/api/repos": {
+   "get": {
+    "summary": "Repos in the org visible to the token",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Invalid request"
+     },
+     "401": {
+      "description": "No GitHub account connected / token refused"
+     },
+     "403": {
+      "description": "GitHub token cannot do that"
+     }
+    }
+   }
+  },
+  "/api/boxes": {
+   "get": {
+    "summary": "wizard-ux main commit; this box version is coming soon",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Invalid request"
+     },
+     "401": {
+      "description": "No GitHub account connected / token refused"
+     },
+     "403": {
+      "description": "GitHub token cannot do that"
+     }
+    }
+   }
+  },
+  "/api/avatar": {
+   "get": {
+    "summary": "Connected account picture (proxied)",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Invalid request"
+     },
+     "401": {
+      "description": "No GitHub account connected / token refused"
+     },
+     "403": {
+      "description": "GitHub token cannot do that"
+     }
+    }
+   }
+  },
+  "/api/goals": {
+   "post": {
+    "summary": "Add a goal (label goal, done-list as task list)",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Invalid request"
+     },
+     "401": {
+      "description": "No GitHub account connected / token refused"
+     },
+     "403": {
+      "description": "GitHub token cannot do that"
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "repo": {
+          "type": "string"
+         },
+         "title": {
+          "type": "string"
+         },
+         "done": {
+          "type": "array",
+          "items": {
+           "type": "string"
+          }
+         },
+         "body": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/bugs": {
+   "post": {
+    "summary": "Report a bug (label bug)",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Invalid request"
+     },
+     "401": {
+      "description": "No GitHub account connected / token refused"
+     },
+     "403": {
+      "description": "GitHub token cannot do that"
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "repo": {
+          "type": "string"
+         },
+         "title": {
+          "type": "string"
+         },
+         "body": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/issue/accept": {
+   "post": {
+    "summary": "Accept a bug (label accepted)",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Invalid request"
+     },
+     "401": {
+      "description": "No GitHub account connected / token refused"
+     },
+     "403": {
+      "description": "GitHub token cannot do that"
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "repo": {
+          "type": "string"
+         },
+         "number": {
+          "type": "integer"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/issue/close": {
+   "post": {
+    "summary": "Close an issue",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Invalid request"
+     },
+     "401": {
+      "description": "No GitHub account connected / token refused"
+     },
+     "403": {
+      "description": "GitHub token cannot do that"
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "repo": {
+          "type": "string"
+         },
+         "number": {
+          "type": "integer"
+         },
+         "reason": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/issue/reopen": {
+   "post": {
+    "summary": "Reopen an issue",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Invalid request"
+     },
+     "401": {
+      "description": "No GitHub account connected / token refused"
+     },
+     "403": {
+      "description": "GitHub token cannot do that"
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "repo": {
+          "type": "string"
+         },
+         "number": {
+          "type": "integer"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/issue/task": {
+   "post": {
+    "summary": "Tick or untick a done-list item",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Invalid request"
+     },
+     "401": {
+      "description": "No GitHub account connected / token refused"
+     },
+     "403": {
+      "description": "GitHub token cannot do that"
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "repo": {
+          "type": "string"
+         },
+         "number": {
+          "type": "integer"
+         },
+         "index": {
+          "type": "integer"
+         },
+         "done": {
+          "type": "boolean"
+         },
+         "text": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/api/issue/comment": {
+   "post": {
+    "summary": "Add a comment",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Invalid request"
+     },
+     "401": {
+      "description": "No GitHub account connected / token refused"
+     },
+     "403": {
+      "description": "GitHub token cannot do that"
+     }
+    },
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "repo": {
+          "type": "string"
+         },
+         "number": {
+          "type": "integer"
+         },
+         "body": {
+          "type": "string"
+         }
+        }
+       }
+      }
+     }
+    }
+   }
+  },
+  "/mcp": {
+   "post": {
+    "summary": "MCP streamable HTTP (JSON-RPC)",
+    "responses": {
+     "200": {
+      "description": "OK",
+      "content": {
+       "application/json": {
+        "schema": {
+         "type": "object"
+        }
+       }
+      }
+     },
+     "400": {
+      "description": "Invalid request"
+     },
+     "401": {
+      "description": "No GitHub account connected / token refused"
+     },
+     "403": {
+      "description": "GitHub token cannot do that"
+     }
+    }
+   }
+  },
+  "/api/view": {
+   "get": {
+    "summary": "One tab, filtered for the signed-in person: goals (label goal, owner + progress), test (label ready-to-test, not yours, with what to check and PR), issues (bug or unlabelled).",
+    "parameters": [
+     {
+      "name": "tab",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "goals",
+        "test",
+        "issues"
+       ]
+      }
+     },
+     {
+      "name": "repo",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "refresh",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "1"
+       ]
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "items"
+     }
+    }
+   }
+  },
+  "/api/new": {
+   "post": {
+    "summary": "Add a Goal (goal authors only) or an Issue (label bug). Body: type goal|issue, repo, title, body.",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object"
+       }
+      }
+     }
+    },
+    "responses": {
+     "201": {
+      "description": "created"
+     },
+     "403": {
+      "description": "not a goal author"
+     }
+    }
+   }
+  },
+  "/api/test/works": {
+   "post": {
+    "summary": "Comment 'Tested: works \u2014 @login', remove ready-to-test, add approved. Does not close.",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "saved"
+     }
+    }
+   }
+  },
+  "/api/test/fails": {
+   "post": {
+    "summary": "Comment what went wrong and remove ready-to-test. Body: repo, number, note.",
+    "requestBody": {
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object"
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "saved"
+     }
+    }
+   }
+  },
+  "/api/split": {
+   "get": {
+    "summary": "Goals or Bugs grouped by status: Waiting for review (ready-to-test, key test), Building (building), Queued (other open). Up to 300 items. Rows carry desc (first paragraph as plain text), assignees, comments (count). Also returns steps (the three workflow steps for this view), me_person, and per item opener (team name of whoever opened it); mine is true when you or your own agent opened it.",
+    "parameters": [
+     {
+      "name": "view",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "goals",
+        "bugs"
+       ]
+      }
+     },
+     {
+      "name": "refresh",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "1"
+       ]
+      }
+     },
+     {
+      "name": "repos",
+      "in": "query",
+      "description": "Optional comma-separated repo names to keep (the view filters itself).",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "view, org, login, groups {test, building, queued} (each item: id, repo, number, title, author, assignees[], comments, desc, group, mine, labels; goals add progress, owner), counts, done (closed all time, null while stats are pending), stats (same shape as /api/stats, or {pending:true} until computed: then call /api/stats), total, shown, more; plus 0.3 keys test and doing. closed_week was removed in 0.5."
+     }
+    }
+   }
+  },
+  "/api/detail": {
+   "get": {
+    "summary": "One issue in full for the in-app sheet: GitHub-rendered body and comments (cleaned HTML), author, dates, labels.",
+    "parameters": [
+     {
+      "name": "repo",
+      "in": "query",
+      "required": true,
+      "schema": {
+       "type": "string"
+      },
+      "description": "owner/name or a repo in the org"
+     },
+     {
+      "name": "number",
+      "in": "query",
+      "required": true,
+      "schema": {
+       "type": "integer"
+      }
+     },
+     {
+      "name": "refresh",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "1"
+       ]
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "id, repo, number, title, url, state, author, created_at, updated_at, labels, body_html, comments [{author, created_at, url, body_html}], comments_total"
+     },
+     "404": {
+      "description": "Not found or not visible to this token"
+     }
+    }
+   }
+  },
+  "/api/stats": {
+   "get": {
+    "summary": "Bottleneck stats for one view from GitHub label history (LABELED/UNLABELED/CLOSED/REOPENED events), all open and closed issues of that kind, cached 5 minutes per account.",
+    "parameters": [
+     {
+      "name": "view",
+      "in": "query",
+      "schema": {
+       "type": "string",
+       "enum": [
+        "goals",
+        "bugs"
+       ]
+      }
+     },
+     {
+      "name": "author",
+      "in": "query",
+      "schema": {
+       "type": "string"
+      }
+     },
+     {
+      "name": "repos",
+      "in": "query",
+      "description": "Comma-separated repo names.",
+      "schema": {
+       "type": "string"
+      }
+     }
+    ],
+    "responses": {
+     "200": {
+      "description": "items [{id, repo, author, state, wait (s opened\u2192first building), build (s first building\u2192first ready-to-test), tries (times labelled ready-to-test), kicks (ready-to-test removed without close/approved within 10 min), waiting_for (s since ready-to-test, open items only)}], done, counted, total, computed_at, summary {wait_before_build, build_time, waiting_for_human, waiting_longest, tries_per_item, kicked_back, done, items}. Null means no data yet."
+     }
+    }
+   }
+  },
+  "/api/builder": {
+   "get": {
+    "summary": "Wizard OS Builder switch (mock-up; the builder host will poll this). Default Paused.",
+    "responses": {
+     "200": {
+      "description": "{running: bool, state: Running|Paused, updated_at, updated_by, connected: false, note}"
+     }
+    }
+   },
+   "post": {
+    "summary": "Set the builder switch.",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "running": {
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "running"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Same as GET."
+     },
+     "400": {
+      "description": "running must be a boolean."
+     }
+    }
+   }
+  },
+  "/api/policy": {
+   "get": {
+    "summary": "The workflow policy: team roster (person -> logins, agents), the builder, who opens each view, and the three steps (Open, Build, Review) per view. Defaults in code; DATA_DIR/policy.json overrides keys team, builder, open.",
+    "responses": {
+     "200": {
+      "description": "version 2; team [{name, logins, agents [{login, name}]}], builder {name, logins}, open {goals, bugs}, steps {goals: [step], bugs: [step]} where step = {key open|build|review, n, name, group queued|building|test, label, count_label, role, who [{name, logins [{login, kind person|agent, name}]}], except, about, next}, me {login, person}, org; 0.5 keys kept: goals.authors, builds.builders, lines."
+     }
+    }
+   }
+  },
+  "/api/try": {
+   "get": {
+    "summary": "Try it choices of the signed-in person (mock-up). {items: {'owner/repo#12': {on: true, at}}, connected: false, note}",
+    "responses": {
+     "200": {
+      "description": "Choices"
+     }
+    }
+   },
+   "post": {
+    "summary": "Switch Try it on or off for one item (the view allows it only in Review, label ready-to-test).",
+    "requestBody": {
+     "required": true,
+     "content": {
+      "application/json": {
+       "schema": {
+        "type": "object",
+        "properties": {
+         "repo": {
+          "type": "string",
+          "description": "owner/name"
+         },
+         "number": {
+          "type": "integer"
+         },
+         "on": {
+          "type": "boolean"
+         }
+        },
+        "required": [
+         "repo",
+         "number",
+         "on"
+        ]
+       }
+      }
+     }
+    },
+    "responses": {
+     "200": {
+      "description": "Same as GET plus key and on."
+     },
+     "400": {
+      "description": "Bad repo, number or on."
+     }
+    }
+   }
   }
+ }
 }

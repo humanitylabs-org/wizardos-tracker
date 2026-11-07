@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'board'
-VERSION = '0.6.0'
+VERSION = '0.7.0'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -982,7 +982,7 @@ STEP_TEXT = {
     'open': {'goals': '{who} opens goals and closes them once they work. Nobody else adds or closes a goal.',
              'bugs': 'Anyone on the team, or their own agent, opens a bug and closes it once it works.'},
     'build': 'The Wizard OS Builder writes the code, then labels it ready-to-test and says what to check.',
-    'review': "Someone on the team other than the opener tries it and says Works or Doesn't work.",
+    'review': "Someone on the team, not whoever opened it, tries it and says Works or Doesn't work.",
 }
 
 
@@ -1082,6 +1082,54 @@ def builder_set(person, args, agent=False):
     with LOCK:
         _write('builder.json', {'running': args['running'], 'updated_at': int(time.time()), 'updated_by': who})
     return builder_status()
+
+
+# ---------- 0.7 'Try it' switch per item (mock-up: records the wish per person; nothing runs yet) ----------
+
+TRY_NOTE = 'Mock-up: this will switch the change on in your Wizard once it runs a build with it.'
+
+
+def _try_key(repo, number):
+    if not isinstance(repo, str) or not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo or ''):
+        raise Problem(400, 'repo must be owner/name.')
+    if not isinstance(number, int) or isinstance(number, bool) or not 0 < number < 10**9:
+        raise Problem(400, 'number must be a positive integer.')
+    return f'{repo.lower()}#{number}'
+
+
+def _try_who(person, agent):
+    if agent:
+        a = accounts()
+        return a.get('default') if a.get('default') in a['people'] else next(iter(a['people']), 'owner')
+    return person_key(person)
+
+
+def try_status(person=None, agent=False):
+    """GET /api/try: this person's Try it choices, {items: {"owner/repo#12": {on, at}}}."""
+    allp = _read('try.json', {})
+    allp = allp if isinstance(allp, dict) else {}
+    mine = allp.get(_try_who(person, agent)) or {}
+    return {'items': {k: v for k, v in mine.items() if isinstance(v, dict) and v.get('on')}, 'connected': False, 'note': TRY_NOTE}
+
+
+def try_set(person, args, agent=False):
+    if not isinstance(args.get('on'), bool):
+        raise Problem(400, 'on must be true or false.')
+    key = _try_key(args.get('repo'), args.get('number'))
+    if agent:
+        _owner_request(args, agent, 'switch a change on or off for them')
+    who = _try_who(person, agent)
+    with LOCK:
+        allp = _read('try.json', {})
+        allp = allp if isinstance(allp, dict) else {}
+        mine = allp.get(who) if isinstance(allp.get(who), dict) else {}
+        if args['on']:
+            mine[key] = {'on': True, 'at': int(time.time())}
+        else:
+            mine.pop(key, None)
+        allp[who] = dict(list(mine.items())[-500:])
+        _write('try.json', allp)
+    return {**try_status(person, agent), 'key': key, 'on': args['on']}
 
 
 # ---------- one issue in full, on tap (rendered by GitHub, cleaned here) ----------
@@ -1291,6 +1339,8 @@ TOOLS = [
     {'name': 'board_close', 'description': 'Close a Bug when a human asked you to (pass their words). Goals are refused: only humans close goals, in the app.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'enum': ['completed', 'not_planned']}, **ASKED}, 'required': ['owner_request']}},
     {'name': 'builder_status', 'description': 'Is the Wizard OS Builder switch Running or Paused? (Mock-up: not wired to the builder host yet.)', 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'builder_set', 'description': 'Set the Wizard OS Builder switch (running true = Running, false = Paused) only when a human asked; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'running': {'type': 'boolean'}, **ASKED}, 'required': ['running', 'owner_request']}},
+    {'name': 'try_status', 'description': "Which items the signed-in person switched 'Try it' on for (mock-up: records the wish, nothing runs yet).", 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'try_set', 'description': "Switch 'Try it' on or off for one item (repo owner/name + number) only when a human asked; pass their words as owner_request. Mock-up.", 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'number': {'type': 'integer'}, 'on': {'type': 'boolean'}, **ASKED}, 'required': ['repo', 'number', 'on', 'owner_request']}},
     {'name': 'board_reopen', 'description': 'Reopen a Bug when a human asked you to (pass their words). Goals are refused: only humans reopen goals.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, **ASKED}, 'required': ['owner_request']}},
 ]
 CALLS = {
@@ -1304,6 +1354,8 @@ CALLS = {
     'board_reopen': lambda a: set_state(None, a, 'open', agent=True),
     'builder_status': lambda a: builder_status(),
     'builder_set': lambda a: builder_set(None, a, agent=True),
+    'try_status': lambda a: try_status(None, agent=True),
+    'try_set': lambda a: try_set(None, a, agent=True),
 }
 
 
@@ -1400,6 +1452,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, stats_view(self.person(), q))
             if path == '/api/builder':
                 return self.send(200, builder_status())
+            if path == '/api/try':
+                return self.send(200, try_status(self.person()))
             if path == '/api/policy':
                 return self.send(200, policy(self.person()))
             if path == '/api/board':
@@ -1460,6 +1514,7 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/test/works': lambda: tested(who, body, True),
                 '/api/test/fails': lambda: tested(who, body, False),
                 '/api/builder': lambda: builder_set(who, body),
+                '/api/try': lambda: try_set(who, body),
             }
             if path not in routes:
                 return self.send(404, {'error': 'Not found.'})
