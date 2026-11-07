@@ -1,5 +1,5 @@
 ---
-name: board
+name: wizard-os-tracker
 description: Use when working with Wizard development Goals and Bugs on GitHub.
 version: 0.12.0
 author: Humanity Labs, Hermes Agent
@@ -10,7 +10,7 @@ metadata:
     tags: [github, goals, bugs, project-board]
     related_skills: []
 ---
-# Wizard OS Tracker (app id `board`): Goals and Bugs
+# Wizard OS Tracker (app id `wizard-os-tracker`, was `board`): Goals and Bugs
 
 Humans manage the work; agents write the PRs. There are exactly two kinds of GitHub issue:
 

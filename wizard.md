@@ -1,6 +1,7 @@
 ---
 wizard: 0.2
-id: board
+id: wizard-os-tracker
+renamed_from: [board]
 name: Wizard OS Tracker
 type: service
 category: app
@@ -38,7 +39,7 @@ health: /healthz
 
 # Wizard OS Tracker
 
-Display name "Wizard OS Tracker"; the app id stays `board` and the path `/board/`, so installs and sign-ins carry over.
+Display name "Wizard OS Tracker". 0.12 (store listing): the app id follows the name, `wizard-os-tracker`, with `renamed_from: [board]`, so `wam app-rename board` moves an installed `board` (data, sign-ins, port, settings) to the new id; the repo stays `oscarhenrycollins/wizard-board`.
 
 Humans manage the work; agents write the PRs. Board shows two kinds of GitHub issue across one organisation (default `humanitylabs-org`):
 

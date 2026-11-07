@@ -22,7 +22,7 @@ else:
     raw = raw.replace("import base64,json,pathlib,runpy\\n", "import base64,json,pathlib,runpy,zlib\\n", 1)
     raw = raw.replace(f"base64.b64decode('{payload}')", f"zlib.decompress(base64.b64decode('{packed}'))", 1)
     path.write_text(raw)
-cmd = yaml.safe_load(path.read_text())["services"]["board"]["command"]
+cmd = next(iter(yaml.safe_load(path.read_text())["services"].values()))["command"]
 longest = max(len(a) for a in cmd)
 compile(cmd[-1], "start", "exec")
 assert longest < 120_000, longest

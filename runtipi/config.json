@@ -1,6 +1,6 @@
 {
   "name": "Wizard OS Tracker",
-  "id": "board",
+  "id": "wizard-os-tracker",
   "wizard_type": "service",
   "available": true,
   "short_desc": "The Wizard OS team's build line: goals, bugs and the builder, on top of GitHub. Team members only.",
