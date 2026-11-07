@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'wizard-os-tracker'  # 0.12: id follows the name (was board; renamed_from in wizard.md)
-VERSION = '0.13.3'
+VERSION = '0.13.4'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -1588,7 +1588,7 @@ POLICY_DEFAULT = {
     'human_reviews': 1,
     # 0.11: reset date. Done, the Done list and every line stat count only items closed on or after it
     # (open items always count). DATA_DIR/policy.json `since` overrides (ISO date/time, UTC if no zone).
-    'since': '2026-11-07T00:00:00Z',
+    'since': '2026-11-07T14:45:00Z',
 }
 TARGET_KEYS = {'queued': 'queued', 'open': 'queued', 'building': 'building', 'build': 'building', 'ai': 'ai', 'ai-review': 'ai',
                'ai_review': 'ai', 'review': 'review', 'human': 'review', 'human-review': 'review', 'human_review': 'review',
