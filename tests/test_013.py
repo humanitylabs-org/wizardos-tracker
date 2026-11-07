@@ -323,3 +323,26 @@ class Device(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TrySwitch(unittest.TestCase):
+    """0.14: the builder names the change's feature switch with a `Switch: <author>/<id>` line."""
+    def test_switch_line_from_newest_builder_comment_then_body(self):
+        self.assertEqual(S.switch_of(['What to check: send a voice note.\nSwitch: miguel/send-and-go'], ''), 'miguel/send-and-go')
+        self.assertEqual(S.switch_of(['Switch: miguel/old-one', 'Rebuilt.\n\n**Switch:** `Miguel/Reply-Summary`'], None), 'miguel/reply-summary')
+        self.assertEqual(S.switch_of(['What to check: nothing to switch.'], 'Steps.\nSwitch: jan/dock-badges.'), 'jan/dock-badges')
+        self.assertIsNone(S.switch_of(['Switch it on in Settings and try it.', 'switch: not-an-id'], 'no line'))
+        self.assertIsNone(S.switch_of([], None))
+        self.assertIsNone(S.switch_of(['Switch: ../etc/passwd'], ''))
+
+    def test_review_card_carries_the_switch(self):
+        node = {'repository': {'nameWithOwner': 'humanitylabs-org/wizard-ux'}, 'number': 7, 'title': 't', 'url': 'u',
+                'author': {'login': 'mistermizel'}, 'labels': {'nodes': [{'name': 'bug'}, {'name': 'ready-to-test'}]},
+                'body': 'Bug.', 'comments': {'totalCount': 2, 'nodes': [
+                    {'author': {'login': 'mistermizel'}, 'body': 'Switch: miguel/not-the-builder'},
+                    {'author': {'login': S.BUILDER}, 'body': 'Ready to test. What to check: tap Send.\nSwitch: miguel/send-and-go'}]}}
+        card = S._card(node, 'test')
+        self.assertEqual(card['switch'], 'miguel/send-and-go')
+        self.assertTrue(card['check'])
+        node['comments']['nodes'] = node['comments']['nodes'][:1]
+        self.assertIsNone(S._card(node, 'test')['switch'], 'only the builder (or the issue body) names the switch')

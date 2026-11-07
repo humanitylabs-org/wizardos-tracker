@@ -1,4 +1,6 @@
 'use strict';
+// Wizard OS Tracker 0.14: Try it is the change's real feature switch on this Wizard (builder line `Switch: <author>/<id>`,
+// shell route /wizard-os-home/store-install/_feature-switches, same state as Settings › Try new features).
 // Wizard OS Tracker 0.13: two-step review. The line is Queued → Building → AI review → Human review → Done, with
 // two return arrows to Building (AI review fail, Human review Doesn't work), optional second human review
 // ('1 of 2 reviews' on cards), and Sign in with GitHub (device flow) when the box has a client id.
@@ -7,7 +9,7 @@
 // 0.9: Goals | Bugs + a small Builder switch; the assembly line Queued → Building →
 // Review → Done (big numbers, arrows, a return arrow with the kick-back rate; each bin carries a tiny
 // typical range p25–p75 with the median and a target tick; ⓘ for who + target; tap a bin to filter by stage).
-// Bugs only: Who and Repo chip rows and a tiny sort control. Rows with a 'Try it' switch (mock-up, not on Done).
+// Bugs only: Who and Repo chip rows and a tiny sort control. Rows with a 'Try it' switch (not on Done).
 const el = id => document.getElementById(id);
 const make = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 const link = (cls, href) => { const a = make('a', cls); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; return a; };
@@ -46,8 +48,6 @@ const SORT_FN = {
   discussed: (a, b) => (b.comments || 0) - (a.comments || 0) || ts(a.created_at) - ts(b.created_at),
   active: (a, b) => ts(b.updated_at) - ts(a.updated_at),
 };
-let tries = {};   // 'owner/repo#12' -> true: this person's Try it switches (mock-up)
-const tryKey = i => `${(i.repo || '').toLowerCase()}#${i.number}`;
 const cache = {};
 const details = new Map();   // issue id -> { at, data }: a short cache so reopening is instant
 const DETAIL_SECONDS = 60;
@@ -610,33 +610,69 @@ function ownerChips(i) {
   return box;
 }
 
-// Try it (mock-up): a small switch on every row, live only in Review; never opens the row.
+// Try it (0.14): the change's feature switch on THIS Wizard. The builder names it in its "What to check" comment
+// (`Switch: <author>/<id>`, served as i.switch). The Tracker page runs inside the owner's Wizard, on the shell's origin,
+// so it reads and sets switches through the shell's owner-only route (wizard-app-manager `_feature-switches`, the same
+// state as Settings › Appearance › Try new features). Live only in Human review; never opens the row.
+const SWITCH_API = '/wizard-os-home/store-install/_feature-switches';
+let box = null;   // null: not asked yet; {ok, update, locked, switches: {id: {on, locked}}}
+function takeSwitches(r) {
+  box = { ok: true, locked: !!r.locked, switches: Object.fromEntries((r.switches || []).filter(x => x && x.id).map(x => [x.id, x])) };
+}
+async function switchApi(data) {
+  const init = { credentials: 'same-origin', cache: 'no-store' };
+  if (data) Object.assign(init, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Wizard-Store': '1' }, body: JSON.stringify(data) });
+  const r = await fetch(SWITCH_API, init);
+  let body = null;
+  try { body = await r.json(); } catch (_) {}
+  if (!r.ok || !body) { const e = new Error((body && body.error) || ''); e.status = r.status; e.json = !!body; throw e; }
+  return body;
+}
+function loadSwitches() {
+  return switchApi().then(takeSwitches).catch(e => {
+    // 404 from the box: its App Manager predates feature switches. Anything else (no JSON, network): not inside a Wizard.
+    box = { ok: false, update: e.status === 404 };
+  }).then(() => { if (cache[view] && !typing()) render(cache[view]); });
+}
+const UPDATE_NOTE = 'Update to try this';
+function tryWhy(i) {
+  if (!i.switch) return 'This change has nothing to switch on.';
+  if (!box) return 'Checking this Wizard…';
+  if (!box.ok) return box.update ? UPDATE_NOTE : 'Open the Tracker inside your Wizard to try this.';
+  if (box.locked) return 'Switch to For testers in Settings to try this';
+  if (!box.switches[i.switch]) return UPDATE_NOTE;   // not in this box's catalog yet
+  return '';
+}
 function trySwitch(i) {
   const live = i.group === 'test' || (i.group == null && (i.labels || []).some(l => String(l).toLowerCase() === 'ready-to-test'));  // Human review only
-  const on = live && !!tries[tryKey(i)];
+  const sw = live && box && box.ok && i.switch ? box.switches[i.switch] : null;
+  const on = !!(sw && sw.on && !box.locked);
   const b = make('button', 'bd-try'); b.type = 'button'; b.setAttribute('role', 'switch');
   b.setAttribute('aria-checked', String(on)); b.setAttribute('aria-label', 'Try it');
-  if (!live) b.setAttribute('aria-disabled', 'true');
+  if (i.switch) b.dataset.switch = i.switch;
+  if (!live || tryWhy(i)) b.setAttribute('aria-disabled', 'true');
   b.append(make('i'));
   const stop = e => e.stopPropagation();
   b.addEventListener('keydown', stop); b.addEventListener('pointerdown', stop);
   b.onclick = async e => {
     e.preventDefault(); e.stopPropagation();
     if (!live) return pop(b, '', 'Can be switched on once it’s in Human review.');
-    const next = b.getAttribute('aria-checked') !== 'true', k = tryKey(i);
+    const why = tryWhy(i);
+    if (why) return pop(b, '', why);
+    const next = b.getAttribute('aria-checked') !== 'true';
     b.setAttribute('aria-checked', String(next)); b.disabled = true;
     try {
-      const r = await api('api/try', { repo: i.repo, number: i.number, on: next });
-      tries = Object.fromEntries(Object.keys(r.items || {}).map(x => [x, true]));
-      if (next) pop(b, '', 'Mock-up for now. On a Wizard set to For testers this switches it on; if it’s behind, it asks you to update first.'); else unpop();
-    } catch (err) { b.setAttribute('aria-checked', String(!next)); if (next) delete tries[k]; pop(b, '', err.message); }
-    finally { b.disabled = false; }
+      takeSwitches(await switchApi({ id: i.switch, on: next }));
+      if (next) pop(b, '', 'On in this Wizard. It shows within a few seconds; switch it off here or in Settings.'); else unpop();
+      if (cache[view] && !typing()) render(cache[view]);
+    } catch (err) {
+      b.setAttribute('aria-checked', String(!next));
+      if (err.status === 409) { box.locked = true; return pop(b, '', 'Switch to For testers in Settings to try this'); }
+      if (err.status === 404 && err.json) return pop(b, '', UPDATE_NOTE);
+      pop(b, '', err.message || 'Couldn’t reach this Wizard. Try again.');
+    } finally { b.disabled = false; }
   };
   return b;
-}
-function loadTries() {
-  return api('api/try').then(r => { tries = Object.fromEntries(Object.keys(r.items || {}).map(x => [x, true]));
-    if (cache[view] && !typing()) render(cache[view]); }).catch(() => {});
 }
 
 function row(i, kind) {
@@ -691,7 +727,7 @@ el('builder').onclick = async () => {
 };
 function loadSide() {
   api('api/builder').then(showBuilder).catch(() => {});
-  loadTries();
+  loadSwitches();
 }
 
 function testCard(t, kind) {

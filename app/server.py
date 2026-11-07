@@ -1111,6 +1111,7 @@ def _card(node, tab):
                 if ((c.get('author') or {}).get('login') or '').lower() == BUILDER]
         out['check'] = re.sub(r'^(ready (to|for) test(ing)?)[.:!\s—-]*', '', _plain(said[-1]['body'], 320), flags=re.I) if said else ''
         out['check_from'] = 'builder' if said else ''
+        out['switch'] = switch_of([c.get('body') for c in said], node.get('body'))
         if not said:  # first real line of the description (not a "Part of #13" link line)
             lines = [_plain(x, 220) for x in re.split(r'\n\s*\n|\r?\n', node.get('body') or '')]
             out['check'] = next((x for x in lines if x and not re.fullmatch(r'(part of|closes|fixes|refs?)\s+\S*#\d+\.?', x, re.I)), '')
@@ -1118,6 +1119,21 @@ def _card(node, tab):
         pr = next((r for r in prs if r['state'] == 'open'), None) or next((r for r in prs if r['state'] == 'merged'), None) or (prs[0] if prs else None)
         out['pr'] = {'url': pr['url'], 'number': pr['number'], 'repo': pr['repo']} if pr else None
     return out
+
+
+# 0.14 Try it: the builder names the change's feature switch in its "What to check" hand-over comment with one line
+# `Switch: <author>/<id>` (the id in the shell's tweaks catalog). The newest builder comment that has one wins; the
+# issue body is the fallback (a person may add it there). None: the change has no switch.
+SWITCH_LINE = re.compile(r'^[ \t>*_`-]*switch[*_`]*\s*:[\s*_`]*([a-z0-9][a-z0-9-]{0,39}/[a-z0-9][a-z0-9-]{0,63})[*_`]*\s*\.?\s*$',
+                         re.I | re.M)
+
+
+def switch_of(builder_bodies, issue_body=None):
+    for body in [*reversed([b for b in builder_bodies or [] if isinstance(b, str)]), issue_body]:
+        m = SWITCH_LINE.findall(body or '') if isinstance(body, str) else []
+        if m:
+            return m[-1].lower()
+    return None
 
 
 def board_view(person, args):
