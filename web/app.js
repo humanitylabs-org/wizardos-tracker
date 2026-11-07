@@ -24,7 +24,7 @@ const BINS = [
 const POP = {
   build: ['Wizard OS Builder', 'Writes the code, then hands it to Review.'],
   review: ['The team, not whoever opened it', 'Someone else tries it: Works, or back to Building.'],
-  done: ['Closed', 'The opener closes it once it works. All time.'],
+  done: ['Closed', 'The opener closes it once it works.'],
 };
 const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (_) { return null; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} } };
@@ -82,7 +82,7 @@ function pop(anchor, title, text) {
   const p = el('pop');
   if (popFor === anchor && !p.hidden) return unpop();
   p.classList.remove('bd-te');
-  p.replaceChildren(...(title ? [make('b', '', title)] : []), ...[].concat(text).filter(Boolean).map(t => make('span', '', t)));
+  p.replaceChildren(...(title ? [make('b', '', title)] : []), ...[].concat(text).filter(Boolean).map(t => typeof t === 'string' ? make('span', '', t) : t));
   p.hidden = false; popFor = anchor;
   const r = anchor.getBoundingClientRect(), w = Math.min(260, innerWidth - 24);
   p.style.width = w + 'px';
@@ -91,6 +91,9 @@ function pop(anchor, title, text) {
   p.style.top = (below + h > innerHeight - 8 ? Math.max(8, r.top - h - 8) : below) + 'px';
   p.classList.toggle('up', below + h > innerHeight - 8);
 }
+// 0.11: Done and the line stats count items closed since the reset date (policy `since`).
+const sinceText = iso => { const t = Date.parse(iso || ''); return isNaN(t) ? 'All time'
+  : 'Counted since ' + new Date(t).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'UTC' }); };
 function unpop() { el('pop').hidden = true; popFor = null; }
 document.addEventListener('pointerdown', e => { if (popFor && !el('pop').contains(e.target) && !popFor.contains(e.target)) unpop(); }, true);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') unpop(); });
@@ -381,7 +384,7 @@ function flow(d, groups, done, st, hist) {
     b.setAttribute('aria-pressed', String(only === g));
     b.setAttribute('aria-label', `${x.word}: ${count == null ? 'counting' : count}. ${only === g ? 'Show everything' : 'Show only ' + x.word}`);
     b.append(make('span', 'bd-bin-n', count == null ? '—' : String(count)));
-    if (x.key === 'done') b.title = st.error ? st.error : done == null ? 'Counting…' : 'Closed, all time · tap for the latest';
+    if (x.key === 'done') b.title = st.error ? st.error : done == null ? 'Counting…' : `Closed ${sinceText(d.since).toLowerCase()} · tap for the latest`;
     li.append(b, make('span', 'bd-bin-w', x.word), binStat(x, ls, st, d.targets));
     li.onclick = () => setStage(g);
     out.push(li);
@@ -396,7 +399,8 @@ function flow(d, groups, done, st, hist) {
     t.setAttribute('aria-label', `${x.word} target: ${target(x.key) ? 'under ' + dur(target(x.key)) : 'none'}. Change it`);
     t.onclick = () => editTarget(t, d.view, x);
     const info = make('button', 'bd-i'); info.type = 'button'; info.setAttribute('aria-label', `Who does ${x.word}?`); info.append(infoIcon());
-    info.onclick = () => openStep(x, info, d.view, statLines(x, ls ? ls[STAT_KEY[x.key]] : null, target(x.key)));
+    info.onclick = () => openStep(x, info, d.view, [...statLines(x, ls ? ls[STAT_KEY[x.key]] : null, target(x.key)),
+      ...(x.key === 'done' && d.since ? [make('span', 'bd-since', sinceText(d.since))] : [])]);
     c.append(t, info);
     return c;
   }));

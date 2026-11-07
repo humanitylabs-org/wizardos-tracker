@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'board'
-VERSION = '0.10.2'
+VERSION = '0.11.0'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -896,7 +896,7 @@ def board_split(person, args):
     shown = sum(len(g) for g in groups.values())
     others_test = [c for c in groups['test'] if not c['mine']]
     return {'view': view, 'org': org, 'login': login, 'me_person': person_of(login, base), 'steps': steps_for(view, base), 'groups': groups,
-            'targets': base['targets'][view], 'names': display_names(base),
+            'targets': base['targets'][view], 'names': display_names(base), 'since': base['since'],
             # 0.9: Bugs shows a Repo chip for every non-archived org repo (owner/name), even with 0 open bugs
             'repos': org_repos(acct['token'], org) if view == 'bugs' else [],
             'counts': {k: len(v) for k, v in groups.items()}, 'done': stats.get('done', 0),
@@ -1093,8 +1093,11 @@ def done_list(person, args):
         _forget(acct['token'])
     nodes, total = _view_nodes(acct['token'], f'org:{org} is:issue is:closed {kind} sort:updated-desc', limit=50, query=DONE_PAGE)
     base = policy_base()
+    ts = since_ts(base)
     items = []
     for n in nodes:
+        if not counts_since('closed', n.get('closedAt'), ts):  # 0.11: only closed since the reset date
+            continue
         card = _card(n, 'goals' if view == 'goals' else 'issues')
         author = (n.get('author') or {}).get('login') or ''
         card.update(group='done', mine=same_person(author, acct.get('login') or '', base), opener=person_of(author, base),
@@ -1105,7 +1108,7 @@ def done_list(person, args):
     repos_wanted = _repo_list(args.get('repos'))
     if repos_wanted:
         items = [i for i in items if i['repo'].split('/')[-1].lower() in repos_wanted]
-    return {'view': view, 'org': org, 'items': items, 'count': len(items), 'total': total}
+    return {'view': view, 'org': org, 'items': items, 'count': len(items), 'total': total, 'since': base['since']}
 
 
 def _filter_stats(stats, keep):
@@ -1126,7 +1129,7 @@ def stats_view(person, args):
     if repos_wanted or author:
         stats = _filter_stats(stats, lambda i: (not repos_wanted or i['repo'].split('/')[-1].lower() in repos_wanted)
                               and (not author or i['author'].lower() == author))
-    return {'view': view, **stats, 'summary': summarize(stats.get('items', []))}
+    return {'view': view, **stats, 'since': policy_base()['since'], 'summary': summarize(stats.get('items', []))}
 
 
 def view_stats(token, org, view, cached_only=False):
@@ -1134,7 +1137,7 @@ def view_stats(token, org, view, cached_only=False):
     with LOCK:
         hit = _stats.get(key)
     if hit and time.time() - hit[0] < STATS_SECONDS:
-        return hit[1]
+        return _since_stats(hit[1])
     if cached_only:
         return None
     kind = 'label:goal' if view == 'goals' else '-label:goal'
@@ -1145,7 +1148,15 @@ def view_stats(token, org, view, cached_only=False):
            'total': total, 'computed_at': int(now), 'cache_seconds': STATS_SECONDS}
     with LOCK:
         _stats[key] = (now, out)
-    return out
+    return _since_stats(out)
+
+
+def _since_stats(out):
+    """0.11: drop items closed before the reset date (the cache keeps all, so a changed date applies at once)."""
+    iso = policy_base()['since']
+    ts = _since(iso)[1]
+    items = [i for i in out.get('items', []) if counts_since(i.get('state'), i.get('closed_at'), ts)]
+    return {**out, 'items': items, 'done': sum(1 for i in items if i['state'] == 'closed'), 'counted': len(items), 'since': iso}
 
 
 # ---------- policy (Open -> Build -> Review: who does each step) and the builder switch ----------
@@ -1167,6 +1178,9 @@ POLICY_DEFAULT = {
     'targets': {'bugs': {'queued': 3600, 'building': 4 * 3600, 'review': 86400, 'done': 2 * 86400},
                 # 0.10: Goals Queued 1h like Bugs (queue wait is builder pickup, the same for both)
                 'goals': {'queued': 3600, 'building': 3 * 86400, 'review': 3 * 86400, 'done': 14 * 86400}},
+    # 0.11: reset date. Done, the Done list and every line stat count only items closed on or after it
+    # (open items always count). DATA_DIR/policy.json `since` overrides (ISO date/time, UTC if no zone).
+    'since': '2026-11-07T00:00:00Z',
 }
 TARGET_KEYS = {'queued': 'queued', 'open': 'queued', 'building': 'building', 'build': 'building', 'review': 'review', 'test': 'review', 'done': 'done'}
 _UNIT = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400, 'w': 7 * 86400}
@@ -1210,8 +1224,34 @@ def _team_entry(t):
     return {'name': t['name'][:40], 'logins': logins, 'agents': [{'login': a['login'], 'name': str(a.get('name') or '')[:40]} for a in agents]}
 
 
+def _since(v):
+    """'2026-11-07', '2026-11-07T00:00:00Z' -> (iso, unix ts); anything else the default."""
+    for raw in (v, POLICY_DEFAULT['since']):
+        try:
+            d = datetime.fromisoformat(str(raw or '').strip().replace('Z', '+00:00'))
+        except ValueError:
+            continue
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return d.astimezone(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), d.timestamp()
+    return POLICY_DEFAULT['since'], 0.0
+
+
+def since_ts(base=None):
+    return _since((base or policy_base())['since'])[1]
+
+
+def counts_since(state, closed, ts):
+    """0.11: an item counts toward Done and line stats when it is open or was closed on/after the reset date.
+    `closed` is unix seconds or an ISO string."""
+    if (state or '').lower() != 'closed':
+        return True
+    c = _ts(closed) if isinstance(closed, str) else closed
+    return c is not None and c >= ts
+
+
 def policy_base():
-    """Defaults in code; DATA_DIR/policy.json overrides any of team, builder, open, targets."""
+    """Defaults in code; DATA_DIR/policy.json overrides any of team, builder, open, targets, since."""
     over = _policy_file()
     team = [x for x in (_team_entry(t) for t in (over.get('team') if isinstance(over.get('team'), list) else POLICY_DEFAULT['team'])) if x]
     b = over.get('builder') if isinstance(over.get('builder'), dict) else POLICY_DEFAULT['builder']
@@ -1219,7 +1259,8 @@ def policy_base():
     opn = dict(POLICY_DEFAULT['open'])
     if isinstance(over.get('open'), dict):
         opn.update({k: v for k, v in over['open'].items() if k in ('goals', 'bugs') and (v == 'team' or isinstance(v, list))})
-    return {'team': team, 'builder': builder, 'open': opn, 'targets': _targets(over.get('targets'))}
+    return {'team': team, 'builder': builder, 'open': opn, 'targets': _targets(over.get('targets')),
+            'since': _since(over.get('since'))[0]}
 
 
 def display_names(base=None):

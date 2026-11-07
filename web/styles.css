@@ -386,3 +386,6 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
   .bd-card-top.multi .bd-title { flex: 1 1 calc(100% - 52px); }
   .bd-card-top.multi .bd-owners { order: 3; max-width: none; justify-content: flex-start; }
 }
+
+/* 0.11: reset-date note in the Done ⓘ popover */
+.bd-pop .bd-since { margin-top: 4px; font-size: var(--wz-text-xs, .75rem); opacity: .7; }
