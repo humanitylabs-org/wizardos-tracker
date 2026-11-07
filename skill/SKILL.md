@@ -1,7 +1,7 @@
 ---
 name: board
 description: Use when working with Wizard development Goals and Bugs on GitHub.
-version: 0.11.0
+version: 0.12.0
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -32,3 +32,5 @@ People see the app as **Wizard OS Tracker** (0.7): Goals | Bugs with a small Bui
 6. Confirm every write by reading the result (the tools return the issue as GitHub now has it). On an error, report the exact message; never claim it was saved.
 
 Board acts with the GitHub account of the first person who connected on this box; it sees only what that token can see. If no account is connected, ask the owner to open Wizard OS Tracker and connect GitHub. Never ask for the token in chat.
+
+**0.12 team-only, human-only**: the app's screen accepts only active `humanitylabs-org` members signing in with their own GitHub account; agent/builder accounts (oscarhenrycollins, defleur-agents, wizardosbuilder, roster agents) and non-members are refused and signed out, and every human write route re-checks (cached 10 min). Your MCP tools are unchanged. If a person says the Tracker refused them, they need an org owner to add them to humanitylabs-org, or to sign in with their own account instead of their agent's; never sign in for them with an agent token.

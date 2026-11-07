@@ -389,3 +389,6 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
 
 /* 0.11: reset-date note in the Done ⓘ popover */
 .bd-pop .bd-since { margin-top: 4px; font-size: var(--wz-text-xs, .75rem); opacity: .7; }
+
+/* 0.12: refused sign-in */
+.bd-refused { margin: 0 0 14px; color: var(--ink-2, inherit); line-height: 1.45; }

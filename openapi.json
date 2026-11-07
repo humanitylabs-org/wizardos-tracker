@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Wizard OS Tracker",
-    "version": "0.10.1",
-    "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin."
+    "version": "0.12.0",
+    "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged."
   },
   "paths": {
     "/healthz": {
@@ -55,7 +55,8 @@
           "403": {
             "description": "GitHub token cannot do that"
           }
-        }
+        },
+        "description": "0.12: re-checks membership (cached 10 min); a refused saved account is signed out and `refused` {reason, message} is returned with connected false."
       }
     },
     "/api/connect": {
@@ -79,7 +80,7 @@
             "description": "No GitHub account connected / token refused"
           },
           "403": {
-            "description": "GitHub token cannot do that"
+            "description": "Refused, nothing stored: reason not_member (not an active humanitylabs-org member) or agent (an agent/builder account)"
           }
         },
         "requestBody": {
@@ -96,7 +97,8 @@
               }
             }
           }
-        }
+        },
+        "description": "0.12: refuses non-members of humanitylabs-org and agent/builder accounts (403 with reason); nothing is stored."
       }
     },
     "/api/disconnect": {
@@ -789,7 +791,7 @@
             "description": "created"
           },
           "403": {
-            "description": "not a goal author"
+            "description": "Not a signed-in human member of humanitylabs-org (reason not_member or agent; the saved account is signed out)"
           }
         }
       }
@@ -809,6 +811,9 @@
         "responses": {
           "200": {
             "description": "saved"
+          },
+          "403": {
+            "description": "Not a signed-in human member of humanitylabs-org (reason not_member or agent; the saved account is signed out)"
           }
         }
       }
@@ -828,6 +833,9 @@
         "responses": {
           "200": {
             "description": "saved"
+          },
+          "403": {
+            "description": "Not a signed-in human member of humanitylabs-org (reason not_member or agent; the saved account is signed out)"
           }
         }
       }
@@ -988,6 +996,9 @@
           },
           "400": {
             "description": "running must be a boolean."
+          },
+          "403": {
+            "description": "Not a signed-in human member of humanitylabs-org (reason not_member or agent; the saved account is signed out)"
           }
         }
       }
@@ -1046,6 +1057,9 @@
           },
           "400": {
             "description": "Bad repo, number or on."
+          },
+          "403": {
+            "description": "Not a signed-in human member of humanitylabs-org (reason not_member or agent; the saved account is signed out)"
           }
         }
       }
@@ -1197,6 +1211,9 @@
           },
           "401": {
             "description": "Sign in first."
+          },
+          "403": {
+            "description": "Not a signed-in human member of humanitylabs-org (reason not_member or agent; the saved account is signed out)"
           }
         }
       }

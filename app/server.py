@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'board'
-VERSION = '0.11.0'
+VERSION = '0.12.0'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -33,6 +33,13 @@ GOAL_AUTHORS = {x.strip().lower() for x in os.environ.get('GOAL_AUTHORS', 'jdefl
 BUILDER = os.environ.get('BOARD_BUILDER', 'wizardosbuilder').strip().lower()
 DEFAULT_REPO = os.environ.get('BOARD_DEFAULT_REPO', 'wizard-ux')
 MEDIA_REPO = os.environ.get('BOARD_MEDIA_REPO', 'humanitylabs-org/wizard-issue-media')
+# 0.12: the human UI is for the team only. Signing in needs an active member of this org, and a person's
+# own GitHub account (agent and builder accounts are refused; agents use the MCP tools instead).
+TEAM_ORG = os.environ.get('BOARD_TEAM_ORG', 'humanitylabs-org').strip()
+AGENT_LOGINS = {'oscarhenrycollins', 'defleur-agents', 'wizardosbuilder'}
+MEMBER_SECONDS = 600
+NOT_MEMBER = f'This tracker is for the Wizard OS team. Ask an owner of {TEAM_ORG} to add you.'
+NOT_HUMAN = "Sign in with your own GitHub account, not your agent's. Agents use the Tracker's tools instead."
 CACHE_SECONDS = 60
 STATS_SECONDS = 300
 STATIC_TYPES = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml'}
@@ -42,9 +49,9 @@ LOCK = threading.Lock()
 
 
 class Problem(Exception):
-    def __init__(self, code, message):
+    def __init__(self, code, message, reason=None):
         super().__init__(message)
-        self.code, self.message = code, message
+        self.code, self.message, self.reason = code, message, reason
 
 
 # ---------- private storage (0700 dir, 0600 files) ----------
@@ -109,7 +116,146 @@ def account_for(person=None, agent=False):
     acct = people.get(key) if key else None
     if not acct or not acct.get('token'):
         raise Problem(401, 'No GitHub account is connected in Board. Ask the owner to connect one in the app.' if agent else 'Connect your GitHub account first.')
+    if not agent:
+        _check_person(key, acct)
     return key, acct
+
+
+# ---------- 0.12: team-only, human-only (the human UI; MCP tools are unchanged) ----------
+
+_members = {}  # (token id, org, login) -> (checked at, member?)
+
+
+def agent_logins(base=None):
+    """Agent and builder accounts: the fixed set, the roster's agents and builder, and policy.json `agents`."""
+    out = set(AGENT_LOGINS) | {BUILDER}
+    try:
+        base = base or policy_base()
+        out |= {a['login'].lower() for t in base['team'] for a in t['agents']}
+        out |= {x.lower() for x in base['builder']['logins']}
+    except Exception:  # noqa: BLE001 -- a broken policy file never opens the gate wider
+        pass
+    extra = _policy_file().get('agents')
+    if isinstance(extra, list):
+        out |= {(x.get('login') if isinstance(x, dict) else x).lower() for x in extra
+                if isinstance(x.get('login') if isinstance(x, dict) else x, str)}
+    return out
+
+
+def is_agent_login(login):
+    return (login or '').strip().lower() in agent_logins()
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
+_no_redirect = urllib.request.build_opener(_NoRedirect)
+
+
+def _gh_code(token, path):
+    """(status, json or None) for one GET, no redirects followed, nothing cached. Network trouble -> (0, None)."""
+    req = urllib.request.Request(GITHUB + path, headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json',
+                                                         'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'wizard-board/' + VERSION})
+    try:
+        with _no_redirect.open(req, timeout=15) as r:
+            raw = r.read(1 << 20)
+            return r.status, (json.loads(raw) if raw else None)
+    except urllib.error.HTTPError as e:
+        return e.code, None
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return 0, None
+
+
+def _gql_member(token):
+    """GraphQL organization.viewerIsAMember: True/False, None when GitHub gave no answer.
+    Works for fine-grained tokens, which REST treats as outsiders without the org Members permission."""
+    req = urllib.request.Request(GITHUB + '/graphql', data=json.dumps({'query': 'query($o: String!) { organization(login: $o) { viewerIsAMember } }',
+                                                                       'variables': {'o': TEAM_ORG}}).encode(), method='POST',
+                                 headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'User-Agent': 'wizard-board/' + VERSION})
+    try:
+        with _no_redirect.open(req, timeout=15) as r:
+            out = json.loads(r.read(1 << 20) or b'{}')
+    except urllib.error.HTTPError as e:
+        return 'bad' if e.code == 401 else None
+    except (urllib.error.URLError, TimeoutError, OSError, ValueError):
+        return None
+    v = ((out.get('data') or {}).get('organization') or {}).get('viewerIsAMember') if isinstance(out, dict) else None
+    return v if isinstance(v, bool) else None
+
+
+def team_member(token, login, fresh=False):
+    """Is `login` (the token's own user) an active member of TEAM_ORG? Cached 10 minutes.
+    Checks in order, the first yes wins: GET /user/memberships/orgs/{org} state active; GraphQL
+    viewerIsAMember; GET /orgs/{org}/members/{login} 204 (a 302 means GitHub sees the token as an outsider,
+    then /public_members/{login} 204). No only on a definite answer; GitHub down or rate-limited raises 502
+    (or keeps the last answer) and never signs anyone out."""
+    key = (_tid(token), TEAM_ORG.lower(), (login or '').lower())
+    with LOCK:
+        hit = _members.get(key)
+    if hit and not fresh and time.time() - hit[0] < MEMBER_SECONDS:
+        return hit[1]
+    code, body = _gh_code(token, f'/user/memberships/orgs/{TEAM_ORG}')
+    answered = False
+    ok = False
+    if code == 200 and isinstance(body, dict):
+        answered = True
+        ok = body.get('state') == 'active' and ((body.get('user') or {}).get('login') or login).lower() == (login or '').lower()
+    if not ok:
+        g = _gql_member(token)
+        if g == 'bad' or code == 401:
+            raise Problem(401, 'GitHub refused this token (wrong or expired). Connect again with a new one.')
+        if g is True:
+            ok = True
+        elif g is False:
+            answered = True
+    if not ok:
+        code2, _ = _gh_code(token, f'/orgs/{TEAM_ORG}/members/{login}')
+        if code2 == 204:
+            ok = True
+        elif code2 == 302:
+            code3, _ = _gh_code(token, f'/orgs/{TEAM_ORG}/public_members/{login}')
+            ok = code3 == 204
+            answered = answered or code3 in (204, 404)
+        elif code2 == 404:
+            answered = True
+    if not ok and not answered:
+        if hit:
+            return hit[1]
+        raise Problem(502, 'Could not check your team membership with GitHub. Try again in a minute.')
+    with LOCK:
+        _members[key] = (time.time(), ok)
+    return ok
+
+
+def _sign_out(key, why):
+    with LOCK:
+        a = accounts()
+        old = a['people'].pop(key, None)
+        if old is None:
+            return
+        if a.get('default') == key:
+            a['default'] = next(iter(a['people']), None)
+        _write('accounts.json', a)
+    if old.get('token'):
+        _forget(old['token'])
+
+
+def _check_person(key, acct):
+    """A saved account that is an agent's, or whose user left the team, is signed out on its next use."""
+    login = acct.get('login') or ''
+    if is_agent_login(login):
+        _sign_out(key, 'agent')
+        raise Problem(403, NOT_HUMAN, 'agent')
+    if not team_member(acct['token'], login):
+        _sign_out(key, 'not_member')
+        raise Problem(403, NOT_MEMBER, 'not_member')
+
+
+def gate(person):
+    """Every human write (and every human read through account_for): a signed-in, human team member."""
+    return account_for(person)
 
 
 def public_account(acct):
@@ -203,6 +349,12 @@ def connect(person, args):
         raise Problem(502, f'GitHub answered {e.code}. Try again.') from None
     except (urllib.error.URLError, TimeoutError, OSError):
         raise Problem(502, 'Could not reach GitHub to check the token. Try again.') from None
+    login = user.get('login') or ''
+    # 0.12: team-only and human-only. Nothing is stored for a refused sign-in.
+    if is_agent_login(login):
+        raise Problem(403, NOT_HUMAN, 'agent')
+    if not team_member(token, login):
+        raise Problem(403, NOT_MEMBER, 'not_member')
     kind = 'fine-grained' if token.startswith('github_pat_') else 'classic' if token.startswith('ghp_') else 'token'
     acct = {'token': token, 'login': user.get('login'), 'name': user.get('name'), 'avatar_url': user.get('avatar_url'),
             'html_url': user.get('html_url'), 'kind': kind, 'scopes': scopes, 'saved_at': int(time.time())}
@@ -230,9 +382,17 @@ def disconnect(person):
 
 
 def status(person=None):
+    refused = None
+    try:
+        gate(person)
+    except Problem as e:
+        if e.reason in ('agent', 'not_member'):
+            refused = {'reason': e.reason, 'message': e.message}
+        elif e.code != 401:
+            raise
     a = accounts()
     acct = a['people'].get(person_key(person))
-    return {'connected': bool(acct and acct.get('token')), 'account': public_account(acct) if acct else None,
+    return {'refused': refused, 'team_org': TEAM_ORG, 'connected': bool(acct and acct.get('token')), 'account': public_account(acct) if acct else None,
             'org': settings()['org'], 'token_url': TOKEN_URL,
             'agent_account': (a['people'].get(a.get('default')) or {}).get('login'), 'version': VERSION,
             'can_goal': bool(acct and (acct.get('login') or '').lower() in GOAL_AUTHORS),
@@ -1393,6 +1553,8 @@ def builder_set(person, args, agent=False):
     if not isinstance(args.get('running'), bool):
         raise Problem(400, 'running must be true or false.')
     _owner_request(args, agent, 'start or pause the builder')
+    if not agent:
+        gate(person)
     who = 'agent' if agent else ((accounts()['people'].get(person_key(person)) or {}).get('login') or person_key(person))
     with LOCK:
         _write('builder.json', {'running': args['running'], 'updated_at': int(time.time()), 'updated_by': who})
@@ -1433,6 +1595,8 @@ def try_set(person, args, agent=False):
     key = _try_key(args.get('repo'), args.get('number'))
     if agent:
         _owner_request(args, agent, 'switch a change on or off for them')
+    else:
+        gate(person)
     who = _try_who(person, agent)
     with LOCK:
         allp = _read('try.json', {})
@@ -1793,7 +1957,7 @@ class Handler(BaseHTTPRequestHandler):
                 data, kind = avatar(self.person())
                 return self.send(200, data, kind)
         except Problem as e:
-            return self.send(e.code, {'error': e.message})
+            return self.send(e.code, {'error': e.message, **({'reason': e.reason} if e.reason else {})})
         name = 'index.html' if path == '/' else path[1:]
         kind = STATIC_TYPES.get(Path(name).suffix)
         if kind and '/' not in name and not name.startswith('.') and (ROOT / 'web' / name).is_file():
@@ -1844,9 +2008,11 @@ class Handler(BaseHTTPRequestHandler):
             }
             if path not in routes:
                 return self.send(404, {'error': 'Not found.'})
+            if path not in ('/api/connect', '/api/disconnect'):
+                gate(who)  # 0.12: signed in, a human login, an active team member (cached 10 min)
             return self.send(201 if path in ('/api/goals', '/api/bugs', '/api/new') else 200, routes[path]())
         except Problem as e:
-            self.send(e.code, {'error': e.message})
+            self.send(e.code, {'error': e.message, **({'reason': e.reason} if e.reason else {})})
         except (ValueError, TypeError, AttributeError, KeyError):
             self.send(400, {'error': 'Invalid request.'})
 

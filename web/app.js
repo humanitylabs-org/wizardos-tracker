@@ -63,7 +63,7 @@ async function api(path, data) {
   const r = await fetch(path, init);
   let body = {};
   try { body = await r.json(); } catch (_) {}
-  if (!r.ok) { const e = new Error(body.error || 'Something went wrong. Try again.'); e.status = r.status; throw e; }
+  if (!r.ok) { const e = new Error(body.error || 'Something went wrong. Try again.'); e.status = r.status; e.reason = body.reason; if (body.reason && path !== 'api/connect') { me = { connected: false }; refuse(body.reason, e.message); } throw e; }
   return body;
 }
 function hold(on) {
@@ -116,17 +116,27 @@ const tapTarget = (cls, fn) => { const a = make('a', cls); a.setAttribute('role'
 const plainClick = e => !(e.metaKey || e.ctrlKey || e.shiftKey || e.button);
 
 // ---------- sign in ----------
+const REFUSED_TITLE = { not_member: 'For the Wizard OS team', agent: 'Your own account, please' };
+function refuse(reason, message) {
+  el('refused-title').textContent = REFUSED_TITLE[reason] || REFUSED_TITLE.not_member;
+  el('refused-text').textContent = message;
+  el('signin').hidden = true; el('board').hidden = true; el('loading').hidden = true; el('refused').hidden = false;
+  say('');
+}
 function show(s) {
   me = s;
+  if (s.refused && !s.connected) return refuse(s.refused.reason, s.refused.message);
   const on = !!s.connected;
+  el('refused').hidden = true;
   el('signin').hidden = on; el('board').hidden = !on; el('loading').hidden = true;
 }
+el('refused-back').onclick = () => { el('refused').hidden = true; el('signin').hidden = false; el('token').focus(); };
 el('connect-form').onsubmit = async e => {
   e.preventDefault();
   const t = el('token'), b = el('connect');
   b.disabled = true; t.disabled = true; say('Checking with GitHub…', 'note');
   try { const s = await api('api/connect', { token: t.value }); t.value = ''; say(''); show(s); load('goals'); loadSide(); }
-  catch (err) { say(err.message, 'error'); }
+  catch (err) { if (err.reason) { t.value = ''; refuse(err.reason, err.message); } else say(err.message, 'error'); }
   finally { b.disabled = false; t.disabled = false; }
 };
 
@@ -754,7 +764,7 @@ function drawItemFlow(f) {
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'board', version: '0.10.1' });
+  WizardApp.ready({ name: 'board', version: '0.12.0' });
   WizardApp.back.register({ canGoBack: () => false, back: () => false });
 }
 for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));
