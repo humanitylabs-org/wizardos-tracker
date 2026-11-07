@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'board'
-VERSION = '0.8.0'
+VERSION = '0.9.0'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -582,6 +582,45 @@ def repos(person):
                                           'can_write': bool((r.get('permissions') or {}).get('push'))} for r in rows], key=lambda r: r['name'].lower())}
 
 
+ORG_REPOS_SECONDS = 3600
+_org_repos = {}
+
+
+def org_repos(token, org):
+    """Every non-archived repo of the org (names, sorted), cached an hour per token/org. Used by the Bugs
+    view's Repo chips so repos with no open bugs still show (dimmed). [] when GitHub refuses."""
+    key = (_tid(token), org.lower())
+    with LOCK:
+        hit = _org_repos.get(key)
+    if hit and time.time() - hit[0] < ORG_REPOS_SECONDS:
+        return hit[1]
+    rows = []
+    try:
+        for page in range(1, 6):
+            got = gh(token, 'GET', f'/orgs/{org}/repos?per_page=100&type=all&page={page}')
+            got = got if isinstance(got, list) else []
+            rows += got
+            if len(got) < 100:
+                break
+    except Problem as e:
+        if e.code != 404:
+            return hit[1] if hit else []
+        try:  # a personal account (the sandbox): its own repos
+            rows = []
+            for page in range(1, 6):
+                got = gh(token, 'GET', f'/users/{org}/repos?per_page=100&type=owner&page={page}')
+                got = got if isinstance(got, list) else []
+                rows += got
+                if len(got) < 100:
+                    break
+        except Problem:
+            return hit[1] if hit else []
+    names = sorted({r['full_name'] for r in rows if isinstance(r, dict) and r.get('full_name') and not r.get('archived')}, key=str.lower)
+    with LOCK:
+        _org_repos[key] = (time.time(), names)
+    return names
+
+
 def boxes(person):
     """Which wizard-ux this box runs vs main. The box's own version file is outside this
     app's container, so that half stays 'coming soon' rather than asking for host access."""
@@ -857,6 +896,9 @@ def board_split(person, args):
     shown = sum(len(g) for g in groups.values())
     others_test = [c for c in groups['test'] if not c['mine']]
     return {'view': view, 'org': org, 'login': login, 'me_person': person_of(login, base), 'steps': steps_for(view, base), 'groups': groups,
+            'targets': base['targets'][view],
+            # 0.9: Bugs shows a Repo chip for every non-archived org repo (owner/name), even with 0 open bugs
+            'repos': org_repos(acct['token'], org) if view == 'bugs' else [],
             'counts': {k: len(v) for k, v in groups.items()}, 'done': stats.get('done', 0),
             'stats': {**stats, 'summary': None if stats.get('pending') else summarize(stats.get('items', []))},
             'total': total, 'shown': shown, 'more': total > len(nodes),
@@ -956,7 +998,7 @@ def item_history(node, now=None):
 
 
 def spread(xs):
-    """Average plus the five numbers of a box-and-whisker (min, p25, median, p75, max); box only with 3+ points."""
+    """Average, median and the typical range p25–p75 (3+ points); `box` (min, p25, median, p75, max) kept for scripts."""
     xs = sorted(x for x in xs if x is not None)
     if not xs:
         return {'n': 0, 'avg': None, 'box': None}
@@ -965,7 +1007,8 @@ def spread(xs):
         lo = int(i)
         hi = min(lo + 1, len(xs) - 1)
         return int(xs[lo] + (xs[hi] - xs[lo]) * (i - lo))
-    return {'n': len(xs), 'avg': int(sum(xs) / len(xs)), 'box': [xs[0], q(.25), q(.5), q(.75), xs[-1]] if len(xs) >= 3 else None}
+    return {'n': len(xs), 'avg': int(sum(xs) / len(xs)), 'box': [xs[0], q(.25), q(.5), q(.75), xs[-1]] if len(xs) >= 3 else None,
+            'median': q(.5), 'p25': q(.25) if len(xs) >= 3 else None, 'p75': q(.75) if len(xs) >= 3 else None}
 
 
 def line_stats(items):
@@ -1119,7 +1162,34 @@ POLICY_DEFAULT = {
     'builder': {'name': 'Wizard OS Builder', 'logins': [BUILDER]},
     # Who may open and close items in each view: a list of team names, or "team" for everyone on it.
     'open': {'goals': ['James'], 'bugs': 'team'},
+    # 0.9: target time per step (seconds). Drawn as a tick on each bin's range bar; the median turns
+    # green-ish within target, amber over. DATA_DIR/policy.json `targets` overrides (seconds or '1h', '3d', '30m').
+    'targets': {'bugs': {'queued': 3600, 'building': 4 * 3600, 'review': 86400, 'done': 2 * 86400},
+                'goals': {'queued': 86400, 'building': 3 * 86400, 'review': 3 * 86400, 'done': 14 * 86400}},
 }
+TARGET_KEYS = {'queued': 'queued', 'open': 'queued', 'building': 'building', 'build': 'building', 'review': 'review', 'test': 'review', 'done': 'done'}
+_UNIT = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400, 'w': 7 * 86400}
+
+
+def _seconds(v):
+    """3600, '1h', '3d', '30m', '2w' -> seconds; anything else None."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return int(v) if v > 0 else None
+    m = re.fullmatch(r'\s*(\d+(?:\.\d+)?)\s*([smhdw])\s*', str(v or '').lower())
+    return int(float(m.group(1)) * _UNIT[m.group(2)]) or None if m else None
+
+
+def _targets(over):
+    out = {v: dict(t) for v, t in POLICY_DEFAULT['targets'].items()}
+    if isinstance(over, dict):
+        for view, t in over.items():
+            if view in out and isinstance(t, dict):
+                for k, v in t.items():
+                    if k in TARGET_KEYS and _seconds(v):
+                        out[view][TARGET_KEYS[k]] = _seconds(v)
+    return out
 STEP_TEXT = {
     'open': {'goals': '{who} opens goals and closes them once they work. Nobody else adds or closes a goal.',
              'bugs': 'Anyone on the team, or their own agent, opens a bug and closes it once it works.'},
@@ -1137,7 +1207,7 @@ def _team_entry(t):
 
 
 def policy_base():
-    """Defaults in code; DATA_DIR/policy.json overrides any of team, builder, open."""
+    """Defaults in code; DATA_DIR/policy.json overrides any of team, builder, open, targets."""
     try:
         over = json.loads((DATA / 'policy.json').read_text())
     except (FileNotFoundError, ValueError, OSError):
@@ -1149,7 +1219,7 @@ def policy_base():
     opn = dict(POLICY_DEFAULT['open'])
     if isinstance(over.get('open'), dict):
         opn.update({k: v for k, v in over['open'].items() if k in ('goals', 'bugs') and (v == 'team' or isinstance(v, list))})
-    return {'team': team, 'builder': builder, 'open': opn}
+    return {'team': team, 'builder': builder, 'open': opn, 'targets': _targets(over.get('targets'))}
 
 
 def person_of(login, base=None):

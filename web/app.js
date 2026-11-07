@@ -1,8 +1,8 @@
 'use strict';
-// Wizard OS Tracker 0.8: Goals | Bugs + a small Builder switch; the assembly line Queued → Building →
-// Review → Done (big numbers, arrows, a return arrow with the kick-back rate; each bin carries its own
-// tiny avg + box-and-whisker; ⓘ for who; tap a bin to filter by stage); Everyone ▾ and All repos ▾
-// inline checklists; grouped rows with a 'Try it' switch (mock-up). Issue + its own mini line in a sheet.
+// Wizard OS Tracker 0.9: Goals | Bugs + a small Builder switch; the assembly line Queued → Building →
+// Review → Done (big numbers, arrows, a return arrow with the kick-back rate; each bin carries a tiny
+// typical range p25–p75 with the median and a target tick; ⓘ for who + target; tap a bin to filter by stage).
+// Bugs only: Who and Repo chip rows and a tiny sort control. Rows with a 'Try it' switch (mock-up, not on Done).
 const el = id => document.getElementById(id);
 const make = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 const link = (cls, href) => { const a = make('a', cls); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; return a; };
@@ -26,8 +26,19 @@ const POP = {
 };
 const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (_) { return null; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} } };
-const picked = { goals: new Set(store.get('board.repos.goals') || []), bugs: new Set(store.get('board.repos.bugs') || []) };
-const pickedWho = { goals: new Set(store.get('board.who.goals') || []), bugs: new Set(store.get('board.who.bugs') || []) };
+// Chip filters live on Bugs only (0.9: Goals has none); picks are remembered on the device.
+const picked = { bugs: new Set(store.get('board.repos.bugs') || []) };
+const pickedWho = { bugs: new Set(store.get('board.who.bugs') || []) };
+let repoMore = false;   // the Repo row's '+N more' is open (not remembered)
+const SORTS = [['oldest', 'Oldest'], ['newest', 'Newest'], ['discussed', 'Most discussed'], ['active', 'Recently active']];
+const sortBy = { goals: null, bugs: SORTS.some(([k]) => k === store.get('board.sort.bugs')) ? store.get('board.sort.bugs') : 'oldest' };
+const ts = iso => { const t = Date.parse(iso || ''); return isNaN(t) ? 0 : t; };
+const SORT_FN = {
+  oldest: (a, b) => ts(a.created_at) - ts(b.created_at),
+  newest: (a, b) => ts(b.created_at) - ts(a.created_at),
+  discussed: (a, b) => (b.comments || 0) - (a.comments || 0) || ts(a.created_at) - ts(b.created_at),
+  active: (a, b) => ts(b.updated_at) - ts(a.updated_at),
+};
 let tries = {};   // 'owner/repo#12' -> true: this person's Try it switches (mock-up)
 const tryKey = i => `${(i.repo || '').toLowerCase()}#${i.number}`;
 const cache = {};
@@ -66,7 +77,7 @@ let popFor = null;
 function pop(anchor, title, text) {
   const p = el('pop');
   if (popFor === anchor && !p.hidden) return unpop();
-  p.replaceChildren(...(title ? [make('b', '', title)] : []), make('span', '', text));
+  p.replaceChildren(...(title ? [make('b', '', title)] : []), ...[].concat(text).filter(Boolean).map(t => make('span', '', t)));
   p.hidden = false; popFor = anchor;
   const r = anchor.getBoundingClientRect(), w = Math.min(260, innerWidth - 24);
   p.style.width = w + 'px';
@@ -76,9 +87,8 @@ function pop(anchor, title, text) {
   p.classList.toggle('up', below + h > innerHeight - 8);
 }
 function unpop() { el('pop').hidden = true; popFor = null; }
-document.addEventListener('pointerdown', e => { if (popFor && !el('pop').contains(e.target) && !popFor.contains(e.target)) unpop();
-  for (const f of document.querySelectorAll('.bd-f.open')) if (!f.contains(e.target)) closeFilter(f); }, true);
-document.addEventListener('keydown', e => { if (e.key === 'Escape') { unpop(); for (const f of document.querySelectorAll('.bd-f.open')) closeFilter(f, true); } });
+document.addEventListener('pointerdown', e => { if (popFor && !el('pop').contains(e.target) && !popFor.contains(e.target)) unpop(); }, true);
+document.addEventListener('keydown', e => { if (e.key === 'Escape') unpop(); });
 el('scroll').addEventListener('scroll', unpop, { passive: true });
 addEventListener('resize', unpop);
 const when = iso => {
@@ -119,8 +129,8 @@ sw.addEventListener('click', e => {
   for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x === b));
   hold(false);
   if (cache[view]) render(cache[view]);
-  else { for (const g of [...GROUPS, 'done']) el('sec-' + g).hidden = true; el('totals').textContent = ''; el('steps').replaceChildren(); el('kick').hidden = true; el('empty').hidden = false; el('empty').textContent = 'Loading…'; }
-  unpop(); for (const f of document.querySelectorAll('.bd-f.open')) closeFilter(f);
+  else { for (const g of [...GROUPS, 'done']) el('sec-' + g).hidden = true; el('totals').textContent = ''; el('steps').replaceChildren(); el('kick').hidden = true; el('filters').hidden = true; el('sort').hidden = true; el('empty').hidden = false; el('empty').textContent = 'Loading…'; }
+  unpop(); repoMore = false;
   el('scroll').scrollTop = 0;
   load(view);
 });
@@ -160,20 +170,28 @@ function reposOf(d, keepWho) {
   return [...n.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 function render(d) {
-  // Everyone ▾ and All repos ▾: multi-select, remembered per view; picks no longer present drop out.
-  const whoSet = pickedWho[d.view], chosen = picked[d.view];
+  // Bugs only: Who and Repo chips (multi-select, remembered); picks no longer present drop out. Goals: no filters.
+  const bugs = d.view === 'bugs';
+  const whoSet = bugs ? pickedWho.bugs : new Set(), chosen = bugs ? picked.bugs : new Set();
   const allPeople = new Set(authorsOf(d).map(([p]) => p.toLowerCase()));
   for (const p of [...whoSet]) if (!allPeople.has(p)) whoSet.delete(p);
-  const present = new Set(reposOf(d, () => true).map(([r]) => r.toLowerCase()));
-  for (const r of [...chosen]) if (!present.has(r)) chosen.delete(r);
+  const known = new Map((d.repos || []).map(r => [r.toLowerCase(), r]));
+  for (const [r] of reposOf(d, () => true)) known.set(r.toLowerCase(), r);
+  for (const r of [...chosen]) if (!known.has(r)) chosen.delete(r);
   const byWho = i => !whoSet.size || whoSet.has((i.author || '').toLowerCase());
   const byRepo = i => !chosen.size || chosen.has(repoKey(i));
-  const people = authorsOf({ groups: Object.fromEntries(GROUPS.map(g => [g, d.groups[g].filter(byRepo)])) });
-  const repos = reposOf(d, byWho);
-  filterButton('who', whoSet, people.map(([p, n]) => [p.toLowerCase(), p === d.login ? `${p} (you)` : p, n]), 'Everyone', x => x, 'people');
-  filterButton('repo', chosen, repos.map(([r, n]) => [r.toLowerCase(), repoName(r), n]), 'All repos', repoName, 'repos');
+  el('filters').hidden = !bugs; el('sort').hidden = !bugs || stage[d.view] === 'done';   // Done lists newest closed first
+  if (bugs) {
+    const people = authorsOf({ groups: Object.fromEntries(GROUPS.map(g => [g, d.groups[g].filter(byRepo)])) });
+    const counts = new Map(reposOf(d, byWho).map(([r, n]) => [r.toLowerCase(), n]));
+    const repos = [...known].map(([k, r]) => [k, repoName(r), counts.get(k) || 0]).sort((a, b) => b[2] - a[2] || a[1].localeCompare(b[1]));
+    chipRow('who', whoSet, people.map(([p, n]) => [p.toLowerCase(), p === d.login ? `${p} (you)` : p, n]));
+    chipRow('repo', chosen, repos);
+    sortControl();
+  }
   const keep = i => byWho(i) && byRepo(i);
-  const groups = Object.fromEntries(GROUPS.map(g => [g, d.groups[g].filter(keep)]));
+  const order = SORT_FN[sortBy[d.view]];
+  const groups = Object.fromEntries(GROUPS.map(g => { const l = d.groups[g].filter(keep); return [g, order ? l.sort(order) : l]; }));
   const st = d.stats || {}, hist = (st.items || []).filter(keep);
   flow(d, groups, st.pending || st.error ? null : hist.filter(i => i.state === 'closed').length, st, hist);
   const only = stage[d.view];
@@ -222,49 +240,42 @@ async function loadDone(which, force) {
 }
 el('f-stage').querySelector('button').onclick = () => { stage[view] = null; if (cache[view]) render(cache[view]); };
 
-// ---------- filters: two identical pills; each opens a compact checklist right under it ----------
-function filterButton(kind, set, options, allText, short, plural) {
-  const box = el('f-' + kind), btn = box.querySelector('.bd-pick');
-  btn.textContent = !set.size ? allText : set.size === 1 ? short([...set][0]) : `${set.size} ${plural}`;
-  btn.classList.toggle('on', !!set.size);
-  box.hidden = !options.length && !set.size;
-  box._f = { kind, set, options, allText };
-  if (box.classList.contains('open')) fillFilter(box);
+// ---------- Bugs filters: chip rows (tap to add/remove, All resets) and a tiny sort control ----------
+const REPO_TOP = 10;
+function chip(label, n, on, fn, extra = '') {
+  const b = make('button', 'bd-chip' + (extra ? ' ' + extra : '')); b.type = 'button';
+  b.setAttribute('aria-pressed', String(on));
+  b.append(make('span', 'bd-chip-l', label));
+  if (n != null) b.append(make('span', 'bd-chip-n', String(n)));
+  b.onclick = fn; return b;
 }
-const checkMark = () => {
-  const chk = make('span', 'wz-check bd-chk'); const i = make('i');
-  const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('aria-hidden', 'true');
-  const pth = document.createElementNS(NS, 'path'); pth.setAttribute('d', 'M3.5 8.5l3 3 6-7'); svg.append(pth); i.append(svg); chk.append(i);
-  return chk;
-};
-function fillFilter(box) {
-  const { kind, set, options, allText } = box._f, panel = box.querySelector('.bd-fp');
-  const item = (label, n, on, fn) => {
-    const b = make('button', 'bd-fp-row'); b.type = 'button'; b.setAttribute('role', 'menuitemcheckbox');
-    b.setAttribute('aria-pressed', String(on)); b.setAttribute('aria-checked', String(on));
-    b.append(checkMark(), make('span', 'bd-fp-name', label), make('span', 'bd-fp-n', n == null ? '' : String(n)));
-    b.onclick = fn; return b;
-  };
-  const total = options.reduce((a, o) => a + o[2], 0);
-  panel.replaceChildren(item(allText, total, !set.size, () => { set.clear(); saveFilter(kind); }),
-    ...options.map(([k, label, n]) => item(label, n, set.has(k), () => { if (set.has(k)) set.delete(k); else set.add(k); saveFilter(kind); })));
+function chipRow(kind, set, options) {
+  const box = el('c-' + kind), total = options.reduce((a, o) => a + o[2], 0);
+  const toggle = k => () => { if (set.has(k)) set.delete(k); else set.add(k); saveFilter(kind); };
+  const out = [chip(kind === 'who' ? 'Everyone' : 'All repos', total, !set.size, () => { set.clear(); saveFilter(kind); }, 'all')];
+  let shown = options;
+  if (kind === 'repo' && !repoMore) {  // the repos with bugs (top few) and any picked; the rest behind '+N more'
+    const top = options.filter(o => o[2] > 0).slice(0, REPO_TOP);
+    shown = options.filter(o => top.includes(o) || set.has(o[0]));
+  }
+  out.push(...shown.map(([k, label, n]) => chip(label, n, set.has(k), toggle(k), n ? '' : 'zero')));
+  if (kind === 'repo' && options.length > shown.length) out.push(chip(`+${options.length - shown.length} more`, null, false, () => { repoMore = true; render(cache[view]); }, 'more'));
+  else if (kind === 'repo' && repoMore && options.length > REPO_TOP) out.push(chip('Less', null, false, () => { repoMore = false; render(cache[view]); }, 'more'));
+  box.replaceChildren(...out);
+  box.hidden = options.length < (kind === 'who' ? 2 : 1) && !set.size;
 }
 function saveFilter(kind) {
   store.set((kind === 'who' ? 'board.who.' : 'board.repos.') + view, [...(kind === 'who' ? pickedWho : picked)[view]]);
   if (cache[view]) render(cache[view]);
 }
-function closeFilter(box, focus) {
-  box.classList.remove('open'); box.querySelector('.bd-fp').hidden = true;
-  const b = box.querySelector('.bd-pick'); b.setAttribute('aria-expanded', 'false'); if (focus) b.focus();
-}
-for (const box of document.querySelectorAll('.bd-f')) {
-  box.querySelector('.bd-pick').onclick = () => {
-    const open = box.classList.contains('open');
-    for (const f of document.querySelectorAll('.bd-f.open')) closeFilter(f);
-    if (open || !box._f) return;
-    unpop(); box.classList.add('open'); fillFilter(box);
-    box.querySelector('.bd-fp').hidden = false; box.querySelector('.bd-pick').setAttribute('aria-expanded', 'true');
-  };
+function sortControl() {
+  const box = el('sort');
+  box.replaceChildren(...SORTS.map(([k, label]) => {
+    const b = make('button', 'bd-sort-b', label); b.type = 'button'; b.setAttribute('role', 'radio');
+    b.setAttribute('aria-checked', String(sortBy[view] === k));
+    b.onclick = () => { sortBy[view] = k; store.set('board.sort.' + view, k); if (cache[view]) render(cache[view]); };
+    return b;
+  }));
 }
 
 // The assembly line: four bins (big number, word + ⓘ, a tiny avg and box-and-whisker), arrows between,
@@ -277,18 +288,19 @@ const arrow = () => {
   return li;
 };
 const STAT_HELP = {
-  open: 'Average time queued: opened → first building label',
-  build: 'Average build time: first building → ready-to-test',
-  review: 'Average time in review: ready-to-test → closed or kicked back',
-  done: 'Average total time: opened → closed',
+  open: 'Time queued: opened → first building label',
+  build: 'Build time: first building → ready-to-test',
+  review: 'Time in review: ready-to-test → closed or kicked back',
+  done: 'Total time: opened → closed',
 };
 const STAT_KEY = { open: 'queued', build: 'building', review: 'review', done: 'done' };
 // Same maths as the server's line_stats(), run after the view's own filters.
 function spread(xs) {
   xs = xs.filter(x => x != null).sort((a, b) => a - b);
-  if (!xs.length) return { n: 0, avg: null, box: null };
+  if (!xs.length) return { n: 0, avg: null, median: null, p25: null, p75: null };
   const q = p => { const i = (xs.length - 1) * p, lo = Math.floor(i), hi = Math.min(lo + 1, xs.length - 1); return xs[lo] + (xs[hi] - xs[lo]) * (i - lo); };
-  return { n: xs.length, avg: xs.reduce((a, b) => a + b, 0) / xs.length, box: xs.length >= 3 ? [xs[0], q(.25), q(.5), q(.75), xs[xs.length - 1]] : null };
+  const three = xs.length >= 3;
+  return { n: xs.length, avg: xs.reduce((a, b) => a + b, 0) / xs.length, median: q(.5), p25: three ? q(.25) : null, p75: three ? q(.75) : null };
 }
 function lineStats(items) {
   const reviewed = items.filter(i => i.tries), kicked = items.filter(i => i.kicks);
@@ -299,28 +311,39 @@ function lineStats(items) {
       per: kicked.length ? kicked.reduce((a, i) => a + i.kicks, 0) / kicked.length : null,
       toDone: toDone.length ? toDone.reduce((a, b) => a + b, 0) / toDone.length : null } };
 }
-// A tiny box-and-whisker: whisker min→max, box p25→p75, a tick at the median. Log scale (durations skew).
-function boxPlot(box) {
-  const W = 48, H = 10, svg = document.createElementNS(NS, 'svg');
-  svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('class', 'bd-box'); svg.setAttribute('aria-hidden', 'true');
-  const lo = Math.log1p(box[0]), hi = Math.log1p(box[4]), x = v => 1 + (hi > lo ? (Math.log1p(v) - lo) / (hi - lo) : .5) * (W - 2);
+// A tiny range bar: the typical middle half p25 → p75, a dot at the median, a thin accent tick at the target.
+// Log scale over whichever is wider, the range or the target, so the tick always sits on the bar.
+function rangeBar(s, target, cls) {
+  const W = 60, H = 10, svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('class', 'bd-range'); svg.setAttribute('aria-hidden', 'true');
+  svg.setAttribute('preserveAspectRatio', 'none');
+  const a = s.p25 != null ? s.p25 : s.median, b = s.p75 != null ? s.p75 : s.median;
+  const lo = Math.log1p(Math.min(a, target || a) / 1.5), hi = Math.log1p(Math.max(b, target || b) * 1.5);
+  const x = v => 3 + (hi > lo ? (Math.log1p(v) - lo) / (hi - lo) : .5) * (W - 6);
   const add = (tag, at) => { const n = document.createElementNS(NS, tag); for (const k in at) n.setAttribute(k, at[k]); svg.append(n); return n; };
-  add('line', { x1: x(box[0]), x2: x(box[4]), y1: H / 2, y2: H / 2, class: 'w' });
-  add('line', { x1: x(box[0]), x2: x(box[0]), y1: 2.5, y2: H - 2.5, class: 'w' });
-  add('line', { x1: x(box[4]), x2: x(box[4]), y1: 2.5, y2: H - 2.5, class: 'w' });
-  add('rect', { x: x(box[1]), y: 1, width: Math.max(1.5, x(box[3]) - x(box[1])), height: H - 2, rx: 1.5, class: 'b' });
-  add('line', { x1: x(box[2]), x2: x(box[2]), y1: 1, y2: H - 1, class: 'm' });
+  add('line', { x1: 1, x2: W - 1, y1: H / 2, y2: H / 2, class: 't' });
+  if (s.p25 != null) add('line', { x1: x(a), x2: Math.max(x(b), x(a) + .5), y1: H / 2, y2: H / 2, class: 'r' });
+  if (target) add('line', { x1: x(target), x2: x(target), y1: 0, y2: H, class: 'g' });
+  add('circle', { cx: x(s.median), cy: H / 2, r: 2.6, class: 'm ' + cls });
   return svg;
 }
-function binStat(x, ls, st) {
+const statLines = (x, s, target) => [
+  s && s.n ? (s.p25 != null ? `Typical ${dur(s.p25)}–${dur(s.p75)} (middle half), median ${dur(s.median)}.` : `Median ${dur(s.median)} (${s.n} item${s.n === 1 ? '' : 's'}).`) : '',
+  target ? `Target: under ${dur(target)}.` : ''];
+function binStat(x, ls, st, targets) {
   const box = make('span', 'bd-bin-s');
   if (st.pending) { box.textContent = '…'; box.title = 'Counting…'; return box; }
+  const target = (targets || {})[STAT_KEY[x.key]] || null;
   if (st.error || !ls) { box.textContent = '—'; box.title = st.error || NO_DATA; return box; }
   const s = ls[STAT_KEY[x.key]];
-  box.append(make('span', 'bd-avg' + (s.avg == null ? ' none' : ''), s.avg == null ? '—' : 'avg ' + dur(s.avg)));
-  if (s.box) box.append(boxPlot(s.box));
-  box.title = s.avg == null ? `${STAT_HELP[x.key]}: ${NO_DATA}` : `${STAT_HELP[x.key]}: ${dur(s.avg)} (${s.n} item${s.n === 1 ? '' : 's'})`
-    + (s.box ? `\nmin ${dur(s.box[0])} · p25 ${dur(s.box[1])} · median ${dur(s.box[2])} · p75 ${dur(s.box[3])} · max ${dur(s.box[4])}` : '');
+  if (!s.n) { box.append(make('span', 'bd-rn none', '—')); if (target) box.append(make('span', 'bd-rl', 'target ' + dur(target)));
+    box.title = `${STAT_HELP[x.key]}: ${NO_DATA}`; return box; }
+  const cls = target ? (s.median <= target ? 'ok' : 'warn') : '';
+  const nums = make('span', 'bd-rn' + (s.p25 == null ? ' one' : ''));
+  if (s.p25 != null) nums.append(make('span', 'lo', dur(s.p25)), make('b', 'md ' + cls, dur(s.median)), make('span', 'hi', dur(s.p75)));
+  else nums.append(make('b', 'md ' + cls, dur(s.median)));
+  box.append(nums, rangeBar(s, target, cls), make('span', 'bd-rl', target ? 'target ' + dur(target) : 'typical'));
+  box.title = `${STAT_HELP[x.key]} (${s.n} item${s.n === 1 ? '' : 's'}). ` + statLines(x, s, target).filter(Boolean).join(' ') + (s.avg != null ? ` Average ${dur(s.avg)}.` : '');
   return box;
 }
 const infoIcon = () => {
@@ -345,9 +368,9 @@ function flow(d, groups, done, st, hist) {
     if (x.key === 'done') b.title = st.error ? st.error : done == null ? 'Counting…' : 'Closed, all time · tap for the latest';
     const wrow = make('span', 'bd-bin-wr');
     const info = make('button', 'bd-i'); info.type = 'button'; info.setAttribute('aria-label', `Who does ${x.word}?`); info.append(infoIcon());
-    info.onclick = e => { e.stopPropagation(); openStep(x, info, d.view); };
+    info.onclick = e => { e.stopPropagation(); openStep(x, info, d.view, ls ? statLines(x, ls[STAT_KEY[x.key]], (d.targets || {})[STAT_KEY[x.key]]) : statLines(x, null, (d.targets || {})[STAT_KEY[x.key]])); };
     wrow.append(make('span', 'bd-bin-w', x.word), info);
-    li.append(b, wrow, binStat(x, ls, st));
+    li.append(b, wrow, binStat(x, ls, st, d.targets));
     li.onclick = e => { if (!info.contains(e.target)) setStage(g); };
     out.push(li);
   });
@@ -369,14 +392,14 @@ function kickLabel(ls, st) {
   k.title = why; k.setAttribute('aria-label', 'Doesn’t work goes back to Building. ' + why);
   k.onclick = () => pop(k, 'Doesn’t work → back to Building', why);
 }
-function openStep(x, anchor, kind) {
+function openStep(x, anchor, kind, extra = []) {
   if (x.key === 'open') {
     const s = (steps || []).find(y => y.key === 'open');
     const who = s ? s.role : kind === 'goals' ? 'James' : 'Anyone on the team';
-    return pop(anchor, who, kind === 'goals' ? 'Opens goals. They wait here until the builder picks them up.' : 'Opens bugs. They wait here until the builder picks them up.');
+    return pop(anchor, who, [kind === 'goals' ? 'Opens goals. They wait here until the builder picks them up.' : 'Opens bugs. They wait here until the builder picks them up.', ...extra]);
   }
   const [who, text] = POP[x.key];
-  pop(anchor, x.key === 'build' && steps && steps[1] ? steps[1].role : who, text);
+  pop(anchor, x.key === 'build' && steps && steps[1] ? steps[1].role : who, [text, ...extra]);
 }
 
 const dur = sec => {
@@ -388,6 +411,9 @@ const dur = sec => {
 };
 
 const NS = 'http://www.w3.org/2000/svg';
+// How long a bug has existed, short: 40m, 5h, 12d.
+const age = iso => { const t = ts(iso); if (!t) return ''; const s = Math.max(0, (Date.now() - t) / 1000);
+  return s < 3600 ? Math.max(1, Math.round(s / 60)) + 'm' : s < 86400 ? Math.floor(s / 3600) + 'h' : Math.floor(s / 86400) + 'd'; };
 function bubble(n) {
   const s = make('span', 'bd-cmt'); s.setAttribute('aria-label', `${n} comment${n === 1 ? '' : 's'}`);
   const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('aria-hidden', 'true');
@@ -451,11 +477,15 @@ function row(i, kind) {
     if (rest) meta.append(make('span', 'bd-repo', ' · ' + rest));
   } else {  // bugs: title, one line, then repo · opener · comments
     meta.classList.add('bd-meta-b');
-    meta.append(document.createTextNode([repoName(i.repo), i.opener || i.author].filter(Boolean).join(' · ') + ' · '), bubble(i.comments || 0));
+    const a2 = i.group !== 'done' && age(i.created_at);
+    meta.append(document.createTextNode([repoName(i.repo), i.opener || i.author].filter(Boolean).join(' · ') + ' · '));
+    if (a2) { const g = make('span', 'bd-age', a2); g.title = 'Opened ' + when(i.created_at); meta.append(g, document.createTextNode(' · ')); }
+    meta.append(bubble(i.comments || 0));
   }
   if (i.group === 'done' && i.closed_at) meta.append(make('span', 'bd-repo', ' · closed ' + when(i.closed_at)));
   a.append(meta);
-  wrap.append(a, trySwitch(i));
+  wrap.append(a);
+  if (i.group !== 'done') wrap.append(trySwitch(i));   // 0.9: no Try it on Done rows
   return wrap;
 }
 
@@ -487,7 +517,7 @@ function testCard(t, kind) {
   const h = tapTarget('bd-title', () => openDetail(t)); h.textContent = t.title;
   top.append(h, trySwitch(t)); c.append(top);
   if (t.check) c.append(make('p', 'bd-check' + (kind === 'bugs' ? ' one' : ''), t.check));
-  c.append(make('p', 'bd-hint', [repoName(t.repo), t.opener ? (t.mine ? 'you' : t.opener) : '', `${t.comments || 0} comments`].filter(Boolean).join(' · ')));
+  c.append(make('p', 'bd-hint', [repoName(t.repo), t.opener ? (t.mine ? 'you' : t.opener) : '', kind === 'bugs' ? age(t.created_at) : '', `${t.comments || 0} comments`].filter(Boolean).join(' · ')));
   if (t.mine) {  // nobody reviews what they (or their own agent) opened
     c.classList.add('mine');
     c.append(make('p', 'bd-mine', 'Someone else reviews this'));
@@ -646,13 +676,13 @@ function drawItemFlow(f) {
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'board', version: '0.8.0' });
+  WizardApp.ready({ name: 'board', version: '0.9.0' });
   WizardApp.back.register({ canGoBack: () => false, back: () => false });
 }
 for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));
 api('api/status').then(s => { show(s); if (s.connected) { load(view); loadSide(); const other = view === 'goals' ? 'bugs' : 'goals'; setTimeout(() => { if (!cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; }).catch(() => {}); }, 600); } })
   .catch(err => { el('loading').hidden = true; say(err.message, 'error'); });
-const quiet = () => me && me.connected && !document.hidden && !typing() && !sheetOpen() && !popFor && !document.querySelector('.bd-f.open');
+const quiet = () => me && me.connected && !document.hidden && !typing() && !sheetOpen() && !popFor;
 const tick = () => { if (quiet() && Date.now() - lastLoad > 20000) load(view, true); };
 window.addEventListener('focus', tick);
 document.addEventListener('visibilitychange', tick);

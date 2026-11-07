@@ -1,4 +1,4 @@
-/* Wizard OS Tracker 0.7 layout only. Colours, type and components come from the kit (wizard-ui.css, --wz-* roles). */
+/* Wizard OS Tracker 0.9 layout only. Colours, type and components come from the kit (wizard-ui.css, --wz-* roles). */
 [hidden] { display: none !important; }
 .bd-app { min-height: 100dvh; }
 .bd-scroll { padding-top: var(--wz-space-4); padding-bottom: calc(var(--wz-space-5) + env(safe-area-inset-bottom, 0px)); }
@@ -276,3 +276,44 @@ a.bd-title:hover { text-decoration: underline; }
 .bd-dloop .bd-kick { cursor: default; top: 11px; }
 .bd-dloop.none::before, .bd-dloop.none::after { opacity: .5; }
 .bd-dflow-note { margin-top: 0; font-size: 12px; }
+
+/* 0.9: each bin's typical range (p25 · median · p75 over a thin bar, a target tick); kit success/warning roles. */
+.bd-app { --bd-ok: var(--wz-success, var(--accent)); --bd-warn: var(--wz-warning, var(--ink-2)); }
+html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(--ink)); --bd-warn: var(--wz-warning-light, var(--ink)); }
+@media (prefers-color-scheme: light) { html:not([data-color-scheme]) .bd-app { --bd-ok: var(--wz-success-light, var(--ink)); --bd-warn: var(--wz-warning-light, var(--ink)); } }
+.bd-bin-s { width: 100%; max-width: 76px; gap: 1px; min-height: 34px; margin-top: 5px; padding: 0 2px; box-sizing: border-box; }
+.bd-rn { display: flex; justify-content: space-between; align-items: baseline; gap: 2px; width: 100%; font-size: 10.5px; color: var(--ink-3); }
+.bd-rn.one, .bd-rn.none { justify-content: center; }
+.bd-rn .md { font-size: 11.5px; font-weight: 700; color: var(--ink-2); }
+.bd-rn .md.ok { color: var(--bd-ok); }
+.bd-rn .md.warn { color: var(--bd-warn); }
+.bd-range { display: block; width: 100%; height: 10px; overflow: visible; }
+.bd-range .t { stroke: var(--line-2); stroke-width: 1; vector-effect: non-scaling-stroke; }
+.bd-range .r { stroke: var(--ink-3); stroke-width: 4; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.bd-range .g { stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.bd-range .m { fill: var(--ink-2); stroke: var(--wz-panel, var(--fill)); stroke-width: .8; }
+.bd-range .m.ok { fill: var(--bd-ok); }
+.bd-range .m.warn { fill: var(--bd-warn); }
+.bd-rl { font-size: 9.5px; color: var(--ink-3); letter-spacing: .01em; }
+@media (max-width: 640px) { .bd-rn { font-size: 10px; } .bd-rn .md { font-size: 11px; } .bd-bin-s { padding: 0 1px; } }
+
+/* 0.9 Bugs filters: chip rows that wrap; a tiny segmented sort. */
+.bd-filters { display: grid; gap: 8px; margin: 0 0 var(--wz-space-3); }
+.bd-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.bd-chip { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--fill); color: var(--ink-2); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer; white-space: nowrap; max-width: 100%; }
+.bd-chip-l { overflow: hidden; text-overflow: ellipsis; }
+.bd-chip-n { font-size: 11px; font-weight: 600; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.bd-chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+.bd-chip[aria-pressed="true"] .bd-chip-n { color: inherit; opacity: .8; }
+.bd-chip.zero { opacity: .5; }
+.bd-chip.zero[aria-pressed="true"] { opacity: 1; }
+.bd-chip.more { background: none; border-style: dashed; color: var(--ink-3); }
+@media (hover: hover) { .bd-chip:not([aria-pressed="true"]):hover { background: var(--fill-2); } }
+.bd-chip:focus-visible, .bd-sort-b:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bd-sub { justify-content: space-between; }
+.bd-sort { display: inline-flex; margin-left: auto; padding: 2px; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--fill); }
+.bd-sort-b { min-height: 26px; padding: 0 9px; border: 0; border-radius: var(--r-pill); background: none; color: var(--ink-3); font: inherit; font-size: 11.5px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.bd-sort-b[aria-checked="true"] { background: var(--fill-2); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line-2); }
+@media (max-width: 420px) { .bd-sort { margin-left: 0; } .bd-sort-b { padding: 0 7px; font-size: 11px; } }
+.bd-age { font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.bd-rowx:not(:has(.bd-try)) .bd-item { padding-right: 16px; }

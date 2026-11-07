@@ -48,11 +48,15 @@
           <p class="bd-loop" id="loop"><button type="button" class="bd-kick" id="kick" aria-label="Doesn't work goes back to Building" hidden></button></p>
         </div>
 
+        <!-- Bugs only: Who and Repo chip rows (multi-select, counts, All resets), and a tiny sort control. -->
+        <div class="bd-filters" id="filters" hidden>
+          <div class="bd-chips" id="c-who" role="group" aria-label="Who opened it"></div>
+          <div class="bd-chips" id="c-repo" role="group" aria-label="Repo"></div>
+        </div>
         <div class="bd-sub">
-          <div class="bd-f" id="f-who"><button type="button" class="bd-pick" data-filter="who" aria-expanded="false" aria-controls="fp-who">Everyone</button><div class="bd-fp" id="fp-who" hidden></div></div>
-          <div class="bd-f" id="f-repo"><button type="button" class="bd-pick" data-filter="repo" aria-expanded="false" aria-controls="fp-repo">All repos</button><div class="bd-fp" id="fp-repo" hidden></div></div>
           <div class="bd-fs" id="f-stage" hidden><button type="button" class="bd-pick on bd-stagepick" aria-label="Show every stage"></button></div>
           <p class="bd-totals" id="totals" aria-live="polite"></p>
+          <div class="bd-sort" id="sort" role="radiogroup" aria-label="Sort" hidden></div>
         </div>
 
         <section class="bd-sec" id="sec-test" hidden>

@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Wizard OS Tracker",
-    "version": "0.8.0",
+    "version": "0.9.0",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin."
   },
   "paths": {
@@ -834,7 +834,7 @@
     },
     "/api/split": {
       "get": {
-        "summary": "Goals or Bugs grouped by status: Waiting for review (ready-to-test, key test), Building (building), Queued (other open). Up to 300 items. Rows carry desc (first paragraph as plain text), assignees, comments (count). Also returns steps (the three workflow steps for this view), me_person, and per item opener (team name of whoever opened it); mine is true when you or your own agent opened it.",
+        "summary": "Goals or Bugs grouped by status: Waiting for review (ready-to-test, key test), Building (building), Queued (other open). Up to 300 items. Rows carry desc (first paragraph as plain text), assignees, comments (count). Also returns steps (the three workflow steps for this view), me_person, and per item opener (team name of whoever opened it); mine is true when you or your own agent opened it. 0.9: also returns targets (seconds per stage for this view: queued, building, review, done) and, for view=bugs, repos (every non-archived org repo as owner/name, cached an hour, so the Repo chips can show repos with 0 open bugs); items carry created_at and updated_at (bug age and sort are computed in the view).",
         "parameters": [
           {
             "name": "view",
@@ -868,7 +868,7 @@
         ],
         "responses": {
           "200": {
-            "description": "view, org, login, groups {test, building, queued} (each item: id, repo, number, title, author, assignees[], comments, desc, group, mine, labels; goals add progress, owner), counts, done (closed all time, null while stats are pending), stats (same shape as /api/stats, or {pending:true} until computed: then call /api/stats), total, shown, more; plus 0.3 keys test and doing. closed_week was removed in 0.5."
+            "description": "view, org, login, groups {test, building, queued} (each item: id, repo, number, title, author, assignees[], comments, desc, group, mine, labels; goals add progress, owner), counts, done (closed all time, null while stats are pending), stats (same shape as /api/stats, or {pending:true} until computed: then call /api/stats), total, shown, more; plus 0.3 keys test and doing. closed_week was removed in 0.5. 0.9 keys: targets {queued, building, review, done} in seconds; repos [owner/name] (bugs only, [] for goals)."
           }
         }
       }
@@ -948,7 +948,7 @@
         ],
         "responses": {
           "200": {
-            "description": "items [{id, repo, author, state, wait (s opened→first building), build (s first building→first ready-to-test), review_rounds ([s] each ready-to-test stint that ended in a close or kick-back), total (s opened→closed), tries (times labelled ready-to-test), kicks (ready-to-test removed without close/approved within 10 min), kick_to_done (s first kick-back→closed), waiting_for (s since ready-to-test, open items only), stage (queued|building|review|done), staged, opened_at, closed_at}], done, counted, total, computed_at, summary {wait_before_build, build_time, waiting_for_human, waiting_longest, tries_per_item, kicked_back, done, items, line {queued|building|review|done: {n, avg, box [min,p25,median,p75,max] or null under 3 points}, kick {reviewed, kicked, rate, per_item, to_done}}}. Null means no data yet. The view re-aggregates items after its author/repo filters with the same maths."
+            "description": "items [{id, repo, author, state, wait (s opened→first building), build (s first building→first ready-to-test), review_rounds ([s] each ready-to-test stint that ended in a close or kick-back), total (s opened→closed), tries (times labelled ready-to-test), kicks (ready-to-test removed without close/approved within 10 min), kick_to_done (s first kick-back→closed), waiting_for (s since ready-to-test, open items only), stage (queued|building|review|done), staged, opened_at, closed_at}], done, counted, total, computed_at, summary {wait_before_build, build_time, waiting_for_human, waiting_longest, tries_per_item, kicked_back, done, items, line {queued|building|review|done: {n, avg, box [min,p25,median,p75,max] or null under 3 points}, kick {reviewed, kicked, rate, per_item, to_done}}}. Null means no data yet. The view re-aggregates items after its author/repo filters with the same maths. 0.9: summary.line.<stage> also carries median, p25, p75 (p25/p75 from 3 data points)."
           }
         }
       }
@@ -994,10 +994,10 @@
     },
     "/api/policy": {
       "get": {
-        "summary": "The workflow policy: team roster (person -> logins, agents), the builder, who opens each view, and the three steps (Open, Build, Review) per view. Defaults in code; DATA_DIR/policy.json overrides keys team, builder, open.",
+        "summary": "The workflow policy: team roster (person -> logins, agents), the builder, who opens each view, and the three steps (Open, Build, Review) per view. Defaults in code; DATA_DIR/policy.json overrides keys team, builder, open, targets.",
         "responses": {
           "200": {
-            "description": "version 2; team [{name, logins, agents [{login, name}]}], builder {name, logins}, open {goals, bugs}, steps {goals: [step], bugs: [step]} where step = {key open|build|review, n, name, group queued|building|test, label, count_label, role, who [{name, logins [{login, kind person|agent, name}]}], except, about, next}, me {login, person}, org; 0.5 keys kept: goals.authors, builds.builders, lines."
+            "description": "version 2; team [{name, logins, agents [{login, name}]}], builder {name, logins}, open {goals, bugs}, steps {goals: [step], bugs: [step]} where step = {key open|build|review, n, name, group queued|building|test, label, count_label, role, who [{name, logins [{login, kind person|agent, name}]}], except, about, next}, me {login, person}, org; 0.5 keys kept: goals.authors, builds.builders, lines. 0.9: targets {goals|bugs: {queued, building, review, done}} in seconds (defaults Bugs 1h/4h/1d/2d, Goals 1d/3d/3d/14d; policy.json may give seconds or '30m', '4h', '3d', '2w')."
           }
         }
       }
