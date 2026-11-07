@@ -1,5 +1,7 @@
 'use strict';
-// Wizard OS Tracker 0.9: Goals | Bugs + a small Builder switch; the assembly line Queued → Building →
+// Wizard OS Tracker 0.10: stable chip order (sorted once by the unfiltered totals), goal owners as name chips on
+// the title line, shared step targets editable from a thin row under the bins (no control inside a bin).
+// 0.9: Goals | Bugs + a small Builder switch; the assembly line Queued → Building →
 // Review → Done (big numbers, arrows, a return arrow with the kick-back rate; each bin carries a tiny
 // typical range p25–p75 with the median and a target tick; ⓘ for who + target; tap a bin to filter by stage).
 // Bugs only: Who and Repo chip rows and a tiny sort control. Rows with a 'Try it' switch (mock-up, not on Done).
@@ -69,6 +71,8 @@ function hold(on) {
   if (!on && held) { held.release(); held = null; }
 }
 const repoName = r => (r || '').split('/').pop();
+// 0.10: GitHub login -> the name people know, from the policy roster (served as `names`).
+const nameOf = login => { const n = ((cache[view] || {}).names || {})[(login || '').toLowerCase()]; return n || login || ''; };
 const typing = () => !!document.querySelector('.bd-fail');
 const sheetOpen = () => el('detail').open;
 
@@ -77,6 +81,7 @@ let popFor = null;
 function pop(anchor, title, text) {
   const p = el('pop');
   if (popFor === anchor && !p.hidden) return unpop();
+  p.classList.remove('bd-te');
   p.replaceChildren(...(title ? [make('b', '', title)] : []), ...[].concat(text).filter(Boolean).map(t => make('span', '', t)));
   p.hidden = false; popFor = anchor;
   const r = anchor.getBoundingClientRect(), w = Math.min(260, innerWidth - 24);
@@ -89,8 +94,10 @@ function pop(anchor, title, text) {
 function unpop() { el('pop').hidden = true; popFor = null; }
 document.addEventListener('pointerdown', e => { if (popFor && !el('pop').contains(e.target) && !popFor.contains(e.target)) unpop(); }, true);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') unpop(); });
-el('scroll').addEventListener('scroll', unpop, { passive: true });
-addEventListener('resize', unpop);
+// The target editor stays open while its field has focus (a phone keyboard scrolls and resizes the page).
+const editing = () => el('pop').contains(document.activeElement) && document.activeElement.tagName === 'INPUT';
+el('scroll').addEventListener('scroll', () => { if (!editing()) unpop(); }, { passive: true });
+addEventListener('resize', () => { if (!editing()) unpop(); });
 const when = iso => {
   if (!iso) return '';
   const d = new Date(iso), days = Math.floor((Date.now() - d) / 864e5);
@@ -182,10 +189,17 @@ function render(d) {
   const byRepo = i => !chosen.size || chosen.has(repoKey(i));
   el('filters').hidden = !bugs; el('sort').hidden = !bugs || stage[d.view] === 'done';   // Done lists newest closed first
   if (bugs) {
-    const people = authorsOf({ groups: Object.fromEntries(GROUPS.map(g => [g, d.groups[g].filter(byRepo)])) });
-    const counts = new Map(reposOf(d, byWho).map(([r, n]) => [r.toLowerCase(), n]));
-    const repos = [...known].map(([k, r]) => [k, repoName(r), counts.get(k) || 0]).sort((a, b) => b[2] - a[2] || a[1].localeCompare(b[1]));
-    chipRow('who', whoSet, people.map(([p, n]) => [p.toLowerCase(), p === d.login ? `${p} (you)` : p, n]));
+    // 0.10: each row's ORDER comes from the unfiltered totals (then name) and never changes with the other
+    // row's picks; only the numbers do (zero dims). The collapsed Repo row's top few use the same totals.
+    const allWho = authorsOf(d), allRepo = new Map(reposOf(d, () => true).map(([r, n]) => [r.toLowerCase(), n]));
+    const whoN = new Map(authorsOf({ groups: Object.fromEntries(GROUPS.map(g => [g, d.groups[g].filter(byRepo)])) }).map(([p, n]) => [p.toLowerCase(), n]));
+    const repoN = new Map(reposOf(d, byWho).map(([r, n]) => [r.toLowerCase(), n]));
+    const label = p => { const n = nameOf(p); return p === d.login ? `${n} (you)` : n; };
+    const people = allWho.map(([p, t]) => [p.toLowerCase(), label(p), whoN.get(p.toLowerCase()) || 0, t])
+      .sort((a, b) => b[3] - a[3] || a[1].localeCompare(b[1]));
+    const repos = [...known].map(([k, r]) => [k, repoName(r), repoN.get(k) || 0, allRepo.get(k) || 0])
+      .sort((a, b) => b[3] - a[3] || a[1].localeCompare(b[1]));
+    chipRow('who', whoSet, people);
     chipRow('repo', chosen, repos);
     sortControl();
   }
@@ -242,23 +256,25 @@ el('f-stage').querySelector('button').onclick = () => { stage[view] = null; if (
 
 // ---------- Bugs filters: chip rows (tap to add/remove, All resets) and a tiny sort control ----------
 const repoTop = () => innerWidth < 640 ? 5 : 10;   // collapsed Repo row: the top few with bugs (fewer on phones)
-function chip(label, n, on, fn, extra = '') {
+// The number keeps a width for as many digits as its unfiltered total, so changing counts never reflow the row.
+function chip(label, n, on, fn, extra = '', most = null) {
   const b = make('button', 'bd-chip' + (extra ? ' ' + extra : '')); b.type = 'button';
   b.setAttribute('aria-pressed', String(on));
   b.append(make('span', 'bd-chip-l', label));
-  if (n != null) b.append(make('span', 'bd-chip-n', String(n)));
+  if (n != null) { const s = make('span', 'bd-chip-n', String(n)); s.style.minWidth = Math.max(String(n).length, String(most == null ? n : most).length) + 'ch'; b.append(s); }
   b.onclick = fn; return b;
 }
 function chipRow(kind, set, options) {
-  const box = el('c-' + kind), total = options.reduce((a, o) => a + o[2], 0);
+  // options: [key, label, count now, unfiltered total], already in their stable order
+  const box = el('c-' + kind), total = options.reduce((a, o) => a + o[2], 0), most = options.reduce((a, o) => a + o[3], 0);
   const toggle = k => () => { if (set.has(k)) set.delete(k); else set.add(k); saveFilter(kind); };
-  const out = [chip(kind === 'who' ? 'Everyone' : 'All repos', total, !set.size, () => { set.clear(); saveFilter(kind); }, 'all')];
+  const out = [chip(kind === 'who' ? 'Everyone' : 'All repos', total, !set.size, () => { set.clear(); saveFilter(kind); }, 'all', most)];
   let shown = options;
-  if (kind === 'repo' && !repoMore) {  // the repos with bugs (top few) and any picked; the rest behind '+N more'
-    const top = options.filter(o => o[2] > 0).slice(0, repoTop());
+  if (kind === 'repo' && !repoMore) {  // the top few repos by unfiltered bugs, plus any picked; the rest behind '+N more'
+    const top = options.filter(o => o[3] > 0).slice(0, repoTop());
     shown = options.filter(o => top.includes(o) || set.has(o[0]));
   }
-  out.push(...shown.map(([k, label, n]) => chip(label, n, set.has(k), toggle(k), n ? '' : 'zero')));
+  out.push(...shown.map(([k, label, n, t]) => chip(label, n, set.has(k), toggle(k), n ? '' : 'zero', t)));
   if (kind === 'repo' && options.length > shown.length) out.push(chip(`+${options.length - shown.length} more`, null, false, () => { repoMore = true; render(cache[view]); }, 'more'));
   else if (kind === 'repo' && repoMore && options.length > repoTop()) out.push(chip('Less', null, false, () => { repoMore = false; render(cache[view]); }, 'more'));
   box.replaceChildren(...out);
@@ -336,13 +352,13 @@ function binStat(x, ls, st, targets) {
   const target = (targets || {})[STAT_KEY[x.key]] || null;
   if (st.error || !ls) { box.textContent = '—'; box.title = st.error || NO_DATA; return box; }
   const s = ls[STAT_KEY[x.key]];
-  if (!s.n) { box.append(make('span', 'bd-rn none', '—')); if (target) box.append(make('span', 'bd-rl', 'target ' + dur(target)));
+  if (!s.n) { box.append(make('span', 'bd-rn none', '—'));
     box.title = `${STAT_HELP[x.key]}: ${NO_DATA}`; return box; }
   const cls = target ? (s.median <= target ? 'ok' : 'warn') : '';
   const nums = make('span', 'bd-rn' + (s.p25 == null ? ' one' : ''));
   if (s.p25 != null) nums.append(make('span', 'lo', dur(s.p25)), make('b', 'md ' + cls, dur(s.median)), make('span', 'hi', dur(s.p75)));
   else nums.append(make('b', 'md ' + cls, dur(s.median)));
-  box.append(nums, rangeBar(s, target, cls), make('span', 'bd-rl', target ? 'target ' + dur(target) : 'typical'));
+  box.append(nums, rangeBar(s, target, cls));
   box.title = `${STAT_HELP[x.key]} (${s.n} item${s.n === 1 ? '' : 's'}). ` + statLines(x, s, target).filter(Boolean).join(' ') + (s.avg != null ? ` Average ${dur(s.avg)}.` : '');
   return box;
 }
@@ -366,16 +382,64 @@ function flow(d, groups, done, st, hist) {
     b.setAttribute('aria-label', `${x.word}: ${count == null ? 'counting' : count}. ${only === g ? 'Show everything' : 'Show only ' + x.word}`);
     b.append(make('span', 'bd-bin-n', count == null ? '—' : String(count)));
     if (x.key === 'done') b.title = st.error ? st.error : done == null ? 'Counting…' : 'Closed, all time · tap for the latest';
-    const wrow = make('span', 'bd-bin-wr');
-    const info = make('button', 'bd-i'); info.type = 'button'; info.setAttribute('aria-label', `Who does ${x.word}?`); info.append(infoIcon());
-    info.onclick = e => { e.stopPropagation(); openStep(x, info, d.view, ls ? statLines(x, ls[STAT_KEY[x.key]], (d.targets || {})[STAT_KEY[x.key]]) : statLines(x, null, (d.targets || {})[STAT_KEY[x.key]])); };
-    wrow.append(make('span', 'bd-bin-w', x.word), info);
-    li.append(b, wrow, binStat(x, ls, st, d.targets));
-    li.onclick = e => { if (!info.contains(e.target)) setStage(g); };
+    li.append(b, make('span', 'bd-bin-w', x.word), binStat(x, ls, st, d.targets));
+    li.onclick = () => setStage(g);
     out.push(li);
   });
   el('steps').replaceChildren(...out);
+  // 0.10: the controls live in a thin row under the bins, one cell per bin column, never inside a bin.
+  const target = k => (d.targets || {})[STAT_KEY[k]] || null;
+  el('ctl').replaceChildren(...BINS.map(x => {
+    const c = make('div', 'bd-ctl'); c.dataset.step = x.key;
+    const t = make('button', 'bd-tgt'); t.type = 'button';
+    t.append(make('span', 'bd-tgt-v', target(x.key) ? 'target ' + dur(target(x.key)) : 'set target'), make('span', 'bd-tgt-e', '✎'));
+    t.setAttribute('aria-label', `${x.word} target: ${target(x.key) ? 'under ' + dur(target(x.key)) : 'none'}. Change it`);
+    t.onclick = () => editTarget(t, d.view, x);
+    const info = make('button', 'bd-i'); info.type = 'button'; info.setAttribute('aria-label', `Who does ${x.word}?`); info.append(infoIcon());
+    info.onclick = () => openStep(x, info, d.view, statLines(x, ls ? ls[STAT_KEY[x.key]] : null, target(x.key)));
+    c.append(t, info);
+    return c;
+  }));
   kickLabel(ls, st);
+}
+
+// ---------- 0.10: edit a step's target (shared, the same for everyone; permissions later) ----------
+const PRESETS = [['15m', 900], ['1h', 3600], ['4h', 14400], ['1d', 86400], ['3d', 259200], ['1w', 604800], ['2w', 1209600]];
+const parseDur = v => { const m = String(v || '').trim().toLowerCase().match(/^(\d+(?:\.\d+)?)\s*(m|min|h|d|w)?$/);
+  if (!m) return null; const u = { m: 60, min: 60, h: 3600, d: 86400, w: 604800 }[m[2] || 'h']; const s = Math.round(parseFloat(m[1]) * u);
+  return s >= 60 && s <= 31536000 ? s : null; };
+function editTarget(anchor, which, x) {
+  const p = el('pop');
+  if (popFor === anchor && !p.hidden) return unpop();
+  const cur = ((cache[which] || {}).targets || {})[STAT_KEY[x.key]] || null;
+  const note = make('span', 'bd-te-note', 'Same for everyone.');
+  const save = async sec => {
+    p.querySelectorAll('button, input').forEach(n => { n.disabled = true; }); note.textContent = 'Saving…';
+    try {
+      const r = await api('api/targets', { view: which, step: STAT_KEY[x.key], seconds: sec });
+      if (cache[which]) cache[which].targets = r.targets;
+      unpop(); if (which === view && cache[which]) render(cache[which]);
+      toast(`${x.word} target: ${dur(r.seconds)}`);
+    } catch (err) { p.querySelectorAll('button, input').forEach(n => { n.disabled = false; }); note.textContent = err.message; }
+  };
+  const grid = make('div', 'bd-te-p'); grid.setAttribute('role', 'group'); grid.setAttribute('aria-label', 'Presets');
+  for (const [label, sec] of PRESETS) {
+    const b = make('button', 'bd-te-b', label); b.type = 'button'; b.setAttribute('aria-pressed', String(cur === sec));
+    b.onclick = () => save(sec); grid.append(b);
+  }
+  const f = make('form', 'bd-te-f'); f.autocomplete = 'off';
+  const inp = make('input', 'wz-input bd-te-i'); inp.placeholder = 'e.g. 6h, 2d, 45m'; inp.setAttribute('aria-label', 'Custom target');
+  if (cur && !PRESETS.some(([, s]) => s === cur)) inp.value = dur(cur);
+  const ok = make('button', 'bd-te-b bd-te-ok', 'Set'); ok.type = 'submit';
+  f.append(inp, ok);
+  f.onsubmit = e => { e.preventDefault(); const sec = parseDur(inp.value); if (!sec) { note.textContent = 'Try 30m, 4h, 3d or 2w (1 minute to 1 year).'; inp.focus(); return; } save(sec); };
+  p.replaceChildren(make('b', '', `${x.word} target`), grid, f, note);
+  p.hidden = false; popFor = anchor; p.classList.add('bd-te');
+  const r = anchor.getBoundingClientRect(), w = Math.min(264, innerWidth - 24);
+  p.style.width = w + 'px';
+  p.style.left = Math.max(12, Math.min(innerWidth - w - 12, r.left + r.width / 2 - w / 2)) + 'px';
+  const below = r.bottom + 8, h = p.offsetHeight;
+  p.style.top = (below + h > innerHeight - 8 ? Math.max(8, r.top - h - 8) : below) + 'px';
 }
 const pct = r => Math.round(r * 100) + '%';
 const times = x => (Math.round(x * 10) / 10) + '×';
@@ -422,10 +486,20 @@ function bubble(n) {
   s.append(svg, document.createTextNode(String(n)));
   return s;
 }
-const owners = i => {
+// 0.10: goal owners sit on the title line as small accent name chips (initial + name; avatar images are not
+// allowed by the app's CSP img-src 'self'). Logins map to people's names from the policy roster.
+function ownerChips(i) {
   const a = (i.assignees && i.assignees.length) ? i.assignees : [];
-  return a.length ? (a.length === 1 ? 'Owner: ' : 'Owners: ') + a.join(', ') : 'No owner yet';
-};
+  const box = make('span', 'bd-owners');
+  if (!a.length) { box.append(make('span', 'bd-own none', 'No owner')); box.setAttribute('aria-label', 'No owner yet'); return box; }
+  box.setAttribute('aria-label', (a.length === 1 ? 'Owner: ' : 'Owners: ') + a.map(nameOf).join(', '));
+  for (const l of a) {
+    const n = nameOf(l), c = make('span', 'bd-own'); c.title = n === l ? l : `${n} (${l})`; c.setAttribute('aria-hidden', 'true');
+    c.append(make('i', '', (n[0] || '?').toUpperCase()), make('span', '', n));
+    box.append(c);
+  }
+  return box;
+}
 
 // Try it (mock-up): a small switch on every row, live only in Review; never opens the row.
 function trySwitch(i) {
@@ -460,7 +534,7 @@ function row(i, kind) {
   const wrap = make('div', 'bd-rowx');
   const a = tapTarget('bd-item', () => openDetail(i));
   const top = make('span', 'bd-top'); top.append(make('b', 'bd-title', i.title));
-  if (kind === 'goals') top.append(bubble(i.comments || 0));
+  if (kind === 'goals') top.append(ownerChips(i), bubble(i.comments || 0));
   a.append(top);
   if (i.desc) a.append(make('span', 'bd-desc' + (kind === 'bugs' ? ' one' : ''), i.desc));
   const meta = make('span', 'bd-meta');
@@ -472,13 +546,12 @@ function row(i, kind) {
       bar.setAttribute('role', 'progressbar'); bar.setAttribute('aria-valuenow', String(pct)); bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', '100');
       a.append(bar);
     }
-    meta.append(make('span', 'bd-owner', owners(i)));
     const rest = [p.total ? `${p.done}/${p.total}` : '', repoName(i.repo)].filter(Boolean).join(' · ');
-    if (rest) meta.append(make('span', 'bd-repo', ' · ' + rest));
+    if (rest) meta.append(make('span', 'bd-repo', rest));
   } else {  // bugs: title, one line, then repo · opener · comments
     meta.classList.add('bd-meta-b');
     const a2 = i.group !== 'done' && age(i.created_at);
-    meta.append(document.createTextNode([repoName(i.repo), i.opener || i.author].filter(Boolean).join(' · ') + ' · '));
+    meta.append(document.createTextNode([repoName(i.repo), i.opener || nameOf(i.author)].filter(Boolean).join(' · ') + ' · '));
     if (a2) { const g = make('span', 'bd-age', a2); g.title = 'Opened ' + when(i.created_at); meta.append(g, document.createTextNode(' · ')); }
     meta.append(bubble(i.comments || 0));
   }
@@ -515,9 +588,9 @@ function testCard(t, kind) {
   const c = make('article', 'bd-card');
   const top = make('div', 'bd-card-top');
   const h = tapTarget('bd-title', () => openDetail(t)); h.textContent = t.title;
-  top.append(h, trySwitch(t)); c.append(top);
+  top.append(h, ...(kind === 'goals' ? [ownerChips(t)] : []), trySwitch(t)); c.append(top);
   if (t.check) c.append(make('p', 'bd-check' + (kind === 'bugs' ? ' one' : ''), t.check));
-  c.append(make('p', 'bd-hint', [repoName(t.repo), t.opener ? (t.mine ? 'you' : t.opener) : '', kind === 'bugs' ? age(t.created_at) : '', `${t.comments || 0} comments`].filter(Boolean).join(' · ')));
+  c.append(make('p', 'bd-hint', [repoName(t.repo), t.opener ? (t.mine ? 'you' : nameOf(t.opener)) : '', kind === 'bugs' ? age(t.created_at) : '', `${t.comments || 0} comments`].filter(Boolean).join(' · ')));
   if (t.mine) {  // nobody reviews what they (or their own agent) opened
     c.classList.add('mine');
     c.append(make('p', 'bd-mine', 'Someone else reviews this'));
@@ -676,7 +749,7 @@ function drawItemFlow(f) {
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'board', version: '0.9.1' });
+  WizardApp.ready({ name: 'board', version: '0.10.0' });
   WizardApp.back.register({ canGoBack: () => false, back: () => false });
 }
 for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));

@@ -1,7 +1,7 @@
 ---
 name: board
 description: Use when working with Wizard development Goals and Bugs on GitHub.
-version: 0.9.1
+version: 0.10.0
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -21,7 +21,7 @@ People see the app as **Wizard OS Tracker** (0.7): Goals | Bugs with a small Bui
 
 **0.8 stats**: each bin shows its own average (Queued = opened → first `building`; Building = first `building` → `ready-to-test`; Review = each `ready-to-test` stint until close or kick-back; Done = opened → closed) with a tiny box-and-whisker, and the return arrow shows the kick-back rate and average kick-backs per kicked item. Labels drive all of it, so label honestly and promptly. `board_flow` (`issue` or `repo` + `number`) returns one item's own line: seconds in each stage, kick-backs, current stage.
 
-**0.9 targets**: each bin shows its typical range (p25 · **median** · p75) on a thin bar with a target tick; the median is green within target, amber over. Defaults: Bugs Queued 1h, Building 4h, Review 1d, Done 2d; Goals Queued 1d, Building 3d, Review 3d, Done 14d. The owner can override them in the app's `DATA_DIR/policy.json` key `targets` (seconds or 30m/4h/3d); `GET /api/policy` shows the current values. Bugs default to oldest first, so label `building` promptly when you pick one up.
+**0.9 targets**: each bin shows its typical range (p25 · **median** · p75) on a thin bar with a target tick; the median is green within target, amber over. Defaults: Bugs Queued 1h, Building 4h, Review 1d, Done 2d; Goals Queued 1h, Building 3d, Review 3d, Done 14d. **0.10: targets are shared and editable** by anyone signed in (tap `target 1h ✎` under a bin; permissions later): `POST /api/targets {view, step, seconds}` or MCP `targets_set` (view goals|bugs, step queued|building|review|done, seconds or '4h'/'3d', plus the human's words as `owner_request`; only when a human asked). Stored in `DATA_DIR/policy.json` `targets`; `GET /api/targets` or `GET /api/policy` shows the current values. Goal owners show as name chips on the title line (GitHub assignees mapped to roster names), so assign the owner on GitHub. Bugs Who/Repo chips keep a stable order (unfiltered totals). Bugs default to oldest first, so label `building` promptly when you pick one up.
 
 ## Rules for agents
 1. Read freely: `board_list` (filters `repo`, `type` all|goal|bug, `state` open|closed, `accepted` any|yes|no) and `board_get` (`issue` "owner/repo#123", or `repo` + `number`).

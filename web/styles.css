@@ -317,3 +317,63 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
 @media (max-width: 420px) { .bd-sort { margin-left: 0; } .bd-sort-b { padding: 0 7px; font-size: 11px; } }
 .bd-age { font-variant-numeric: tabular-nums; color: var(--ink-2); }
 .bd-rowx:not(:has(.bd-try)) .bd-item { padding-right: 16px; }
+
+/* 0.10: a thin control row under the bins (target ✎ and ⓘ per bin column); nothing tappable sits inside a bin. */
+.bd-ctls { display: contents; }
+.bd-ctl { grid-row: 2; display: flex; align-items: center; justify-content: center; gap: 0; min-width: 0; min-height: 30px; }
+.bd-ctl[data-step="open"] { grid-column: 1; }
+.bd-ctl[data-step="build"] { grid-column: 3; }
+.bd-ctl[data-step="review"] { grid-column: 5; }
+.bd-ctl[data-step="done"] { grid-column: 7; }
+.bd-flow > .bd-loop { grid-row: 3; }
+.bd-tgt { display: inline-flex; align-items: center; gap: 3px; min-width: 0; min-height: 30px; padding: 0 4px; border: 0; border-radius: var(--r-pill); background: none; color: var(--ink-3); font: inherit; font-size: 10.5px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; cursor: pointer; }
+.bd-tgt-v { overflow: hidden; text-overflow: ellipsis; }
+.bd-tgt-e { font-size: 10px; opacity: .7; }
+@media (hover: hover) { .bd-tgt:hover { color: var(--ink); } }
+.bd-tgt:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.bd-ctl .bd-i { margin: 0; width: 26px; height: 30px; border-radius: var(--r-pill); }
+.bd-binx > .bd-bin-w { margin-top: 1px; }
+@media (max-width: 640px) { .bd-tgt { font-size: 10px; padding: 0 2px; gap: 2px; } .bd-ctl .bd-i { width: 20px; } }
+@media (max-width: 380px) { .bd-tgt-e { display: none; } }
+
+/* The target editor: presets and a custom field inside the one anchored popover. */
+.bd-pop.bd-te { gap: 8px; padding: 12px; }
+.bd-te-p { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+.bd-te-b { min-height: 36px; padding: 0 8px; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--fill); color: var(--ink-2); font: inherit; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; cursor: pointer; }
+.bd-te-b[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--on-accent); }
+@media (hover: hover) { .bd-te-b:not([aria-pressed="true"]):hover { background: var(--fill-2); } }
+.bd-te-b:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bd-te-f { display: flex; gap: 6px; }
+.bd-te-i { flex: 1; min-width: 0; min-height: 36px; height: 36px; padding: 0 12px; font-size: 14px; }
+.bd-te-ok { flex: none; }
+.bd-te-note { font-size: 11.5px; color: var(--ink-3); }
+
+/* Goal owners: small accent name chips on the title line. */
+.bd-owners { flex: none; display: inline-flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; max-width: 45%; }
+.bd-own { display: inline-flex; align-items: center; gap: 5px; min-height: 22px; padding: 0 8px 0 2px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--accent) 16%, transparent); color: var(--accent); font-size: 12px; font-weight: 700; line-height: 1; white-space: nowrap; }
+.bd-own > i { display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--accent); color: var(--on-accent); font-style: normal; font-size: 10.5px; font-weight: 700; }
+.bd-own.none { padding: 0 8px; background: none; border: 1px dashed var(--line-2); color: var(--ink-3); font-weight: 600; }
+.bd-top { align-items: flex-start; }
+.bd-top .bd-cmt { margin-top: 3px; }
+.bd-card-top .bd-owners { margin-top: 2px; }
+
+/* Chips: stable widths; numbers never reflow the row. */
+.bd-chip-n { display: inline-block; text-align: right; }
+.bd-te-p { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.bd-te-b { min-width: 0; }
+.bd-te-i { width: auto; }
+@media (max-width: 640px) {
+  .bd-tgt-e { display: none; }
+  .bd-tgt-v { text-decoration: underline dotted; text-underline-offset: 3px; text-decoration-color: color-mix(in srgb, currentColor 55%, transparent); }
+  .bd-ctl .bd-i { width: 16px; margin-left: 1px; }
+  .bd-tgt { padding: 0 1px; }
+}
+/* Let a long label ("target 14d") spill a few px into the arrow gap instead of truncating. */
+.bd-ctl { overflow: visible; }
+.bd-tgt { flex: none; }
+.bd-tgt-v { overflow: visible; }
+@media (max-width: 380px) { .bd-tgt { font-size: 9.5px; } }
+/* Owners sit right after the title; the comment count / Try it switch stay on the right edge. */
+.bd-top:has(.bd-owners) .bd-title, .bd-card-top:has(.bd-owners) .bd-title { flex: 0 1 auto; }
+.bd-top:has(.bd-owners) .bd-cmt, .bd-card-top:has(.bd-owners) .bd-try { margin-left: auto; }
+.bd-top:has(.bd-owners), .bd-card-top:has(.bd-owners) { gap: 10px; }

@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'board'
-VERSION = '0.9.1'
+VERSION = '0.10.0'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -896,7 +896,7 @@ def board_split(person, args):
     shown = sum(len(g) for g in groups.values())
     others_test = [c for c in groups['test'] if not c['mine']]
     return {'view': view, 'org': org, 'login': login, 'me_person': person_of(login, base), 'steps': steps_for(view, base), 'groups': groups,
-            'targets': base['targets'][view],
+            'targets': base['targets'][view], 'names': display_names(base),
             # 0.9: Bugs shows a Repo chip for every non-archived org repo (owner/name), even with 0 open bugs
             'repos': org_repos(acct['token'], org) if view == 'bugs' else [],
             'counts': {k: len(v) for k, v in groups.items()}, 'done': stats.get('done', 0),
@@ -1165,7 +1165,8 @@ POLICY_DEFAULT = {
     # 0.9: target time per step (seconds). Drawn as a tick on each bin's range bar; the median turns
     # green-ish within target, amber over. DATA_DIR/policy.json `targets` overrides (seconds or '1h', '3d', '30m').
     'targets': {'bugs': {'queued': 3600, 'building': 4 * 3600, 'review': 86400, 'done': 2 * 86400},
-                'goals': {'queued': 86400, 'building': 3 * 86400, 'review': 3 * 86400, 'done': 14 * 86400}},
+                # 0.10: Goals Queued 1h like Bugs (queue wait is builder pickup, the same for both)
+                'goals': {'queued': 3600, 'building': 3 * 86400, 'review': 3 * 86400, 'done': 14 * 86400}},
 }
 TARGET_KEYS = {'queued': 'queued', 'open': 'queued', 'building': 'building', 'build': 'building', 'review': 'review', 'test': 'review', 'done': 'done'}
 _UNIT = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400, 'w': 7 * 86400}
@@ -1181,13 +1182,16 @@ def _seconds(v):
     return int(float(m.group(1)) * _UNIT[m.group(2)]) or None if m else None
 
 
+TARGET_MIN, TARGET_MAX = 60, 365 * 86400
+
+
 def _targets(over):
     out = {v: dict(t) for v, t in POLICY_DEFAULT['targets'].items()}
     if isinstance(over, dict):
         for view, t in over.items():
             if view in out and isinstance(t, dict):
                 for k, v in t.items():
-                    if k in TARGET_KEYS and _seconds(v):
+                    if k in TARGET_KEYS and _seconds(v) and TARGET_MIN <= _seconds(v) <= TARGET_MAX:
                         out[view][TARGET_KEYS[k]] = _seconds(v)
     return out
 STEP_TEXT = {
@@ -1208,11 +1212,7 @@ def _team_entry(t):
 
 def policy_base():
     """Defaults in code; DATA_DIR/policy.json overrides any of team, builder, open, targets."""
-    try:
-        over = json.loads((DATA / 'policy.json').read_text())
-    except (FileNotFoundError, ValueError, OSError):
-        over = {}
-    over = over if isinstance(over, dict) else {}
+    over = _policy_file()
     team = [x for x in (_team_entry(t) for t in (over.get('team') if isinstance(over.get('team'), list) else POLICY_DEFAULT['team'])) if x]
     b = over.get('builder') if isinstance(over.get('builder'), dict) else POLICY_DEFAULT['builder']
     builder = {'name': str(b.get('name') or 'Wizard OS Builder')[:40], 'logins': [x for x in b.get('logins') or [BUILDER] if isinstance(x, str)]}
@@ -1220,6 +1220,68 @@ def policy_base():
     if isinstance(over.get('open'), dict):
         opn.update({k: v for k, v in over['open'].items() if k in ('goals', 'bugs') and (v == 'team' or isinstance(v, list))})
     return {'team': team, 'builder': builder, 'open': opn, 'targets': _targets(over.get('targets'))}
+
+
+def display_names(base=None):
+    """0.10: login -> the name people know (person logins -> person, an agent -> its own name)."""
+    out = {}
+    for t in (base or policy_base())['team']:
+        for x in t['logins']:
+            out[x.lower()] = t['name']
+        for a in t['agents']:
+            out[a['login'].lower()] = a['name'] or t['name']
+    for x in (base or policy_base())['builder']['logins']:
+        out.setdefault(x.lower(), (base or policy_base())['builder']['name'])
+    return out
+
+
+def _policy_file():
+    try:
+        over = json.loads((DATA / 'policy.json').read_text())
+    except (FileNotFoundError, ValueError, OSError):
+        over = {}
+    return over if isinstance(over, dict) else {}
+
+
+def targets_set(person, args, agent=False):
+    """POST /api/targets {view, step, seconds}: one step's target for everyone (DATA_DIR/policy.json).
+    0.10: any signed-in person may change it (permissions later); agents only with the human's words."""
+    view = args.get('view')
+    if view not in ('goals', 'bugs'):
+        raise Problem(400, 'view must be goals or bugs.')
+    step = TARGET_KEYS.get(str(args.get('step') or '').lower())
+    if not step:
+        raise Problem(400, 'step must be queued, building, review or done.')
+    raw = args.get('seconds', args.get('value'))
+    sec = _seconds(raw)
+    if not sec or not TARGET_MIN <= sec <= TARGET_MAX:
+        raise Problem(400, 'Pick a target between 1 minute and 1 year (seconds, or like 30m, 4h, 3d, 2w).')
+    if agent:
+        _owner_request(args, agent, 'change step targets')
+        who = 'agent'
+    else:
+        _, acct = account_for(person)
+        who = acct.get('login') or person_key(person)
+    with LOCK:
+        over = _policy_file()
+        t = over.get('targets') if isinstance(over.get('targets'), dict) else {}
+        v = t.get(view) if isinstance(t.get(view), dict) else {}
+        v = {TARGET_KEYS[k]: x for k, x in v.items() if k in TARGET_KEYS}
+        v[step] = sec
+        t[view] = v
+        over['targets'] = t
+        meta = over.get('targets_changed') if isinstance(over.get('targets_changed'), dict) else {}
+        meta[f'{view}.{step}'] = {'by': who, 'at': int(time.time())}
+        over['targets_changed'] = meta
+        DATA.mkdir(parents=True, exist_ok=True)
+        tmp = DATA / 'policy.json.tmp'
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'w') as f:
+            json.dump(over, f, indent=1)
+        tmp.replace(DATA / 'policy.json')
+    base = policy_base()
+    return {'view': view, 'step': step, 'seconds': base['targets'][view][step], 'targets': base['targets'][view],
+            'all': base['targets'], 'changed_by': who, 'note': 'Shared: the same targets for everyone. Permissions later.'}
 
 
 def person_of(login, base=None):
@@ -1272,7 +1334,7 @@ def policy(person=None):
         login = acct.get('login')
     except Problem:
         pass
-    return {'version': 2, **base, 'org': org, 'steps': views, 'me': {'login': login, 'person': person_of(login, base) if login else None},
+    return {'version': 2, **base, 'names': display_names(base), 'org': org, 'steps': views, 'me': {'login': login, 'person': person_of(login, base) if login else None},
             # 0.5 shape, kept for scripts
             'goals': {'authors': [x['login'] for w in views['goals'][0]['who'] for x in w['logins']]},
             'builds': {'builders': base['builder']['logins']}, 'lines': lines, 'editable_file': 'DATA_DIR/policy.json'}
@@ -1554,6 +1616,7 @@ TOOLS = [
     {'name': 'try_status', 'description': "Which items the signed-in person switched 'Try it' on for (mock-up: records the wish, nothing runs yet).", 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'try_set', 'description': "Switch 'Try it' on or off for one item (repo owner/name + number) only when a human asked; pass their words as owner_request. Mock-up.", 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'number': {'type': 'integer'}, 'on': {'type': 'boolean'}, **ASKED}, 'required': ['repo', 'number', 'on', 'owner_request']}},
     {'name': 'board_flow', 'description': "One item's own assembly line from its GitHub label timeline: seconds spent in Queued, Building and Review, closed time, kick-backs (ready-to-test removed without a close), current stage.", 'inputSchema': {'type': 'object', 'properties': ISSUE}},
+    {'name': 'targets_set', 'description': "Change one step's target time for everyone (view goals|bugs, step queued|building|review|done, seconds or '4h'/'3d') only when a human asked; pass their words as owner_request. Current targets: GET /api/policy.", 'inputSchema': {'type': 'object', 'properties': {'view': {'type': 'string', 'enum': ['goals', 'bugs']}, 'step': {'type': 'string', 'enum': ['queued', 'building', 'review', 'done']}, 'seconds': {'description': 'Seconds (60 to 31536000) or a string like 30m, 4h, 3d, 2w.', 'type': ['integer', 'string']}, **ASKED}, 'required': ['view', 'step', 'seconds', 'owner_request']}},
     {'name': 'board_reopen', 'description': 'Reopen a Bug when a human asked you to (pass their words). Goals are refused: only humans reopen goals.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, **ASKED}, 'required': ['owner_request']}},
 ]
 CALLS = {
@@ -1570,6 +1633,7 @@ CALLS = {
     'try_status': lambda a: try_status(None, agent=True),
     'try_set': lambda a: try_set(None, a, agent=True),
     'board_flow': lambda a: item_flow(None, a, agent=True),
+    'targets_set': lambda a: targets_set(None, a, agent=True),
 }
 
 
@@ -1674,6 +1738,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, try_status(self.person()))
             if path == '/api/policy':
                 return self.send(200, policy(self.person()))
+            if path == '/api/targets':
+                return self.send(200, {'targets': policy_base()['targets'], 'note': 'Shared: the same targets for everyone. Permissions later.'})
             if path == '/api/board':
                 return self.send(200, board_list(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
             if path == '/api/issue':
@@ -1733,6 +1799,7 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/test/fails': lambda: tested(who, body, False),
                 '/api/builder': lambda: builder_set(who, body),
                 '/api/try': lambda: try_set(who, body),
+                '/api/targets': lambda: targets_set(who, body),
             }
             if path not in routes:
                 return self.send(404, {'error': 'Not found.'})

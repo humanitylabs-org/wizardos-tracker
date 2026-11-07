@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Wizard OS Tracker",
-    "version": "0.9.1",
+    "version": "0.10.0",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin."
   },
   "paths": {
@@ -834,7 +834,7 @@
     },
     "/api/split": {
       "get": {
-        "summary": "Goals or Bugs grouped by status: Waiting for review (ready-to-test, key test), Building (building), Queued (other open). Up to 300 items. Rows carry desc (first paragraph as plain text), assignees, comments (count). Also returns steps (the three workflow steps for this view), me_person, and per item opener (team name of whoever opened it); mine is true when you or your own agent opened it. 0.9: also returns targets (seconds per stage for this view: queued, building, review, done) and, for view=bugs, repos (every non-archived org repo as owner/name, cached an hour, so the Repo chips can show repos with 0 open bugs); items carry created_at and updated_at (bug age and sort are computed in the view).",
+        "summary": "Goals or Bugs grouped by status: Waiting for review (ready-to-test, key test), Building (building), Queued (other open). Up to 300 items. Rows carry desc (first paragraph as plain text), assignees, comments (count). Also returns steps (the three workflow steps for this view), me_person, and per item opener (team name of whoever opened it); mine is true when you or your own agent opened it. 0.9: also returns targets (seconds per stage for this view: queued, building, review, done) and, for view=bugs, repos (every non-archived org repo as owner/name, cached an hour, so the Repo chips can show repos with 0 open bugs); items carry created_at and updated_at (bug age and sort are computed in the view). 0.10: names maps GitHub logins to the people names from the policy roster (owners and openers show these).",
         "parameters": [
           {
             "name": "view",
@@ -994,7 +994,7 @@
     },
     "/api/policy": {
       "get": {
-        "summary": "The workflow policy: team roster (person -> logins, agents), the builder, who opens each view, and the three steps (Open, Build, Review) per view. Defaults in code; DATA_DIR/policy.json overrides keys team, builder, open, targets.",
+        "summary": "The workflow policy: team roster (person -> logins, agents), the builder, who opens each view, and the three steps (Open, Build, Review) per view. Defaults in code; DATA_DIR/policy.json overrides keys team, builder, open, targets. 0.10: also names (login -> person name); targets are editable for everyone via POST /api/targets.",
         "responses": {
           "200": {
             "description": "version 2; team [{name, logins, agents [{login, name}]}], builder {name, logins}, open {goals, bugs}, steps {goals: [step], bugs: [step]} where step = {key open|build|review, n, name, group queued|building|test, label, count_label, role, who [{name, logins [{login, kind person|agent, name}]}], except, about, next}, me {login, person}, org; 0.5 keys kept: goals.authors, builds.builders, lines. 0.9: targets {goals|bugs: {queued, building, review, done}} in seconds (defaults Bugs 1h/4h/1d/2d, Goals 1d/3d/3d/14d; policy.json may give seconds or '30m', '4h', '3d', '2w')."
@@ -1126,6 +1126,77 @@
         "responses": {
           "200": {
             "description": "{view, org, items [row cards + group \"done\", closed_at, state_reason, opener, mine], count, total}"
+          }
+        }
+      }
+    },
+    "/api/targets": {
+      "get": {
+        "summary": "Shared step targets (seconds) for both views: {targets: {bugs: {queued, building, review, done}, goals: {...}}}. The same for everyone.",
+        "responses": {
+          "200": {
+            "description": "Targets"
+          }
+        }
+      },
+      "post": {
+        "summary": "Set one step's target for everyone (0.10). Any signed-in person may change it for now (permissions later). Persisted to DATA_DIR/policy.json key targets; the MCP tool targets_set does the same with owner_request.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "view": {
+                    "type": "string",
+                    "enum": [
+                      "goals",
+                      "bugs"
+                    ]
+                  },
+                  "step": {
+                    "type": "string",
+                    "enum": [
+                      "queued",
+                      "building",
+                      "review",
+                      "done"
+                    ],
+                    "description": "Aliases open, build, test accepted."
+                  },
+                  "seconds": {
+                    "oneOf": [
+                      {
+                        "type": "integer",
+                        "minimum": 60,
+                        "maximum": 31536000
+                      },
+                      {
+                        "type": "string",
+                        "description": "Like 30m, 4h, 3d, 2w."
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "view",
+                  "step",
+                  "seconds"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{view, step, seconds, targets (this view), all, changed_by, note}"
+          },
+          "400": {
+            "description": "Bad view, step or duration (1 minute to 1 year)."
+          },
+          "401": {
+            "description": "Sign in first."
           }
         }
       }
