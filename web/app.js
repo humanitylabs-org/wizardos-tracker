@@ -241,7 +241,7 @@ async function loadDone(which, force) {
 el('f-stage').querySelector('button').onclick = () => { stage[view] = null; if (cache[view]) render(cache[view]); };
 
 // ---------- Bugs filters: chip rows (tap to add/remove, All resets) and a tiny sort control ----------
-const REPO_TOP = 10;
+const repoTop = () => innerWidth < 640 ? 5 : 10;   // collapsed Repo row: the top few with bugs (fewer on phones)
 function chip(label, n, on, fn, extra = '') {
   const b = make('button', 'bd-chip' + (extra ? ' ' + extra : '')); b.type = 'button';
   b.setAttribute('aria-pressed', String(on));
@@ -255,12 +255,12 @@ function chipRow(kind, set, options) {
   const out = [chip(kind === 'who' ? 'Everyone' : 'All repos', total, !set.size, () => { set.clear(); saveFilter(kind); }, 'all')];
   let shown = options;
   if (kind === 'repo' && !repoMore) {  // the repos with bugs (top few) and any picked; the rest behind '+N more'
-    const top = options.filter(o => o[2] > 0).slice(0, REPO_TOP);
+    const top = options.filter(o => o[2] > 0).slice(0, repoTop());
     shown = options.filter(o => top.includes(o) || set.has(o[0]));
   }
   out.push(...shown.map(([k, label, n]) => chip(label, n, set.has(k), toggle(k), n ? '' : 'zero')));
   if (kind === 'repo' && options.length > shown.length) out.push(chip(`+${options.length - shown.length} more`, null, false, () => { repoMore = true; render(cache[view]); }, 'more'));
-  else if (kind === 'repo' && repoMore && options.length > REPO_TOP) out.push(chip('Less', null, false, () => { repoMore = false; render(cache[view]); }, 'more'));
+  else if (kind === 'repo' && repoMore && options.length > repoTop()) out.push(chip('Less', null, false, () => { repoMore = false; render(cache[view]); }, 'more'));
   box.replaceChildren(...out);
   box.hidden = options.length < (kind === 'who' ? 2 : 1) && !set.size;
 }
@@ -676,7 +676,7 @@ function drawItemFlow(f) {
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'board', version: '0.9.0' });
+  WizardApp.ready({ name: 'board', version: '0.9.1' });
   WizardApp.back.register({ canGoBack: () => false, back: () => false });
 }
 for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));
