@@ -1,12 +1,16 @@
 'use strict';
-// Wizard OS Tracker 0.7: Goals | Bugs + a small Builder switch; the assembly line Queued → Building →
-// Review → Done (big numbers, arrows, a return arrow; tap a bin for who); small stats; Everyone ▾ and
-// All repos ▾ inline checklists; grouped rows with a 'Try it' switch (mock-up). Issue in a sheet on tap.
+// Wizard OS Tracker 0.8: Goals | Bugs + a small Builder switch; the assembly line Queued → Building →
+// Review → Done (big numbers, arrows, a return arrow with the kick-back rate; each bin carries its own
+// tiny avg + box-and-whisker; ⓘ for who; tap a bin to filter by stage); Everyone ▾ and All repos ▾
+// inline checklists; grouped rows with a 'Try it' switch (mock-up). Issue + its own mini line in a sheet.
 const el = id => document.getElementById(id);
 const make = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 const link = (cls, href) => { const a = make('a', cls); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; return a; };
 const EMPTY = { goals: 'No open goals.', bugs: 'No open bugs. Nice.' };
 const GROUPS = ['test', 'building', 'queued'];
+const stageOf = { queued: 'queued', building: 'building', test: 'test', done: 'done' };
+const stage = { goals: null, bugs: null };   // tap a bin: show only that stage (not remembered)
+const doneCache = {};   // view -> { at, items } recently closed, loaded when the Done bin is tapped
 let me = null, view = location.hash === '#bugs' ? 'bugs' : 'goals', gen = 0, held = null, lastLoad = 0, who = '';
 const NO_DATA = 'starts once the builder runs';
 const BINS = [
@@ -115,7 +119,7 @@ sw.addEventListener('click', e => {
   for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x === b));
   hold(false);
   if (cache[view]) render(cache[view]);
-  else { for (const g of GROUPS) el('sec-' + g).hidden = true; el('totals').textContent = ''; el('steps').replaceChildren(); el('stats').replaceChildren(); el('empty').hidden = false; el('empty').textContent = 'Loading…'; }
+  else { for (const g of [...GROUPS, 'done']) el('sec-' + g).hidden = true; el('totals').textContent = ''; el('steps').replaceChildren(); el('kick').hidden = true; el('empty').hidden = false; el('empty').textContent = 'Loading…'; }
   unpop(); for (const f of document.querySelectorAll('.bd-f.open')) closeFilter(f);
   el('scroll').scrollTop = 0;
   load(view);
@@ -171,21 +175,52 @@ function render(d) {
   const keep = i => byWho(i) && byRepo(i);
   const groups = Object.fromEntries(GROUPS.map(g => [g, d.groups[g].filter(keep)]));
   const st = d.stats || {}, hist = (st.items || []).filter(keep);
-  flow(d, groups, st.pending || st.error ? null : hist.filter(i => i.state === 'closed').length, st);
-  stats(hist, st);
-  el('totals').textContent = d.more ? `showing ${d.shown} of ${d.total}` : '';
+  flow(d, groups, st.pending || st.error ? null : hist.filter(i => i.state === 'closed').length, st, hist);
+  const only = stage[d.view];
+  const sp = el('f-stage'); sp.hidden = !only;
+  if (only) { sp.querySelector('button').textContent = (BINS.find(b => (b.group || 'done') === only) || {}).word + ' ✕'; }
+  el('totals').textContent = d.more && !only ? `showing ${d.shown} of ${d.total}` : '';
   for (const g of GROUPS) {
-    const list = groups[g];
+    const list = only && only !== g ? [] : groups[g];
     el('sec-' + g).hidden = !list.length;
     el('n-' + g).textContent = list.length || '';
     if (g === 'test') {  // others' work first (Works / Doesn't work); what you or your agent opened says someone else reviews it
       el('list-test').replaceChildren(...list.filter(i => !i.mine).map(i => testCard(i, d.view)), ...list.filter(i => i.mine).map(i => testCard(i, d.view)));
     } else el('list-' + g).replaceChildren(...list.map(i => row(i, d.view)));
   }
-  const none = !GROUPS.some(g => groups[g].length);
+  let none = only ? only !== 'done' && !groups[only].length : !GROUPS.some(g => groups[g].length);
+  el('sec-done').hidden = only !== 'done';
+  if (only === 'done') {
+    const dc = doneCache[d.view];
+    const list = dc && dc.items ? dc.items.filter(keep) : null;
+    el('n-done').textContent = list && list.length ? list.length : '';
+    el('list-done').replaceChildren(...(list || []).map(i => row(i, d.view)));
+    el('sec-done').hidden = !(list && list.length);
+    none = !list || !list.length;
+    if (!list) { el('empty').hidden = false; el('empty').textContent = dc && dc.error ? dc.error : 'Loading…'; return; }
+  }
   el('empty').hidden = !none;
-  el('empty').textContent = whoSet.size || chosen.size ? 'Nothing here with these filters.' : EMPTY[d.view];
+  el('empty').textContent = only ? `Nothing ${only === 'done' ? 'closed' : 'in ' + ((BINS.find(b => b.group === only) || {}).word || '')} here${whoSet.size || chosen.size ? ' with these filters' : ''}.`
+    : whoSet.size || chosen.size ? 'Nothing here with these filters.' : EMPTY[d.view];
 }
+
+// Tap a bin: show only that stage; tap it again (or the pill) for everything. Done loads recently closed.
+function setStage(g) {
+  stage[view] = stage[view] === g ? null : g;
+  unpop();
+  if (stage[view] === 'done') loadDone(view);
+  if (cache[view]) render(cache[view]);
+}
+async function loadDone(which, force) {
+  const hit = doneCache[which];
+  if (hit && hit.items && !force && Date.now() - hit.at < 120000) return;
+  try {
+    const r = await api('api/done?view=' + which);
+    doneCache[which] = { at: Date.now(), items: r.items || [] };
+  } catch (err) { doneCache[which] = { at: Date.now(), items: null, error: err.message }; }
+  if (which === view && cache[which] && !typing()) render(cache[which]);
+}
+el('f-stage').querySelector('button').onclick = () => { stage[view] = null; if (cache[view]) render(cache[view]); };
 
 // ---------- filters: two identical pills; each opens a compact checklist right under it ----------
 function filterButton(kind, set, options, allText, short, plural) {
@@ -232,7 +267,8 @@ for (const box of document.querySelectorAll('.bd-f')) {
   };
 }
 
-// The assembly line: four bins, a big number and one word each, arrows between, a return arrow under.
+// The assembly line: four bins (big number, word + ⓘ, a tiny avg and box-and-whisker), arrows between,
+// and the return arrow under Review → Building labelled with the kick-back rate.
 let steps = null;
 const arrow = () => {
   const li = make('li', 'bd-arrow'); li.setAttribute('aria-hidden', 'true');
@@ -240,21 +276,98 @@ const arrow = () => {
   const pth = document.createElementNS(NS, 'path'); pth.setAttribute('d', 'M1 6h16M12 1.5L17.5 6 12 10.5'); svg.append(pth); li.append(svg);
   return li;
 };
-function flow(d, groups, done, st) {
+const STAT_HELP = {
+  open: 'Average time queued: opened → first building label',
+  build: 'Average build time: first building → ready-to-test',
+  review: 'Average time in review: ready-to-test → closed or kicked back',
+  done: 'Average total time: opened → closed',
+};
+const STAT_KEY = { open: 'queued', build: 'building', review: 'review', done: 'done' };
+// Same maths as the server's line_stats(), run after the view's own filters.
+function spread(xs) {
+  xs = xs.filter(x => x != null).sort((a, b) => a - b);
+  if (!xs.length) return { n: 0, avg: null, box: null };
+  const q = p => { const i = (xs.length - 1) * p, lo = Math.floor(i), hi = Math.min(lo + 1, xs.length - 1); return xs[lo] + (xs[hi] - xs[lo]) * (i - lo); };
+  return { n: xs.length, avg: xs.reduce((a, b) => a + b, 0) / xs.length, box: xs.length >= 3 ? [xs[0], q(.25), q(.5), q(.75), xs[xs.length - 1]] : null };
+}
+function lineStats(items) {
+  const reviewed = items.filter(i => i.tries), kicked = items.filter(i => i.kicks);
+  const toDone = kicked.map(i => i.kick_to_done).filter(x => x != null);
+  return { queued: spread(items.map(i => i.wait)), building: spread(items.map(i => i.build)),
+    review: spread(items.flatMap(i => i.review_rounds || [])), done: spread(items.map(i => i.total)),
+    kick: { reviewed: reviewed.length, kicked: kicked.length, rate: reviewed.length ? kicked.length / reviewed.length : null,
+      per: kicked.length ? kicked.reduce((a, i) => a + i.kicks, 0) / kicked.length : null,
+      toDone: toDone.length ? toDone.reduce((a, b) => a + b, 0) / toDone.length : null } };
+}
+// A tiny box-and-whisker: whisker min→max, box p25→p75, a tick at the median. Log scale (durations skew).
+function boxPlot(box) {
+  const W = 48, H = 10, svg = document.createElementNS(NS, 'svg');
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`); svg.setAttribute('class', 'bd-box'); svg.setAttribute('aria-hidden', 'true');
+  const lo = Math.log1p(box[0]), hi = Math.log1p(box[4]), x = v => 1 + (hi > lo ? (Math.log1p(v) - lo) / (hi - lo) : .5) * (W - 2);
+  const add = (tag, at) => { const n = document.createElementNS(NS, tag); for (const k in at) n.setAttribute(k, at[k]); svg.append(n); return n; };
+  add('line', { x1: x(box[0]), x2: x(box[4]), y1: H / 2, y2: H / 2, class: 'w' });
+  add('line', { x1: x(box[0]), x2: x(box[0]), y1: 2.5, y2: H - 2.5, class: 'w' });
+  add('line', { x1: x(box[4]), x2: x(box[4]), y1: 2.5, y2: H - 2.5, class: 'w' });
+  add('rect', { x: x(box[1]), y: 1, width: Math.max(1.5, x(box[3]) - x(box[1])), height: H - 2, rx: 1.5, class: 'b' });
+  add('line', { x1: x(box[2]), x2: x(box[2]), y1: 1, y2: H - 1, class: 'm' });
+  return svg;
+}
+function binStat(x, ls, st) {
+  const box = make('span', 'bd-bin-s');
+  if (st.pending) { box.textContent = '…'; box.title = 'Counting…'; return box; }
+  if (st.error || !ls) { box.textContent = '—'; box.title = st.error || NO_DATA; return box; }
+  const s = ls[STAT_KEY[x.key]];
+  box.append(make('span', 'bd-avg' + (s.avg == null ? ' none' : ''), s.avg == null ? '—' : 'avg ' + dur(s.avg)));
+  if (s.box) box.append(boxPlot(s.box));
+  box.title = s.avg == null ? `${STAT_HELP[x.key]}: ${NO_DATA}` : `${STAT_HELP[x.key]}: ${dur(s.avg)} (${s.n} item${s.n === 1 ? '' : 's'})`
+    + (s.box ? `\nmin ${dur(s.box[0])} · p25 ${dur(s.box[1])} · median ${dur(s.box[2])} · p75 ${dur(s.box[3])} · max ${dur(s.box[4])}` : '');
+  return box;
+}
+const infoIcon = () => {
+  const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', '0 0 16 16'); svg.setAttribute('aria-hidden', 'true');
+  const c = document.createElementNS(NS, 'circle'); c.setAttribute('cx', '8'); c.setAttribute('cy', '8'); c.setAttribute('r', '6.25');
+  const p = document.createElementNS(NS, 'path'); p.setAttribute('d', 'M8 7.2v4M8 4.9v.1'); svg.append(c, p); return svg;
+};
+function flow(d, groups, done, st, hist) {
   steps = d.steps && d.steps.length === 3 ? d.steps : [];
-  const out = [];
+  const ls = st.pending || st.error ? null : lineStats(hist || []);
+  const only = stage[d.view], out = [];
   BINS.forEach((x, n) => {
     if (n) out.push(arrow());
+    const g = x.group || 'done';
     const count = x.group ? groups[x.group].length : done;
-    const li = make('li', 'bd-stepli');
+    const li = make('li', 'bd-stepli bd-binx' + (count ? ' on' : '') + (only === g ? ' sel' : '') + (only && only !== g ? ' dim' : ''));
+    li.dataset.step = x.key;
     const b = make('button', 'bd-bin' + (count ? ' on' : '')); b.type = 'button'; b.dataset.step = x.key;
-    b.setAttribute('aria-label', `${x.word}: ${count == null ? 'counting' : count}. Who does this?`);
-    b.append(make('span', 'bd-bin-n', count == null ? '—' : String(count)), make('span', 'bd-bin-w', x.word));
-    if (x.key === 'done') b.title = st.error ? st.error : done == null ? 'Counting…' : 'Closed, all time';
-    b.onclick = () => openStep(x, b, d.view);
-    li.append(b); out.push(li);
+    b.setAttribute('aria-pressed', String(only === g));
+    b.setAttribute('aria-label', `${x.word}: ${count == null ? 'counting' : count}. ${only === g ? 'Show everything' : 'Show only ' + x.word}`);
+    b.append(make('span', 'bd-bin-n', count == null ? '—' : String(count)));
+    if (x.key === 'done') b.title = st.error ? st.error : done == null ? 'Counting…' : 'Closed, all time · tap for the latest';
+    const wrow = make('span', 'bd-bin-wr');
+    const info = make('button', 'bd-i'); info.type = 'button'; info.setAttribute('aria-label', `Who does ${x.word}?`); info.append(infoIcon());
+    info.onclick = e => { e.stopPropagation(); openStep(x, info, d.view); };
+    wrow.append(make('span', 'bd-bin-w', x.word), info);
+    li.append(b, wrow, binStat(x, ls, st));
+    li.onclick = e => { if (!info.contains(e.target)) setStage(g); };
+    out.push(li);
   });
   el('steps').replaceChildren(...out);
+  kickLabel(ls, st);
+}
+const pct = r => Math.round(r * 100) + '%';
+const times = x => (Math.round(x * 10) / 10) + '×';
+function kickLabel(ls, st) {
+  const k = el('kick');
+  const kk = ls && ls.kick;
+  k.hidden = !!st.pending;
+  if (st.pending) return;
+  const text = !kk || kk.rate == null ? '—' : kk.kicked ? `${pct(kk.rate)} · ${times(kk.per)}` : '0%';
+  k.textContent = text;
+  const why = !kk || kk.rate == null ? `Kicked back: ${NO_DATA}`
+    : `${pct(kk.rate)} of ${kk.reviewed} reviewed item${kk.reviewed === 1 ? '' : 's'} came back at least once` + (kk.kicked ? `, ${times(kk.per)} on average` : '')
+      + (kk.toDone != null ? `. ${dur(kk.toDone)} on average from first kick-back to done.` : '.');
+  k.title = why; k.setAttribute('aria-label', 'Doesn’t work goes back to Building. ' + why);
+  k.onclick = () => pop(k, 'Doesn’t work → back to Building', why);
 }
 function openStep(x, anchor, kind) {
   if (x.key === 'open') {
@@ -273,35 +386,6 @@ const dur = sec => {
   const days = sec / 86400;
   return (days < 10 ? Math.round(days * 10) / 10 : Math.round(days)) + 'd';
 };
-function summary(items) {
-  const avg = xs => xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
-  const waits = items.map(i => i.waiting_for).filter(x => x != null);
-  const tries = items.map(i => i.tries).filter(Boolean);
-  return { wait: avg(items.map(i => i.wait).filter(x => x != null)), build: avg(items.map(i => i.build).filter(x => x != null)),
-           human: avg(waits), longest: waits.length ? Math.max(...waits) : null,
-           tries: tries.length ? avg(tries) : null, kicks: items.reduce((a, i) => a + (i.kicks || 0), 0), tried: tries.length };
-}
-function stats(items, st) {
-  const box = el('stats');
-  if (st.pending) { box.replaceChildren(make('div', 'bd-stat wide', 'Counting where work waits…')); return; }
-  if (st.error) { box.replaceChildren(make('div', 'bd-stat wide', st.error)); return; }
-  const s = summary(items);
-  const rows = [
-    ['Queued for', dur(s.wait), 'Average time from opened to first building label'],
-    ['Build time', dur(s.build), 'Average time from first building label to first ready-to-test label'],
-    ['In review', s.human == null ? null : dur(s.human) + (s.longest > s.human + 60 ? ` · max ${dur(s.longest)}` : ''), 'Average and longest wait of items now labelled ready-to-test'],
-    ['Tries', s.tries == null ? null : String(Math.round(s.tries * 10) / 10), 'Times an item was labelled ready-to-test, on average'],
-    ['Kicked back', s.tried ? String(s.kicks) : null, 'Ready-to-test removed without a close (Doesn\u2019t work)'],
-  ];
-  box.replaceChildren(...rows.map(([label, value, help]) => {
-    const div = make('div', 'bd-stat');
-    const dd = make('dd', value == null ? 'none' : '', value == null ? '—' : value);
-    div.title = value == null ? NO_DATA : help;
-    if (value == null) dd.setAttribute('aria-label', '— ' + NO_DATA);
-    div.append(make('dt', '', label), dd);
-    return div;
-  }));
-}
 
 const NS = 'http://www.w3.org/2000/svg';
 function bubble(n) {
@@ -369,6 +453,7 @@ function row(i, kind) {
     meta.classList.add('bd-meta-b');
     meta.append(document.createTextNode([repoName(i.repo), i.opener || i.author].filter(Boolean).join(' · ') + ' · '), bubble(i.comments || 0));
   }
+  if (i.group === 'done' && i.closed_at) meta.append(make('span', 'bd-repo', ' · closed ' + when(i.closed_at)));
   a.append(meta);
   wrap.append(a, trySwitch(i));
   return wrap;
@@ -485,6 +570,7 @@ function openDetail(i) {
   roles(i);
   el('d-body').replaceChildren(make('p', 'bd-empty', 'Loading…'));
   el('d-comments').replaceChildren(); el('d-comments-h').hidden = true;
+  itemFlow(i);
   WzSheet.open(dlg);
   dlg.scrollTop = 0;
   const hit = details.get(i.id);
@@ -511,13 +597,56 @@ function fill(d) {
     return li;
   }));
 }
-el('detail').addEventListener('close', () => { openId = null; });
+el('detail').addEventListener('close', () => { openId = null; unpop(); });
+
+// ---------- one item's own assembly line (its label timeline, fetched on tap, cached briefly) ----------
+const flows = new Map();
+const CUR = { queued: 'open', building: 'build', review: 'review', done: 'done' };
+function itemFlow(i) {
+  const box = el('d-flow');
+  box.replaceChildren(make('p', 'bd-meta bd-dflow-wait', ' '));
+  const hit = flows.get(i.id);
+  if (hit && Date.now() - hit.at < DETAIL_SECONDS * 1000) return drawItemFlow(hit.data);
+  api(`api/flow?repo=${encodeURIComponent(i.repo)}&number=${i.number}`)
+    .then(f => { flows.set(i.id, { at: Date.now(), data: f }); if (openId === i.id) drawItemFlow(f); })
+    .catch(err => { if (openId === i.id) box.replaceChildren(make('p', 'bd-meta', err.message)); });
+}
+function drawItemFlow(f) {
+  const box = el('d-flow');
+  const ol = make('ol', 'bd-dflow'); ol.setAttribute('aria-label', 'This item so far');
+  const staged = !!f.staged, closedDate = f.closed_at ? new Date(f.closed_at * 1000) : null;
+  const val = {
+    open: staged ? dur(f.spent.queued) : 'for ' + dur(f.spent.queued),
+    build: staged && (f.spent.building || f.build != null) ? dur(f.spent.building) : '—',
+    review: staged && (f.spent.review || f.tries) ? dur(f.spent.review) : '—',
+    done: closedDate ? closedDate.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '—',
+  };
+  const cur = CUR[f.stage] || 'open';
+  BINS.forEach((x, n) => {
+    if (n) ol.append(arrow());
+    const reached = x.key === 'open' || (x.key === 'build' && val.build !== '—') || (x.key === 'review' && val.review !== '—') || (x.key === 'done' && !!closedDate);
+    const li = make('li', 'bd-dbin' + (x.key === cur ? ' cur' : '') + (!reached && x.key !== cur ? ' dim' : ''));
+    li.append(make('span', 'bd-dbin-v', val[x.key]), make('span', 'bd-dbin-w', x.word));
+    li.title = { open: 'Time spent queued', build: 'Time spent building', review: 'Time spent in review', done: 'Closed on' }[x.key];
+    li.setAttribute('aria-label', `${x.word}: ${val[x.key]}${x.key === cur ? ' (now)' : ''}`);
+    ol.append(li);
+  });
+  const loop = make('p', 'bd-loop bd-dloop'); loop.setAttribute('role', 'img');
+  const k = make('span', 'bd-kick', f.kicks ? f.kicks + '×' : '0×');
+  loop.setAttribute('aria-label', `Kicked back ${f.kicks || 0} time${f.kicks === 1 ? '' : 's'}`);
+  loop.title = `Kicked back ${f.kicks || 0}×` + (f.kick_to_done != null ? ` · ${dur(f.kick_to_done)} from first kick-back to done` : '');
+  loop.classList.toggle('none', !f.kicks);
+  loop.append(k);
+  const wrap = make('div', 'bd-flow bd-dflowx'); wrap.append(ol, loop);
+  box.replaceChildren(wrap);
+  if (!staged && f.state === 'open') box.append(make('p', 'bd-meta bd-dflow-note', `Queued for ${dur(f.spent.queued)} · no build yet`));
+}
 
 // ---------- start: refresh quietly on focus and every minute ----------
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'board', version: '0.7.0' });
+  WizardApp.ready({ name: 'board', version: '0.8.0' });
   WizardApp.back.register({ canGoBack: () => false, back: () => false });
 }
 for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));

@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'board'
-VERSION = '0.7.0'
+VERSION = '0.8.0'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -876,38 +876,112 @@ def _ts(iso):
         return None
 
 
-def item_history(node, now=None):
-    """One issue's workflow numbers from its label history. Seconds; None when the step never happened.
+def history_of(ev, opened, closed_at, state, now=None):
+    """One issue's workflow numbers from its sorted label/close events [(ts, kind, label)], kinds
+    LabeledEvent | UnlabeledEvent | ClosedEvent | ReopenedEvent. Seconds; None when a step never happened.
+    wait = opened -> first `building`; build = first `building` -> first `ready-to-test`;
+    review_rounds = each `ready-to-test` stint that ended (closed or kicked back); total = opened -> closed;
     tries = times labelled ready-to-test; kicks = ready-to-test removed without a close or `approved`
-    within 10 minutes (that is \"Doesn't work\")."""
+    within 10 minutes (that is \"Doesn't work\"); kick_to_done = first kick-back -> closed;
+    spent = time this item spent in each stage (queued/building/review), done = closed time."""
     now = now or time.time()
-    ev = sorted(((_ts(e.get('createdAt')), e.get('__typename'), ((e.get('label') or {}).get('name') or '').lower())
-                 for e in (node.get('timelineItems') or {}).get('nodes') or [] if e and _ts(e.get('createdAt'))), key=lambda x: x[0])
-    opened = _ts(node.get('createdAt'))
     first_build = next((t for t, k, l in ev if k == 'LabeledEvent' and l == 'building'), None)
     first_ready = next((t for t, k, l in ev if k == 'LabeledEvent' and l == 'ready-to-test'), None)
     tries = sum(1 for t, k, l in ev if k == 'LabeledEvent' and l == 'ready-to-test')
-    kicks = 0
+    kick_times = []
     for t, k, l in ev:
         if k == 'UnlabeledEvent' and l == 'ready-to-test':
             soon = [x for x in ev if t <= x[0] <= t + 600]
             if not any(x[1] == 'ClosedEvent' or (x[1] == 'LabeledEvent' and x[2] == 'approved') for x in soon):
-                kicks += 1
-    ready_since = None  # still waiting for a human: since the last ready-to-test label
+                kick_times.append(t)
+    # Walk the timeline as a small state machine: queued -> building -> review -> (kick: building) -> done.
+    spent = {'queued': 0.0, 'building': 0.0, 'review': 0.0}
+    rounds, stage, since, built, review_from = [], 'queued', opened if opened is not None else (ev[0][0] if ev else now), False, None
+    kicks_set = set(kick_times)
+    def move(to, t):
+        nonlocal stage, since
+        if stage in spent and t >= since:
+            spent[stage] += t - since
+        stage, since = to, t
+    for t, k, l in ev:
+        if k == 'LabeledEvent' and l == 'building' and stage == 'queued':
+            built = True
+            move('building', t)
+        elif k == 'LabeledEvent' and l == 'ready-to-test' and stage in ('queued', 'building'):
+            built = True
+            review_from = t
+            move('review', t)
+        elif k == 'UnlabeledEvent' and l == 'ready-to-test' and stage == 'review' and t in kicks_set:
+            rounds.append(t - review_from)
+            move('building', t)
+        elif k == 'ClosedEvent' and stage != 'done':
+            if stage == 'review' and review_from is not None:
+                rounds.append(t - review_from)
+            move('done', t)
+        elif k == 'ReopenedEvent' and stage == 'done':
+            move('building' if built else 'queued', t)
+    if stage != 'done':
+        move(stage, now)
     labelled = {}
     for t, k, l in ev:
         if k == 'LabeledEvent':
             labelled[l] = t
         elif k == 'UnlabeledEvent':
             labelled.pop(l, None)
-    if (node.get('state') or '').upper() == 'OPEN' and 'ready-to-test' in labelled:
-        ready_since = labelled['ready-to-test']
+    is_open = (state or '').lower() == 'open'
+    ready_since = labelled.get('ready-to-test') if is_open else None
+    closed_ts = _ts(closed_at) if closed_at else None
     rnd = lambda x: None if x is None else int(x)
+    # current stage by labels (what the board shows), not by the walk
+    current = 'done' if not is_open else 'review' if 'ready-to-test' in labelled else 'building' if 'building' in labelled else 'queued'
+    has = lambda x: x is not None
+    return {'wait': rnd(first_build - opened) if has(first_build) and has(opened) else None,
+            'build': rnd(first_ready - first_build) if has(first_ready) and has(first_build) and first_ready >= first_build else None,
+            'review_rounds': [int(r) for r in rounds if r >= 0],
+            'total': rnd(closed_ts - opened) if has(closed_ts) and has(opened) and not is_open else None,
+            'tries': tries, 'kicks': len(kick_times),
+            'kick_to_done': rnd(closed_ts - kick_times[0]) if kick_times and has(closed_ts) and not is_open else None,
+            'waiting_for': rnd(now - ready_since) if ready_since else None,
+            'stage': current, 'spent': {k: int(v) for k, v in spent.items()}, 'staged': built or bool(first_build or first_ready),
+            'opened_at': rnd(opened), 'closed_at': rnd(closed_ts) if not is_open else None}
+
+
+def item_history(node, now=None):
+    ev = sorted(((_ts(e.get('createdAt')), e.get('__typename'), ((e.get('label') or {}).get('name') or '').lower())
+                 for e in (node.get('timelineItems') or {}).get('nodes') or [] if e and _ts(e.get('createdAt'))), key=lambda x: x[0])
+    h = history_of(ev, _ts(node.get('createdAt')), node.get('closedAt'), node.get('state'), now)
+    h.pop('spent', None)
     return {'id': f"{node['repository']['nameWithOwner']}#{node['number']}", 'repo': node['repository']['nameWithOwner'],
-            'author': (node.get('author') or {}).get('login') or '', 'state': (node.get('state') or '').lower(),
-            'wait': rnd(first_build - opened) if first_build and opened else None,
-            'build': rnd(first_ready - first_build) if first_ready and first_build and first_ready >= first_build else None,
-            'tries': tries, 'kicks': kicks, 'waiting_for': rnd(now - ready_since) if ready_since else None}
+            'author': (node.get('author') or {}).get('login') or '', 'state': (node.get('state') or '').lower(), **h}
+
+
+def spread(xs):
+    """Average plus the five numbers of a box-and-whisker (min, p25, median, p75, max); box only with 3+ points."""
+    xs = sorted(x for x in xs if x is not None)
+    if not xs:
+        return {'n': 0, 'avg': None, 'box': None}
+    def q(p):
+        i = (len(xs) - 1) * p
+        lo = int(i)
+        hi = min(lo + 1, len(xs) - 1)
+        return int(xs[lo] + (xs[hi] - xs[lo]) * (i - lo))
+    return {'n': len(xs), 'avg': int(sum(xs) / len(xs)), 'box': [xs[0], q(.25), q(.5), q(.75), xs[-1]] if len(xs) >= 3 else None}
+
+
+def line_stats(items):
+    """The assembly-line stats (0.8): per bin avg + box, and the return arrow's kick-back numbers.
+    rate = share of items that reached Review and were kicked back at least once; per_item = average
+    kick-backs among those kicked back."""
+    reviewed = [i for i in items if i.get('tries')]
+    kicked = [i for i in items if i.get('kicks')]
+    to_done = [i['kick_to_done'] for i in kicked if i.get('kick_to_done') is not None]
+    return {'queued': spread([i.get('wait') for i in items]), 'building': spread([i.get('build') for i in items]),
+            'review': spread([r for i in items for r in i.get('review_rounds') or []]),
+            'done': spread([i.get('total') for i in items]),
+            'kick': {'reviewed': len(reviewed), 'kicked': len(kicked),
+                     'rate': round(len(kicked) / len(reviewed), 3) if reviewed else None,
+                     'per_item': round(sum(i['kicks'] for i in kicked) / len(kicked), 2) if kicked else None,
+                     'to_done': int(sum(to_done) / len(to_done)) if to_done else None}}
 
 
 def summarize(items):
@@ -920,7 +994,75 @@ def summarize(items):
             'waiting_for_human': avg(waiting), 'waiting_longest': max(waiting) if waiting else None,
             'tries_per_item': round(sum(tried) / len(tried), 2) if tried else None,
             'kicked_back': sum(i['kicks'] for i in items), 'done': sum(1 for i in items if i['state'] == 'closed'),
-            'items': len(items)}
+            'items': len(items), 'line': line_stats(items)}
+
+
+_flows = {}
+FLOW_SECONDS = 120
+_REST_KIND = {'labeled': 'LabeledEvent', 'unlabeled': 'UnlabeledEvent', 'closed': 'ClosedEvent', 'reopened': 'ReopenedEvent'}
+
+
+def item_flow(person, args, agent=False):
+    """GET /api/flow?repo=&number=: one item's own assembly line from its GitHub timeline (REST timeline API,
+    on demand, cached 2 minutes): time spent in Queued, Building and Review, the Done date, kick-backs, stage."""
+    _, acct = account_for(person, agent)
+    full, number = _target(args or {})
+    key = (_tid(acct['token']), full.lower(), number)
+    with LOCK:
+        hit = _flows.get(key)
+    if hit and time.time() - hit[0] < FLOW_SECONDS and not args.get('refresh'):
+        return hit[1]
+    it = gh(acct['token'], 'GET', f'/repos/{full}/issues/{number}')
+    if it.get('pull_request'):
+        raise Problem(400, 'That is a pull request, not an issue.')
+    rows = []
+    for page in range(1, 4):
+        got = gh(acct['token'], 'GET', f'/repos/{full}/issues/{number}/timeline?per_page=100&page={page}')
+        got = got if isinstance(got, list) else []
+        rows += got
+        if len(got) < 100:
+            break
+    ev = sorted(((_ts(e.get('created_at')), _REST_KIND[e.get('event')], ((e.get('label') or {}).get('name') or '').lower())
+                 for e in rows if isinstance(e, dict) and e.get('event') in _REST_KIND and _ts(e.get('created_at'))), key=lambda x: x[0])
+    h = history_of(ev, _ts(it.get('created_at')), it.get('closed_at'), it.get('state'))
+    out = {'id': f'{full}#{number}', 'repo': full, 'number': number, 'state': it.get('state'), **h, 'computed_at': int(time.time())}
+    with LOCK:
+        _flows[key] = (time.time(), out)
+        if len(_flows) > 300:
+            for k in sorted(_flows, key=lambda k: _flows[k][0])[:100]:
+                _flows.pop(k, None)
+    return out
+
+
+DONE_FIELDS = LIGHT_FIELDS + ' closedAt stateReason'
+DONE_PAGE = 'query($q: String!, $after: String) { ' + _PAGE % (50, DONE_FIELDS) + ' }'
+
+
+def done_list(person, args):
+    """GET /api/done?view=goals|bugs: the most recently closed items of that view (up to 50, newest first)."""
+    _, acct = account_for(person)
+    view = args.get('view') or 'goals'
+    if view not in ('goals', 'bugs'):
+        raise Problem(400, 'view must be goals or bugs.')
+    org = settings()['org']
+    kind = 'label:goal' if view == 'goals' else '-label:goal'
+    if args.get('refresh'):
+        _forget(acct['token'])
+    nodes, total = _view_nodes(acct['token'], f'org:{org} is:issue is:closed {kind} sort:updated-desc', limit=50, query=DONE_PAGE)
+    base = policy_base()
+    items = []
+    for n in nodes:
+        card = _card(n, 'goals' if view == 'goals' else 'issues')
+        author = (n.get('author') or {}).get('login') or ''
+        card.update(group='done', mine=same_person(author, acct.get('login') or '', base), opener=person_of(author, base),
+                    created_at=n.get('createdAt'), closed_at=n.get('closedAt'), state_reason=(n.get('stateReason') or '').lower() or None,
+                    labels=[l['name'] for l in (n.get('labels') or {}).get('nodes') or []])
+        items.append(card)
+    items.sort(key=lambda i: i.get('closed_at') or '', reverse=True)
+    repos_wanted = _repo_list(args.get('repos'))
+    if repos_wanted:
+        items = [i for i in items if i['repo'].split('/')[-1].lower() in repos_wanted]
+    return {'view': view, 'org': org, 'items': items, 'count': len(items), 'total': total}
 
 
 def _filter_stats(stats, keep):
@@ -1341,6 +1483,7 @@ TOOLS = [
     {'name': 'builder_set', 'description': 'Set the Wizard OS Builder switch (running true = Running, false = Paused) only when a human asked; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'running': {'type': 'boolean'}, **ASKED}, 'required': ['running', 'owner_request']}},
     {'name': 'try_status', 'description': "Which items the signed-in person switched 'Try it' on for (mock-up: records the wish, nothing runs yet).", 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'try_set', 'description': "Switch 'Try it' on or off for one item (repo owner/name + number) only when a human asked; pass their words as owner_request. Mock-up.", 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'number': {'type': 'integer'}, 'on': {'type': 'boolean'}, **ASKED}, 'required': ['repo', 'number', 'on', 'owner_request']}},
+    {'name': 'board_flow', 'description': "One item's own assembly line from its GitHub label timeline: seconds spent in Queued, Building and Review, closed time, kick-backs (ready-to-test removed without a close), current stage.", 'inputSchema': {'type': 'object', 'properties': ISSUE}},
     {'name': 'board_reopen', 'description': 'Reopen a Bug when a human asked you to (pass their words). Goals are refused: only humans reopen goals.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, **ASKED}, 'required': ['owner_request']}},
 ]
 CALLS = {
@@ -1356,6 +1499,7 @@ CALLS = {
     'builder_set': lambda a: builder_set(None, a, agent=True),
     'try_status': lambda a: try_status(None, agent=True),
     'try_set': lambda a: try_set(None, a, agent=True),
+    'board_flow': lambda a: item_flow(None, a, agent=True),
 }
 
 
@@ -1450,6 +1594,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, board_split(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
             if path == '/api/stats':
                 return self.send(200, stats_view(self.person(), q))
+            if path == '/api/flow':
+                return self.send(200, item_flow(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
+            if path == '/api/done':
+                return self.send(200, done_list(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
             if path == '/api/builder':
                 return self.send(200, builder_status())
             if path == '/api/try':

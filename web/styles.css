@@ -223,3 +223,56 @@ a.bd-title:hover { text-decoration: underline; }
 @media (max-width: 520px) { .bd-head .bd-switch { width: auto; } }
 .bd-meta-b { display: block; }
 .bd-meta-b .bd-cmt { display: inline-flex; vertical-align: -3px; }
+
+/* 0.8: each bin carries its own tiny stat; the li is the bin, the count button and ⓘ sit inside it. */
+.bd-binx { flex-direction: column; align-items: center; gap: 2px; padding: 12px 4px 8px; border: 1px solid var(--line); border-radius: var(--r-tile); background: var(--fill); cursor: pointer; transition: background var(--wz-motion-fast) var(--wz-ease), opacity var(--wz-motion-fast) var(--wz-ease), border-color var(--wz-motion-fast) var(--wz-ease); }
+@media (hover: hover) { .bd-binx:hover { background: var(--fill-2); } }
+.bd-binx .bd-bin { flex: none; display: block; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--ink); line-height: 1; }
+.bd-binx .bd-bin:hover { background: none; }
+.bd-binx:not(.on) .bd-bin-n { color: var(--ink-3); }
+.bd-binx[data-step="review"].on { border-color: var(--accent); }
+.bd-binx[data-step="review"].on .bd-bin-n { color: var(--accent); }
+.bd-binx[data-step="done"] { background: none; border-style: dashed; }
+.bd-binx.sel { border-color: var(--ink-2); border-style: solid; background: var(--fill-2); box-shadow: inset 0 0 0 1px var(--ink-2); }
+.bd-binx.dim { opacity: .55; }
+.bd-bin-wr { display: inline-flex; align-items: center; gap: 1px; min-width: 0; max-width: 100%; }
+.bd-i { flex: none; display: grid; place-items: center; width: 22px; height: 22px; margin: -4px -6px -4px 0; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--ink-3); cursor: pointer; }
+.bd-i svg { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; }
+@media (hover: hover) { .bd-i:hover { color: var(--ink); } }
+.bd-i:focus-visible, .bd-kick:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.bd-bin-s { display: grid; justify-items: center; gap: 2px; min-height: 26px; margin-top: 3px; font-size: 10.5px; line-height: 1.1; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bd-avg { color: var(--ink-2); font-weight: 600; }
+.bd-avg.none { color: var(--ink-3); font-weight: 500; }
+.bd-box { display: block; width: 48px; height: 10px; overflow: visible; }
+.bd-box .w { stroke: var(--ink-3); stroke-width: 1; }
+.bd-box .b { fill: var(--fill-2); stroke: var(--ink-2); stroke-width: 1; }
+.bd-box .m { stroke: var(--accent); stroke-width: 1.6; }
+/* The return arrow and its kick-back label. */
+.bd-flow > .bd-loop { height: 30px; }
+.bd-kick { position: absolute; left: 50%; top: 12px; transform: translateX(-50%); min-height: 22px; padding: 2px 8px; border: 0; border-radius: var(--r-pill); background: none; color: var(--ink-3); font: inherit; font-size: 11px; font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums; cursor: pointer; }
+@media (hover: hover) { .bd-kick:hover { color: var(--ink); } }
+.bd-stagepick { padding-right: 14px; background-image: none; }
+@media (max-width: 640px) {
+  .bd-binx { padding: 10px 2px 6px; }
+  .bd-bin-s { font-size: 10px; }
+  .bd-box { width: 40px; }
+}
+@media (max-width: 380px) { .bd-i { width: 18px; margin-right: -4px; } .bd-bin-w { font-size: 10.5px; } }
+
+/* 0.8 per-item line in the detail sheet: the same shape, smaller, this item's own times. */
+.bd-d-flow { margin: var(--wz-space-3) 0 0; }
+.bd-d-flow:empty { display: none; }
+.bd-dflow-wait { min-height: 52px; }
+.bd-dflowx { --ga: 18px; margin: 0; }
+.bd-dflow { display: contents; list-style: none; }
+.bd-dbin { grid-row: 1; display: grid; justify-items: center; gap: 2px; min-width: 0; padding: 8px 2px 6px; border: 1px solid var(--line); border-radius: var(--r-tile); background: var(--fill); }
+.bd-dbin-v { font-size: var(--wz-text-md); font-weight: 700; line-height: 1.1; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.bd-dbin-w { font-size: 10.5px; font-weight: 600; color: var(--ink-3); }
+.bd-dbin.cur { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.bd-dbin.cur .bd-dbin-v { color: var(--accent); }
+.bd-dbin.dim { opacity: .45; }
+.bd-dflowx .bd-arrow svg { width: 12px; }
+.bd-dloop { height: 28px; }
+.bd-dloop .bd-kick { cursor: default; top: 11px; }
+.bd-dloop.none::before, .bd-dloop.none::after { opacity: .5; }
+.bd-dflow-note { margin-top: 0; font-size: 12px; }
