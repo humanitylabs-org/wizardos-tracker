@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'wizard-os-tracker'  # 0.12: id follows the name (was board; renamed_from in wizard.md)
-VERSION = '0.13.1'
+VERSION = '0.13.2'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -390,9 +390,13 @@ def connect(person, args, via='token'):
 _device = {}  # person key -> flow (device_code stays on the box, never returned)
 
 
+# The humanitylabs-org 'Wizard OS Tracker' OAuth App (Device Flow). A client id is public, not a secret.
+DEFAULT_GITHUB_CLIENT_ID = 'Ov23liRmzoKiwejdVDOo'
+
+
 def github_client_id():
-    """policy.json `github_client_id` (set from the app by a team member), else env GITHUB_CLIENT_ID; None = token paste only."""
-    for v in (_policy_file().get('github_client_id'), os.environ.get('GITHUB_CLIENT_ID')):
+    """policy.json `github_client_id`, else env GITHUB_CLIENT_ID, else the team's built-in OAuth App."""
+    for v in (_policy_file().get('github_client_id'), os.environ.get('GITHUB_CLIENT_ID'), DEFAULT_GITHUB_CLIENT_ID):
         if isinstance(v, str) and CLIENT_ID.match(v.strip()):
             return v.strip()
     return None
@@ -400,7 +404,7 @@ def github_client_id():
 
 def client_id_info():
     pv = _policy_file().get('github_client_id')
-    src = 'policy' if isinstance(pv, str) and CLIENT_ID.match(pv.strip()) else 'env' if github_client_id() else None
+    src = 'policy' if isinstance(pv, str) and CLIENT_ID.match(pv.strip()) else 'env' if os.environ.get('GITHUB_CLIENT_ID') else 'built-in'
     return {'set': bool(src), 'client_id': github_client_id(), 'source': src, 'scope': DEVICE_SCOPE,
             'note': 'A GitHub OAuth App client id with Device Flow enabled. No client secret is used or stored.'}
 
