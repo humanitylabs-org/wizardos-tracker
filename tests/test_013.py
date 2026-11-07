@@ -246,6 +246,8 @@ class Reviews(unittest.TestCase):
 
 class Device(unittest.TestCase):
     def setUp(self):
+        self._def = S.DEFAULT_GITHUB_CLIENT_ID; S.DEFAULT_GITHUB_CLIENT_ID = None
+        self.addCleanup(setattr, S, 'DEFAULT_GITHUB_CLIENT_ID', self._def)
         reset({'github_client_id': 'Ov23liTESTCLIENT01'})
         S._write('accounts.json', {'people': {}})
         GH.token_answers[:] = []
@@ -346,3 +348,8 @@ class TrySwitch(unittest.TestCase):
         self.assertTrue(card['check'])
         node['comments']['nodes'] = node['comments']['nodes'][:1]
         self.assertIsNone(S._card(node, 'test')['switch'], 'only the builder (or the issue body) names the switch')
+
+
+class BuiltInClientId(unittest.TestCase):
+    def test_default_is_team_app(self):
+        self.assertEqual(S.DEFAULT_GITHUB_CLIENT_ID, 'Ov23liRmzoKiwejdVDOo')
