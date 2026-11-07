@@ -519,7 +519,7 @@ function trySwitch(i) {
     try {
       const r = await api('api/try', { repo: i.repo, number: i.number, on: next });
       tries = Object.fromEntries(Object.keys(r.items || {}).map(x => [x, true]));
-      if (next) pop(b, '', 'Mock-up: this will switch the change on in your Wizard once it runs a build with it.'); else unpop();
+      if (next) pop(b, '', 'Mock-up for now. On a Wizard set to For testers this switches it on; if it’s behind, it asks you to update first.'); else unpop();
     } catch (err) { b.setAttribute('aria-checked', String(!next)); if (next) delete tries[k]; say(err.message, 'error'); }
     finally { b.disabled = false; }
   };
