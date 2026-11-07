@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Wizard OS Tracker",
-    "version": "0.4.0",
+    "version": "0.5.0",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin."
   },
   "paths": {
@@ -834,7 +834,7 @@
     },
     "/api/split": {
       "get": {
-        "summary": "Goals or Bugs grouped by status: Ready to test (ready-to-test), Building (building), Queued (other open). Up to 300 items, paged from GitHub search.",
+        "summary": "Goals or Bugs grouped by status: Waiting for human (ready-to-test, key test), Building (building), Queued (other open). Up to 300 items. Rows carry desc (first paragraph as plain text), assignees, comments (count).",
         "parameters": [
           {
             "name": "view",
@@ -856,11 +856,19 @@
                 "1"
               ]
             }
+          },
+          {
+            "name": "repos",
+            "in": "query",
+            "description": "Optional comma-separated repo names to keep (the view filters itself).",
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
           "200": {
-            "description": "view, org, login, groups {test, building, queued}, counts, closed_week {count, since, authors}, total, shown, more; plus 0.3 keys test (others' ready-to-test) and doing."
+            "description": "view, org, login, groups {test, building, queued} (each item: id, repo, number, title, author, assignees[], comments, desc, group, mine, labels; goals add progress, owner), counts, done (closed all time, null while stats are pending), stats (same shape as /api/stats, or {pending:true} until computed: then call /api/stats), total, shown, more; plus 0.3 keys test and doing. closed_week was removed in 0.5."
           }
         }
       }
@@ -903,6 +911,93 @@
           },
           "404": {
             "description": "Not found or not visible to this token"
+          }
+        }
+      }
+    },
+    "/api/stats": {
+      "get": {
+        "summary": "Bottleneck stats for one view from GitHub label history (LABELED/UNLABELED/CLOSED/REOPENED events), all open and closed issues of that kind, cached 5 minutes per account.",
+        "parameters": [
+          {
+            "name": "view",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "goals",
+                "bugs"
+              ]
+            }
+          },
+          {
+            "name": "author",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "repos",
+            "in": "query",
+            "description": "Comma-separated repo names.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "items [{id, repo, author, state, wait (s opened\u2192first building), build (s first building\u2192first ready-to-test), tries (times labelled ready-to-test), kicks (ready-to-test removed without close/approved within 10 min), waiting_for (s since ready-to-test, open items only)}], done, counted, total, computed_at, summary {wait_before_build, build_time, waiting_for_human, waiting_longest, tries_per_item, kicked_back, done, items}. Null means no data yet."
+          }
+        }
+      }
+    },
+    "/api/builder": {
+      "get": {
+        "summary": "Wizard OS Builder switch (mock-up; the builder host will poll this). Default Paused.",
+        "responses": {
+          "200": {
+            "description": "{running: bool, state: Running|Paused, updated_at, updated_by, connected: false, note}"
+          }
+        }
+      },
+      "post": {
+        "summary": "Set the builder switch.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "running": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "running"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Same as GET."
+          },
+          "400": {
+            "description": "running must be a boolean."
+          }
+        }
+      }
+    },
+    "/api/policy": {
+      "get": {
+        "summary": "Who writes Goals and Bugs and who builds. Defaults in code; DATA_DIR/policy.json overrides (keys goals.authors, bugs.text, builds.builders, *.text).",
+        "responses": {
+          "200": {
+            "description": "goals, bugs, builds, org, members (org members your token can see, or null), lines (the three display lines)."
           }
         }
       }

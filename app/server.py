@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'board'
-VERSION = '0.4.1'
+VERSION = '0.5.0'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -34,6 +34,7 @@ BUILDER = os.environ.get('BOARD_BUILDER', 'wizardosbuilder').strip().lower()
 DEFAULT_REPO = os.environ.get('BOARD_DEFAULT_REPO', 'wizard-ux')
 MEDIA_REPO = os.environ.get('BOARD_MEDIA_REPO', 'humanitylabs-org/wizard-issue-media')
 CACHE_SECONDS = 60
+STATS_SECONDS = 300
 STATIC_TYPES = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml'}
 NAME = re.compile(r'^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,99})$')
 TASK = re.compile(r'^(\s*[-*+]\s+\[)([ xX])(\]\s?)(.*)$')
@@ -620,7 +621,7 @@ def avatar(person):
 
 # ---------- the three tabs (Goals, To test, Issues) ----------
 
-VIEW_FIELDS = (' number title url body createdAt updatedAt author { login } assignees(first: 1) { nodes { login } }'
+VIEW_FIELDS = (' number title url body createdAt updatedAt author { login } assignees(first: 10) { nodes { login } }'
                ' repository { nameWithOwner } labels(first: 20) { nodes { name } }'
                ' comments(last: 20) { nodes { author { login } body createdAt } }'
                ' timelineItems(itemTypes: [CROSS_REFERENCED_EVENT, CONNECTED_EVENT], last: 60) { nodes {'
@@ -633,14 +634,19 @@ VIEW = 'query($q: String!) { search(query: $q, type: ISSUE, first: 80) { issueCo
 MAX_ITEMS = 300
 # Lists page through search: light rows (no timeline or comments) 100 at a time for Bugs; the heavy
 # fields (linked issues for goal progress, the builder's last comment for Ready to test) only where shown.
-LIGHT_FIELDS = VIEW_FIELDS.split(' comments(last')[0]
-HEAVY_FIELDS = VIEW_FIELDS.replace('comments(last: 20)', 'comments(last: 10)')
+LIGHT_FIELDS = VIEW_FIELDS.split(' comments(last')[0] + ' comments { totalCount }'
+HEAVY_FIELDS = VIEW_FIELDS.replace('comments(last: 20) { nodes', 'comments(last: 10) { totalCount nodes')
 _PAGE = 'search(query: $q, type: ISSUE, first: %d, after: $after) { issueCount pageInfo { hasNextPage endCursor } nodes { ... on Issue {%s } } }'
-PAGES = {heavy: ('query($q: String!, $after: String) { ' + _PAGE % (size, fields) + ' }',
-                 # first page also counts what closed this week (authors too, so the who-wrote-it filter applies)
-                 'query($q: String!, $after: String, $c: String!) { ' + _PAGE % (size, fields)
-                 + ' closed: search(query: $c, type: ISSUE, first: 100) { issueCount nodes { ... on Issue { author { login } } } } }')
+PAGES = {heavy: 'query($q: String!, $after: String) { ' + _PAGE % (size, fields) + ' }'
          for heavy, size, fields in ((False, 100, LIGHT_FIELDS), (True, 40, HEAVY_FIELDS))}
+# Bottleneck stats: every issue of one kind (open and closed) with its label/close history, 100 a page.
+STATS_PAGE = ('query($q: String!, $after: String) { search(query: $q, type: ISSUE, first: 100, after: $after) {'
+              ' issueCount pageInfo { hasNextPage endCursor } nodes { ... on Issue { number state createdAt closedAt'
+              ' author { login } repository { nameWithOwner }'
+              ' timelineItems(itemTypes: [LABELED_EVENT, UNLABELED_EVENT, CLOSED_EVENT, REOPENED_EVENT], first: 100) { nodes {'
+              ' __typename ... on LabeledEvent { createdAt label { name } } ... on UnlabeledEvent { createdAt label { name } }'
+              ' ... on ClosedEvent { createdAt } ... on ReopenedEvent { createdAt } } } } } } }')
+STATS_MAX = 600
 _tested = {}   # (token id, issue id) -> time: tested here, hidden from To test while search catches up
 _made = {}     # (token id, issue id) -> (time, tab, item): created here, shown while search catches up
 
@@ -655,6 +661,29 @@ def _plain(text, limit):
     t = re.sub(r'[*_`]{1,3}', '', t)
     t = re.sub(r'\s+', ' ', t).strip()
     return t if len(t) <= limit else t[:limit - 1].rsplit(' ', 1)[0] + '…'
+
+
+_LINK_ONLY = re.compile(r'(part of|closes|fixes|refs?|related:?)\s+\S*#\d+\.?', re.I)
+
+
+def describe(body, limit=400):
+    """The first real paragraph of an issue body as plain text: stops at a line that is just ---,
+    skips headings, bold-only label lines ("**What happens**"), comments and link-only lines."""
+    text = re.sub(r'<!--.*?-->', ' ', body or '', flags=re.S)
+    text = re.sub(r'```.*?```', '\n\n', text, flags=re.S)
+    lines = []
+    for line in text.replace('\r', '').split('\n'):
+        if re.fullmatch(r'\s*-{3,}\s*', line):
+            break
+        if re.match(r'^\s{0,3}#{1,6}\s', line) or re.fullmatch(r'\s*(\*\*|__)[^*_]{1,80}(\*\*|__):?\s*', line):
+            lines.append('')  # a heading ends a paragraph and is not part of one
+            continue
+        lines.append(line)
+    for para in re.split(r'\n\s*\n', '\n'.join(lines)):
+        plain = _plain(para, limit)
+        if plain and not _LINK_ONLY.fullmatch(plain) and re.search(r'\w', plain):
+            return plain
+    return ''
 
 
 def _refs(node):
@@ -677,7 +706,11 @@ def _card(node, tab):
     out = {'id': f"{repo}#{node['number']}", 'repo': repo, 'number': node['number'], 'title': node.get('title'),
            'url': node.get('url'), 'author': author, 'updated_at': node.get('updatedAt'),
            'kind': 'goal' if 'goal' in labels else 'bug' if 'bug' in labels else 'issue',
-           'waiting': 'ready-to-test' in labels, 'approved': 'approved' in labels}
+           'waiting': 'ready-to-test' in labels, 'approved': 'approved' in labels,
+           'assignees': [a.get('login') for a in (node.get('assignees') or {}).get('nodes') or [] if a and a.get('login')],
+           'comments': ((node.get('comments') or {}).get('totalCount')), 'desc': describe(node.get('body'))}
+    if out['comments'] is None:
+        out['comments'] = len((node.get('comments') or {}).get('nodes') or [])
     refs = _refs(node)
     if tab == 'goals':
         linked = [r for r in refs if r['kind'] == 'issue']  # issues that link to or mention the goal
@@ -748,16 +781,12 @@ def board_view(person, args):
             'more': found.get('issueCount', len(items)) > len(nodes) and tab != 'issues', 'login': login}
 
 
-def _view_nodes(token, q, closed_q=None, heavy=False, limit=MAX_ITEMS):
-    """Up to `limit` issues for one view, page by page, plus (if asked) this week's closed count."""
-    nodes, after, total, closed = [], None, 0, {'issueCount': 0, 'nodes': []}
-    rest, first = PAGES[heavy]
+def _view_nodes(token, q, heavy=False, limit=MAX_ITEMS, query=None):
+    """Up to `limit` issues for one view, page by page."""
+    nodes, after, total = [], None, 0
+    rest = query or PAGES[heavy]
     while len(nodes) < limit:
-        if after is None and closed_q:
-            data = graphql(token, first, {'q': q, 'after': None, 'c': closed_q}).get('data') or {}
-            closed = data.get('closed') or closed
-        else:
-            data = graphql(token, rest, {'q': q, 'after': after}).get('data') or {}
+        data = graphql(token, rest, {'q': q, 'after': after}).get('data') or {}
         found = data.get('search') or {}
         total = found.get('issueCount', total)
         nodes += [n for n in found.get('nodes') or [] if n and n.get('number')]
@@ -765,12 +794,19 @@ def _view_nodes(token, q, closed_q=None, heavy=False, limit=MAX_ITEMS):
         if not page.get('hasNextPage') or not page.get('endCursor'):
             break
         after = page['endCursor']
-    return nodes[:limit], total, closed
+    return nodes[:limit], total
+
+
+def _repo_list(arg):
+    if not arg:
+        return []
+    names = [x.strip().lower() for x in str(arg).split(',') if x.strip()]
+    return [n.split('/')[-1] for n in names if NAME.match(n.split('/')[-1])]
 
 
 def board_split(person, args):
-    """0.4 screen: Goals or Bugs in status groups: Ready to test (label ready-to-test), Building (label
-    building), Queued (every other open one), plus how many of that kind closed in the last 7 days."""
+    """0.5 screen: Goals or Bugs in status groups: Waiting for human (label ready-to-test, key `test`),
+    Building (label building), Queued (every other open one), plus all-time bottleneck stats for that kind."""
     _, acct = account_for(person)
     view = args.get('view') or 'goals'
     if view not in ('goals', 'bugs'):
@@ -779,13 +815,11 @@ def board_split(person, args):
     login = (acct.get('login') or '').strip()
     kind = 'label:goal' if view == 'goals' else '-label:goal'
     q = f"org:{org} is:issue is:open {kind} sort:updated-desc"
-    week = (datetime.now(timezone.utc) - timedelta(days=7)).strftime('%Y-%m-%d')
-    cq = f"org:{org} is:issue is:closed {kind} closed:>={week}"
     if args.get('refresh'):
         _forget(acct['token'])
-    nodes, total, closed = _view_nodes(acct['token'], q, cq, heavy=view == 'goals')
+    nodes, total = _view_nodes(acct['token'], q, heavy=view == 'goals')
     if view == 'bugs':  # the few waiting for a test get the heavy fields (what to check)
-        full, _, _ = _view_nodes(acct['token'], q.replace(' sort:', ' label:ready-to-test sort:'), heavy=True, limit=80)
+        full, _ = _view_nodes(acct['token'], q.replace(' sort:', ' label:ready-to-test sort:'), heavy=True, limit=80)
         by = {(n['repository']['nameWithOwner'], n['number']): n for n in full}
         nodes = [by.get((n['repository']['nameWithOwner'], n['number']), n) for n in nodes]
     t, now = _tid(acct['token']), time.time()
@@ -812,15 +846,168 @@ def board_split(person, args):
     for _, _, it in made:
         if it['id'] not in have:
             groups['queued'].insert(0, {**it, 'group': 'queued', 'mine': True})
+    # Stats ride along when cached; otherwise the view asks GET /api/stats right after (keeps the list fast).
+    stats = view_stats(acct['token'], org, view, cached_only=not args.get('with_stats')) or {'pending': True, 'items': [], 'done': None}
+    repos_wanted = _repo_list(args.get('repos'))
+    if repos_wanted:  # optional server-side repo filter (the view filters itself, scripts may use this)
+        keep = lambda i: i['repo'].split('/')[-1].lower() in repos_wanted
+        groups = {k: [i for i in v if keep(i)] for k, v in groups.items()}
+        stats = _filter_stats(stats, keep)
     shown = sum(len(g) for g in groups.values())
     others_test = [c for c in groups['test'] if not c['mine']]
     return {'view': view, 'org': org, 'login': login, 'groups': groups,
-            'counts': {k: len(v) for k, v in groups.items()},
-            'closed_week': {'count': closed.get('issueCount', 0), 'since': week,
-                            'authors': [((x or {}).get('author') or {}).get('login') or '' for x in closed.get('nodes') or []]},
+            'counts': {k: len(v) for k, v in groups.items()}, 'done': stats.get('done', 0),
+            'stats': {**stats, 'summary': None if stats.get('pending') else summarize(stats.get('items', []))},
             'total': total, 'shown': shown, 'more': total > len(nodes),
             # 0.3 shape, kept for older views and scripts
             'test': others_test, 'doing': [c for c in groups['test'] if c['mine']] + groups['building'] + groups['queued']}
+
+
+# ---------- bottleneck stats (label history, cached 5 min per token/org/view) ----------
+
+_stats = {}
+
+
+def _ts(iso):
+    try:
+        return datetime.fromisoformat((iso or '').replace('Z', '+00:00')).timestamp()
+    except ValueError:
+        return None
+
+
+def item_history(node, now=None):
+    """One issue's workflow numbers from its label history. Seconds; None when the step never happened.
+    tries = times labelled ready-to-test; kicks = ready-to-test removed without a close or `approved`
+    within 10 minutes (that is \"Doesn't work\")."""
+    now = now or time.time()
+    ev = sorted(((_ts(e.get('createdAt')), e.get('__typename'), ((e.get('label') or {}).get('name') or '').lower())
+                 for e in (node.get('timelineItems') or {}).get('nodes') or [] if e and _ts(e.get('createdAt'))), key=lambda x: x[0])
+    opened = _ts(node.get('createdAt'))
+    first_build = next((t for t, k, l in ev if k == 'LabeledEvent' and l == 'building'), None)
+    first_ready = next((t for t, k, l in ev if k == 'LabeledEvent' and l == 'ready-to-test'), None)
+    tries = sum(1 for t, k, l in ev if k == 'LabeledEvent' and l == 'ready-to-test')
+    kicks = 0
+    for t, k, l in ev:
+        if k == 'UnlabeledEvent' and l == 'ready-to-test':
+            soon = [x for x in ev if t <= x[0] <= t + 600]
+            if not any(x[1] == 'ClosedEvent' or (x[1] == 'LabeledEvent' and x[2] == 'approved') for x in soon):
+                kicks += 1
+    ready_since = None  # still waiting for a human: since the last ready-to-test label
+    labelled = {}
+    for t, k, l in ev:
+        if k == 'LabeledEvent':
+            labelled[l] = t
+        elif k == 'UnlabeledEvent':
+            labelled.pop(l, None)
+    if (node.get('state') or '').upper() == 'OPEN' and 'ready-to-test' in labelled:
+        ready_since = labelled['ready-to-test']
+    rnd = lambda x: None if x is None else int(x)
+    return {'id': f"{node['repository']['nameWithOwner']}#{node['number']}", 'repo': node['repository']['nameWithOwner'],
+            'author': (node.get('author') or {}).get('login') or '', 'state': (node.get('state') or '').lower(),
+            'wait': rnd(first_build - opened) if first_build and opened else None,
+            'build': rnd(first_ready - first_build) if first_ready and first_build and first_ready >= first_build else None,
+            'tries': tries, 'kicks': kicks, 'waiting_for': rnd(now - ready_since) if ready_since else None}
+
+
+def summarize(items):
+    """Averages over history records (same maths the view runs after its own filters)."""
+    avg = lambda xs: int(sum(xs) / len(xs)) if xs else None
+    tried = [i['tries'] for i in items if i['tries']]
+    waiting = [i['waiting_for'] for i in items if i['waiting_for'] is not None]
+    return {'wait_before_build': avg([i['wait'] for i in items if i['wait'] is not None]),
+            'build_time': avg([i['build'] for i in items if i['build'] is not None]),
+            'waiting_for_human': avg(waiting), 'waiting_longest': max(waiting) if waiting else None,
+            'tries_per_item': round(sum(tried) / len(tried), 2) if tried else None,
+            'kicked_back': sum(i['kicks'] for i in items), 'done': sum(1 for i in items if i['state'] == 'closed'),
+            'items': len(items)}
+
+
+def _filter_stats(stats, keep):
+    if stats.get('pending') or stats.get('error'):
+        return stats
+    items = [i for i in stats.get('items', []) if keep(i)]
+    return {**stats, 'items': items, 'done': sum(1 for i in items if i['state'] == 'closed')}
+
+
+def stats_view(person, args):
+    """GET /api/stats: bottleneck numbers for one view (optionally author= and repos=a,b), 5-minute cache."""
+    _, acct = account_for(person)
+    view = args.get('view') or 'goals'
+    if view not in ('goals', 'bugs'):
+        raise Problem(400, 'view must be goals or bugs.')
+    stats = view_stats(acct['token'], settings()['org'], view)
+    repos_wanted, author = _repo_list(args.get('repos')), (args.get('author') or '').strip().lower()
+    if repos_wanted or author:
+        stats = _filter_stats(stats, lambda i: (not repos_wanted or i['repo'].split('/')[-1].lower() in repos_wanted)
+                              and (not author or i['author'].lower() == author))
+    return {'view': view, **stats, 'summary': summarize(stats.get('items', []))}
+
+
+def view_stats(token, org, view, cached_only=False):
+    key = (_tid(token), org, view)
+    with LOCK:
+        hit = _stats.get(key)
+    if hit and time.time() - hit[0] < STATS_SECONDS:
+        return hit[1]
+    if cached_only:
+        return None
+    kind = 'label:goal' if view == 'goals' else '-label:goal'
+    nodes, total = _view_nodes(token, f'org:{org} is:issue {kind} sort:created-desc', limit=STATS_MAX, query=STATS_PAGE)
+    now = time.time()
+    items = [item_history(n, now) for n in nodes if n.get('repository')]
+    out = {'items': items, 'done': sum(1 for i in items if i['state'] == 'closed'), 'counted': len(items),
+           'total': total, 'computed_at': int(now), 'cache_seconds': STATS_SECONDS}
+    with LOCK:
+        _stats[key] = (now, out)
+    return out
+
+
+# ---------- policy (who writes, who builds) and the builder switch ----------
+
+POLICY_DEFAULT = {'goals': {'authors': sorted(GOAL_AUTHORS) + [a for a in ('defleur-agents',) if a not in GOAL_AUTHORS], 'text': 'Goals: written by {authors}'},
+                  'bugs': {'authors': [], 'text': 'Bugs: anyone in {org} (people + their agents)'},
+                  'builds': {'builders': [BUILDER], 'text': 'Builds: {builders} only'}}
+
+
+def policy(person=None):
+    """Defaults in code; DATA_DIR/policy.json (same shape, any subset) overrides them so the lists can be edited."""
+    try:
+        over = json.loads((DATA / 'policy.json').read_text())
+    except (FileNotFoundError, ValueError, OSError):
+        over = {}
+    out = {k: dict(v) for k, v in POLICY_DEFAULT.items()}
+    for k in out:
+        if isinstance(over, dict) and isinstance(over.get(k), dict):
+            out[k].update({a: b for a, b in over[k].items() if isinstance(b, (str, list))})
+    org = settings()['org']
+    members = None
+    try:
+        _, acct = account_for(person)
+        members = sorted(m.get('login') for m in gh(acct['token'], 'GET', f'/orgs/{org}/members?per_page=100') if m.get('login'))
+    except Problem:
+        pass
+    lines = [out['goals']['text'].format(authors=', '.join(out['goals']['authors']), org=org),
+             out['bugs']['text'].format(org=org, authors=', '.join(out['bugs']['authors'])),
+             out['builds']['text'].format(builders=', '.join(out['builds']['builders']), org=org)]
+    return {**out, 'org': org, 'members': members, 'lines': lines, 'editable_file': 'DATA_DIR/policy.json'}
+
+
+def builder_status():
+    b = _read('builder.json', {})
+    b = b if isinstance(b, dict) else {}
+    return {'running': bool(b.get('running')), 'state': 'Running' if b.get('running') else 'Paused',
+            'updated_at': b.get('updated_at'), 'updated_by': b.get('updated_by'), 'connected': False,
+            'note': 'Not connected to the builder yet: this switch only records the wish. The builder host will poll GET /api/builder.'}
+
+
+def builder_set(person, args, agent=False):
+    if not isinstance(args.get('running'), bool):
+        raise Problem(400, 'running must be true or false.')
+    _owner_request(args, agent, 'start or pause the builder')
+    who = 'agent' if agent else ((accounts()['people'].get(person_key(person)) or {}).get('login') or person_key(person))
+    with LOCK:
+        _write('builder.json', {'running': args['running'], 'updated_at': int(time.time()), 'updated_by': who})
+    return builder_status()
 
 
 # ---------- one issue in full, on tap (rendered by GitHub, cleaned here) ----------
@@ -1024,6 +1211,8 @@ TOOLS = [
     {'name': 'board_add_goal', 'description': 'HUMANS OPEN GOALS. Use only when a human explicitly asked you to add this goal for them; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string'}, 'done': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Done-list lines (1-20).'}, 'body': {'type': 'string'}, **ASKED}, 'required': ['repo', 'title', 'done', 'owner_request']}},
     {'name': 'board_accept_bug', 'description': 'ONLY HUMANS ACCEPT BUGS. Adds label accepted only when a human explicitly asked you to; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, **ASKED}, 'required': ['owner_request']}},
     {'name': 'board_close', 'description': 'Close a Bug when a human asked you to (pass their words). Goals are refused: only humans close goals, in the app.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'enum': ['completed', 'not_planned']}, **ASKED}, 'required': ['owner_request']}},
+    {'name': 'builder_status', 'description': 'Is the Wizard OS Builder switch Running or Paused? (Mock-up: not wired to the builder host yet.)', 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'builder_set', 'description': 'Set the Wizard OS Builder switch (running true = Running, false = Paused) only when a human asked; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'running': {'type': 'boolean'}, **ASKED}, 'required': ['running', 'owner_request']}},
     {'name': 'board_reopen', 'description': 'Reopen a Bug when a human asked you to (pass their words). Goals are refused: only humans reopen goals.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, **ASKED}, 'required': ['owner_request']}},
 ]
 CALLS = {
@@ -1035,6 +1224,8 @@ CALLS = {
     'board_accept_bug': lambda a: accept_bug(None, a, agent=True),
     'board_close': lambda a: set_state(None, a, 'closed', agent=True),
     'board_reopen': lambda a: set_state(None, a, 'open', agent=True),
+    'builder_status': lambda a: builder_status(),
+    'builder_set': lambda a: builder_set(None, a, agent=True),
 }
 
 
@@ -1127,6 +1318,12 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, issue_detail(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
             if path == '/api/split':
                 return self.send(200, board_split(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
+            if path == '/api/stats':
+                return self.send(200, stats_view(self.person(), q))
+            if path == '/api/builder':
+                return self.send(200, builder_status())
+            if path == '/api/policy':
+                return self.send(200, policy(self.person()))
             if path == '/api/board':
                 return self.send(200, board_list(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
             if path == '/api/issue':
@@ -1184,6 +1381,7 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/new': lambda: new_item(who, body),
                 '/api/test/works': lambda: tested(who, body, True),
                 '/api/test/fails': lambda: tested(who, body, False),
+                '/api/builder': lambda: builder_set(who, body),
             }
             if path not in routes:
                 return self.send(404, {'error': 'Not found.'})
