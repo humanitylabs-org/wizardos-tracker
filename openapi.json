@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Wizard OS Tracker",
-    "version": "0.12.0",
+    "version": "0.12.1",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged."
   },
   "paths": {
@@ -537,7 +537,7 @@
             "description": "No GitHub account connected / token refused"
           },
           "403": {
-            "description": "GitHub token cannot do that"
+            "description": "Only <person> can close this. (reason not_opener): only the issue's opener may close or reopen it"
           }
         },
         "requestBody": {
@@ -584,7 +584,7 @@
             "description": "No GitHub account connected / token refused"
           },
           "403": {
-            "description": "GitHub token cannot do that"
+            "description": "Only <person> can close this. (reason not_opener): only the issue's opener may close or reopen it"
           }
         },
         "requestBody": {

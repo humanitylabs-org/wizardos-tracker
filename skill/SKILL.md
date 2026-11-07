@@ -1,7 +1,7 @@
 ---
 name: wizard-os-tracker
 description: Use when working with Wizard development Goals and Bugs on GitHub.
-version: 0.12.0
+version: 0.12.1
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -34,3 +34,5 @@ People see the app as **Wizard OS Tracker** (0.7): Goals | Bugs with a small Bui
 Board acts with the GitHub account of the first person who connected on this box; it sees only what that token can see. If no account is connected, ask the owner to open Wizard OS Tracker and connect GitHub. Never ask for the token in chat.
 
 **0.12 team-only, human-only**: the app's screen accepts only active `humanitylabs-org` members signing in with their own GitHub account; agent/builder accounts (oscarhenrycollins, defleur-agents, wizardosbuilder, roster agents) and non-members are refused and signed out, and every human write route re-checks (cached 10 min). Your MCP tools are unchanged. If a person says the Tracker refused them, they need an org owner to add them to humanitylabs-org, or to sign in with their own account instead of their agent's; never sign in for them with an agent token.
+
+0.12.1 (Miguel): **closing (marking Done) and reopening** a goal or a bug is only for the person who opened it (a goal by its opener/author, e.g. James = `jdefleur`; a bug by its opener), signed in with their own account. Anyone else gets 403 "Only <person> can close this." (`reason: not_opener`) and nothing is sent to GitHub; list rows carry `can_close` (the view has no close control for anyone else; today it has none at all, closing happens on GitHub). Agents cannot do it in the human UI (refused at sign-in); `board_close`/`board_reopen` keep refusing goals, and for bugs the box account's person must be the opener. Builder switch, targets and Try it stay team-member-only (0.12). **GitHub permissions are the real enforcement** (agents have Triage, only the builder has Write, Owners are Miguel and James); the Tracker mirrors them so nobody is offered a button GitHub would refuse or that isn't theirs. 0.12.1 also trusts loopback Hosts on any port and the in-network names (`wizard-os-tracker:8799`, `board:8799`) so wam's health check at `127.0.0.1:<APP_PORT>` passes after a rename.

@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'wizard-os-tracker'  # 0.12: id follows the name (was board; renamed_from in wizard.md)
-VERSION = '0.12.0'
+VERSION = '0.12.1'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -675,6 +675,14 @@ def set_state(person, args, state, agent=False):
     cur = _current(acct, full, number)
     if agent and 'goal' in [l.get('name', '').lower() for l in cur.get('labels') or []]:
         raise Problem(403, 'Agents never close or reopen goals; only humans do, in the app.')
+    if True:  # humans in the app, and agents for bugs (through the box's account, whose person must be the opener)
+        # 0.12.1 (Miguel): a goal or bug is closed (marked Done) or reopened only by the person who opened it,
+        # signed in with their own account (agents are refused in the human UI already). GitHub permissions
+        # (Triage for agents, Write only for the builder, Owners Miguel and James) are the real enforcement.
+        opener = ((cur.get('user') or {}).get('login') or '')
+        if not same_person(opener, acct.get('login') or ''):
+            who = person_of(opener) or 'whoever opened it'
+            raise Problem(403, f"Only {who} can {'close' if state == 'closed' else 'reopen'} this.", 'not_opener')
     _owner_request(args, agent, 'close or reopen issues')
     if cur.get('state') != state:
         patch = {'state': state}
@@ -1039,13 +1047,13 @@ def board_split(person, args):
         else:
             group = 'building' if 'building' in names else 'queued'
             card = _card(n, 'goals' if view == 'goals' else 'issues')
-        card.update(group=group, mine=mine, opener=person_of(author, base), created_at=n.get('createdAt'),
+        card.update(group=group, mine=mine, can_close=mine, opener=person_of(author, base), created_at=n.get('createdAt'),
                     labels=[l['name'] for l in (n.get('labels') or {}).get('nodes') or []])
         groups[group].append(card)
     have = {i['id'] for g in groups.values() for i in g}
     for _, _, it in made:
         if it['id'] not in have:
-            groups['queued'].insert(0, {**it, 'group': 'queued', 'mine': True})
+            groups['queued'].insert(0, {**it, 'group': 'queued', 'mine': True, 'can_close': True})
     # Stats ride along when cached; otherwise the view asks GET /api/stats right after (keeps the list fast).
     stats = view_stats(acct['token'], org, view, cached_only=not args.get('with_stats')) or {'pending': True, 'items': [], 'done': None}
     repos_wanted = _repo_list(args.get('repos'))
@@ -1879,13 +1887,18 @@ def _csv(name):
 # Who may talk to this app. Trust never comes from the request itself: the Host must be one this app
 # was configured for (stops DNS rebinding), and a browser Origin on writes must be configured too.
 _LOOPBACK = {f"127.0.0.1:{os.environ.get('PORT', '8799')}", f"localhost:{os.environ.get('PORT', '8799')}"}
-TRUSTED_HOSTS = _csv('WIZARD_TRUSTED_HOSTS') | _LOOPBACK
+# 0.12.1: in-network names (the app id and the old id) are always trusted, and loopback on any port (the host
+# publishes the app on its own APP_PORT; health checks and the agent use 127.0.0.1:<APP_PORT>).
+_IN_NETWORK = {f"{n}:{os.environ.get('PORT', '8799')}" for n in ('wizard-os-tracker', 'board')}
+_LOOPBACK_HOST = re.compile(r'^(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?$')
+TRUSTED_HOSTS = _csv('WIZARD_TRUSTED_HOSTS') | _LOOPBACK | _IN_NETWORK
 TRUSTED_ORIGINS = _csv('WIZARD_TRUSTED_ORIGINS') | {'http://' + h for h in _LOOPBACK}
 
 
 class Handler(BaseHTTPRequestHandler):
     def refused(self, write=False):
-        if (self.headers.get('Host') or '').lower() not in TRUSTED_HOSTS:
+        host = (self.headers.get('Host') or '').lower()
+        if host not in TRUSTED_HOSTS and not _LOOPBACK_HOST.match(host):
             self.send(403, {'error': 'Unknown host.'})
             return True
         if write:

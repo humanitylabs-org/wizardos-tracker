@@ -10,8 +10,8 @@
     "utilities"
   ],
   "description": "Two views over a GitHub organisation, Goals and Bugs, each showing the assembly line Queued \u2192 Building \u2192 Review \u2192 Done as big numbers with arrows, each bin with its typical time range and a target tick and the return arrow with the kick-back rate (tap a bin to filter to that stage; under each bin its shared target, editable, and \u24d8 for who does it), a Builder switch (mock-up), Who and repo chip filters (stable order) and a sort on Bugs, and a Try it switch on items in Review (mock-up). Tap an issue to read it and its comments in the app. Each person signs in with their own GitHub token. Team members only: you sign in with your own GitHub account and must be an active member of humanitylabs-org; agent accounts use the MCP tools instead.",
-  "tipi_version": 17,
-  "version": "0.12.0",
+  "tipi_version": 18,
+  "version": "0.12.1",
   "source": "https://github.com/oscarhenrycollins/wizard-board",
   "exposable": false,
   "supported_architectures": [
@@ -19,7 +19,7 @@
     "arm64"
   ],
   "created_at": 1793845776995,
-  "updated_at": 1794033055758,
+  "updated_at": 1794033686013,
   "dynamic_config": true,
   "min_tipi_version": "4.8.0",
   "uid": 1000,
