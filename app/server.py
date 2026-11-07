@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'wizard-os-tracker'  # 0.12: id follows the name (was board; renamed_from in wizard.md)
-VERSION = '0.12.1'
+VERSION = '0.12.2'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -124,6 +124,14 @@ def account_for(person=None, agent=False):
 # ---------- 0.12: team-only, human-only (the human UI; MCP tools are unchanged) ----------
 
 _members = {}  # (token id, org, login) -> (checked at, member?)
+_limited = set()  # keys whose token could not read the org membership API (403), for a clearer refusal
+
+
+def not_member_problem(token, login):
+    if (_tid(token), TEAM_ORG.lower(), (login or '').lower()) in _limited:
+        return Problem(403, NOT_MEMBER + f' If you are on the team already, make the token with Resource owner {TEAM_ORG} '
+                       '(or make your membership public on GitHub), then sign in again.', 'not_member')
+    return Problem(403, NOT_MEMBER, 'not_member')
 
 
 def agent_logins(base=None):
@@ -205,7 +213,7 @@ def team_member(token, login, fresh=False):
     if not ok:
         g = _gql_member(token)
         if g == 'bad' or code == 401:
-            raise Problem(401, 'GitHub refused this token (wrong or expired). Connect again with a new one.')
+            raise Problem(401, 'GitHub says your saved token no longer works (it was revoked, regenerated or has expired). Make a new token and sign in again.', 'token_dead')
         if g is True:
             ok = True
         elif g is False:
@@ -220,6 +228,8 @@ def team_member(token, login, fresh=False):
             answered = answered or code3 in (204, 404)
         elif code2 == 404:
             answered = True
+    if not ok and code == 403:
+        _limited.add(key)  # the token can't read org membership (scope/resource owner): say so, don't blame the person
     if not ok and not answered:
         if hit:
             return hit[1]
@@ -250,7 +260,7 @@ def _check_person(key, acct):
         raise Problem(403, NOT_HUMAN, 'agent')
     if not team_member(acct['token'], login):
         _sign_out(key, 'not_member')
-        raise Problem(403, NOT_MEMBER, 'not_member')
+        raise not_member_problem(acct['token'], login)
 
 
 def gate(person):
@@ -301,7 +311,7 @@ def gh(token, method, path, body=None, cache=True, accept='application/vnd.githu
         except ValueError:
             msg = ''
         if e.code == 401:
-            raise Problem(401, 'GitHub refused this token (wrong or expired). Connect again with a new one.') from None
+            raise Problem(401, 'GitHub says your saved token no longer works (it was revoked, regenerated or has expired). Make a new token and sign in again.', 'token_dead') from None
         if e.code in (403, 429) and 'rate limit' in msg.lower():
             raise Problem(429, 'GitHub rate limit reached. Try again in a minute.') from None
         if e.code in (403, 404):
@@ -354,7 +364,7 @@ def connect(person, args):
     if is_agent_login(login):
         raise Problem(403, NOT_HUMAN, 'agent')
     if not team_member(token, login):
-        raise Problem(403, NOT_MEMBER, 'not_member')
+        raise not_member_problem(token, login)
     kind = 'fine-grained' if token.startswith('github_pat_') else 'classic' if token.startswith('ghp_') else 'token'
     acct = {'token': token, 'login': user.get('login'), 'name': user.get('name'), 'avatar_url': user.get('avatar_url'),
             'html_url': user.get('html_url'), 'kind': kind, 'scopes': scopes, 'saved_at': int(time.time())}
@@ -382,17 +392,19 @@ def disconnect(person):
 
 
 def status(person=None):
-    refused = None
+    refused = notice = None
+    dead = False
     try:
         gate(person)
     except Problem as e:
         if e.reason in ('agent', 'not_member'):
             refused = {'reason': e.reason, 'message': e.message}
-        elif e.code != 401:
-            raise
+        elif e.reason == 'token_dead':
+            dead, notice = True, e.message  # kept on file; a new sign-in replaces it
+        # anything else (GitHub down, 502): the session stays as it is
     a = accounts()
-    acct = a['people'].get(person_key(person))
-    return {'refused': refused, 'team_org': TEAM_ORG, 'connected': bool(acct and acct.get('token')), 'account': public_account(acct) if acct else None,
+    acct = None if dead else a['people'].get(person_key(person))
+    return {'refused': refused, 'notice': notice, 'team_org': TEAM_ORG, 'connected': bool(acct and acct.get('token')), 'account': public_account(acct) if acct else None,
             'org': settings()['org'], 'token_url': TOKEN_URL,
             'agent_account': (a['people'].get(a.get('default')) or {}).get('login'), 'version': VERSION,
             'can_goal': bool(acct and (acct.get('login') or '').lower() in GOAL_AUTHORS),
@@ -682,7 +694,8 @@ def set_state(person, args, state, agent=False):
         opener = ((cur.get('user') or {}).get('login') or '')
         if not same_person(opener, acct.get('login') or ''):
             who = person_of(opener) or 'whoever opened it'
-            raise Problem(403, f"Only {who} can {'close' if state == 'closed' else 'reopen'} this.", 'not_opener')
+            kind = 'goal' if 'goal' in [l.get('name', '').lower() for l in cur.get('labels') or []] else 'bug'
+            raise Problem(403, f"Only {who} can {'close' if state == 'closed' else 'reopen'} this {kind}.", 'not_opener')
     _owner_request(args, agent, 'close or reopen issues')
     if cur.get('state') != state:
         patch = {'state': state}
@@ -1737,7 +1750,10 @@ def issue_detail(person, args):
     count = it.get('comments') or 0
     rows = gh(acct['token'], 'GET', f'/repos/{full}/issues/{number}/comments?per_page=100', accept=HTML_JSON) if count else []
     who = lambda x: ((x or {}).get('user') or {}).get('login')
-    return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'title': it.get('title'), 'url': it.get('html_url'),
+    kind = 'goal' if 'goal' in [str(l.get('name', '')).lower() for l in it.get('labels') or [] if isinstance(l, dict)] else 'bug'
+    return {'kind': kind, 'can_close': same_person(who(it), acct.get('login') or ''),
+            'close_rule': f'Only {person_of(who(it)) or "whoever opened it"} can close this {kind}.',
+            'id': f'{full}#{number}', 'repo': full, 'number': number, 'title': it.get('title'), 'url': it.get('html_url'),
             'state': it.get('state'), 'author': who(it), 'opener': person_of(who(it)), 'created_at': it.get('created_at'), 'updated_at': it.get('updated_at'),
             'labels': [l.get('name') for l in it.get('labels') or [] if isinstance(l, dict)],
             'body_html': clean_html(it.get('body_html')),
@@ -1764,7 +1780,7 @@ def tested(person, args, works):
         raise Problem(409, 'This is not waiting for a test any more. Refresh to see the latest.')
     opener = ((cur.get('user') or {}).get('login') or '')
     if same_person(opener, login):
-        raise Problem(403, f'Someone else reviews this: {person_of(opener)} opened it.')
+        raise Problem(403, 'Someone else reviews this — you opened it.', 'own_item')
     if works:
         body = f'Tested: works — @{login}'
     else:

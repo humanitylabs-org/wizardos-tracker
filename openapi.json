@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Wizard OS Tracker",
-    "version": "0.12.1",
+    "version": "0.12.2",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged."
   },
   "paths": {

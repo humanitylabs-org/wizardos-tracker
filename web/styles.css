@@ -392,3 +392,8 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
 
 /* 0.12: refused sign-in */
 .bd-refused { margin: 0 0 14px; color: var(--ink-2, inherit); line-height: 1.45; }
+.bd-acct { display: flex; justify-content: flex-end; align-items: baseline; gap: var(--wz-space-2); margin: 0 0 var(--wz-space-2); font-size: var(--wz-text-xs, .75rem); color: var(--ink-3); }
+.bd-acct-act { border: 0; background: none; padding: 4px 2px; font: inherit; color: var(--accent); cursor: pointer; min-height: 32px; }
+.bd-acct-act:disabled { opacity: .45; }
+.bd-d-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--wz-space-3); flex-wrap: wrap; }
+.bd-d-close[hidden] { display: none !important; }

@@ -63,7 +63,7 @@ async function api(path, data) {
   const r = await fetch(path, init);
   let body = {};
   try { body = await r.json(); } catch (_) {}
-  if (!r.ok) { const e = new Error(body.error || 'Something went wrong. Try again.'); e.status = r.status; e.reason = body.reason; if (body.reason && path !== 'api/connect') { me = { connected: false }; refuse(body.reason, e.message); } throw e; }
+  if (!r.ok) { const e = new Error(body.error || 'Something went wrong. Try again.'); e.status = r.status; e.reason = body.reason; if ((body.reason === 'agent' || body.reason === 'not_member') && path !== 'api/connect') { me = { connected: false }; refuse(body.reason, e.message); } throw e; }
   return body;
 }
 function hold(on) {
@@ -82,13 +82,21 @@ function pop(anchor, title, text) {
   const p = el('pop');
   if (popFor === anchor && !p.hidden) return unpop();
   p.classList.remove('bd-te');
+  // 0.12.2: inside an open sheet the popover must live in the dialog (the top layer), or it renders underneath
+  const host = anchor.closest('dialog[open]') || document.body;
+  if (p.parentNode !== host) host.append(p);
   p.replaceChildren(...(title ? [make('b', '', title)] : []), ...[].concat(text).filter(Boolean).map(t => typeof t === 'string' ? make('span', '', t) : t));
   p.hidden = false; popFor = anchor;
   const r = anchor.getBoundingClientRect(), w = Math.min(260, innerWidth - 24);
   p.style.width = w + 'px';
+  // a sheet can be the containing block of a fixed element inside it: place, measure, correct
   p.style.left = Math.max(12, Math.min(innerWidth - w - 12, r.left + r.width / 2 - w / 2)) + 'px';
   const below = r.bottom + 8, h = p.offsetHeight;
   p.style.top = (below + h > innerHeight - 8 ? Math.max(8, r.top - h - 8) : below) + 'px';
+  if (host !== document.body) {
+    const want = { left: parseFloat(p.style.left), top: parseFloat(p.style.top) }, got = p.getBoundingClientRect();
+    p.style.left = (want.left * 2 - got.left) + 'px'; p.style.top = (want.top * 2 - got.top) + 'px';
+  }
   p.classList.toggle('up', below + h > innerHeight - 8);
 }
 // 0.11: Done and the line stats count items closed since the reset date (policy `since`).
@@ -125,11 +133,31 @@ function refuse(reason, message) {
 }
 function show(s) {
   me = s;
+  account(s);
   if (s.refused && !s.connected) return refuse(s.refused.reason, s.refused.message);
   const on = !!s.connected;
   el('refused').hidden = true;
   el('signin').hidden = on; el('board').hidden = !on; el('loading').hidden = true;
+  if (!on && s.notice) say(s.notice, 'error');
 }
+// 0.12.2: one tiny account control, top right. Signed in: "Signed in as <name>" and Sign out; signed out: Sign in.
+function account(s) {
+  const on = !!(s && s.connected), a = (s && s.account) || {};
+  el('acct-name').textContent = on ? 'Signed in as ' + (a.name || a.login || 'you') : '';
+  el('acct-name').hidden = !on;
+  el('acct-act').textContent = on ? 'Sign out' : 'Sign in';
+}
+el('acct-act').onclick = async () => {
+  unpop();
+  if (!(me && me.connected)) {
+    el('refused').hidden = true; el('board').hidden = true; el('loading').hidden = true; el('signin').hidden = false;
+    return el('token').focus();
+  }
+  const b = el('acct-act'); b.disabled = true;
+  try { show(await api('api/disconnect', {})); say(''); }
+  catch (err) { pop(b, '', err.message); }
+  finally { b.disabled = false; }
+};
 el('refused-back').onclick = () => { el('refused').hidden = true; el('signin').hidden = false; el('token').focus(); };
 el('connect-form').onsubmit = async e => {
   e.preventDefault();
@@ -534,7 +562,7 @@ function trySwitch(i) {
       const r = await api('api/try', { repo: i.repo, number: i.number, on: next });
       tries = Object.fromEntries(Object.keys(r.items || {}).map(x => [x, true]));
       if (next) pop(b, '', 'Mock-up for now. On a Wizard set to For testers this switches it on; if it’s behind, it asks you to update first.'); else unpop();
-    } catch (err) { b.setAttribute('aria-checked', String(!next)); if (next) delete tries[k]; say(err.message, 'error'); }
+    } catch (err) { b.setAttribute('aria-checked', String(!next)); if (next) delete tries[k]; pop(b, '', err.message); }
     finally { b.disabled = false; }
   };
   return b;
@@ -590,7 +618,7 @@ el('builder').onclick = async () => {
   if (!builderOn) return pop(t, '', 'Not connected to the builder yet');  // stops it: stays Paused
   t.disabled = true;
   try { showBuilder(await api('api/builder', { running: false })); }
-  catch (err) { say(err.message, 'error'); }
+  catch (err) { pop(t, '', err.status === 403 ? (err.message || 'Only team members can pause the builder.') : err.message); }
   finally { t.disabled = false; }
 };
 function loadSide() {
@@ -606,15 +634,16 @@ function testCard(t, kind) {
   if (kind === 'goals' && (t.assignees || []).length > 1) top.classList.add('multi');
   if (t.check) c.append(make('p', 'bd-check' + (kind === 'bugs' ? ' one' : ''), t.check));
   c.append(make('p', 'bd-hint', [repoName(t.repo), t.mine ? 'you' : nameOf(t.author) || t.opener || '', kind === 'bugs' ? age(t.created_at) : '', `${t.comments || 0} comments`].filter(Boolean).join(' · ')));
-  if (t.mine) {  // nobody reviews what they (or their own agent) opened
-    c.classList.add('mine');
-    c.append(make('p', 'bd-mine', 'Someone else reviews this'));
-    return c;
-  }
+  // 0.12.2: the same buttons for everyone; on your own item (or your agent's) they explain who reviews it.
   const btns = make('div', 'bd-btns');
   const ok = make('button', 'wz-button', 'Works'); ok.type = 'button';
   const no = make('button', 'wz-button secondary', 'Doesn’t work'); no.type = 'button';
   btns.append(ok, no); c.append(btns);
+  if (t.mine) {
+    const why = e => { e.preventDefault(); pop(e.currentTarget, '', 'Someone else reviews this — you opened it.'); };
+    ok.onclick = why; no.onclick = why;
+    return c;
+  }
   const status = make('p', 'wz-status'); c.append(status);
   const busy = on => c.querySelectorAll('button, textarea').forEach(x => { x.disabled = on; });
   const done = msg => {
@@ -626,7 +655,7 @@ function testCard(t, kind) {
   ok.onclick = async () => {
     busy(true); status.textContent = '';
     try { await api('api/test/works', { repo: t.repo, number: t.number }); done('Thanks — marked as working.'); }
-    catch (err) { status.textContent = err.message; busy(false); }
+    catch (err) { busy(false); if (err.status === 403) pop(ok, '', err.message); else status.textContent = err.message; }
   };
   no.onclick = () => {
     const f = make('form', 'bd-fail'); f.autocomplete = 'off';
@@ -687,6 +716,7 @@ function openDetail(i) {
   el('d-labels').textContent = '';
   roles(i);
   el('d-body').replaceChildren(make('p', 'bd-empty', 'Loading…'));
+  closeCtl(null);
   el('d-comments').replaceChildren(); el('d-comments-h').hidden = true;
   itemFlow(i);
   WzSheet.open(dlg);
@@ -697,7 +727,30 @@ function openDetail(i) {
     .then(d => { details.set(i.id, { at: Date.now(), data: d }); if (openId === i.id) fill(d); })
     .catch(err => { if (openId === i.id) el('d-body').replaceChildren(make('p', 'wz-status error', err.message)); });
 }
+// 0.12.2: Mark done / Reopen shows for everyone; only the opener may use it (the server refuses anyone else).
+let detailNow = null;
+function closeCtl(d) {
+  const b = el('d-close');
+  detailNow = d;
+  b.hidden = !d || !d.state;
+  if (d && d.state) b.textContent = d.state === 'closed' ? 'Reopen' : 'Mark done';
+}
+el('d-close').onclick = async () => {
+  const d = detailNow, b = el('d-close');
+  if (!d) return;
+  const closing = d.state !== 'closed';
+  if (!d.can_close) return pop(b, '', closing ? d.close_rule : d.close_rule.replace(' close ', ' reopen '));
+  b.disabled = true;
+  try {
+    await api(closing ? 'api/issue/close' : 'api/issue/reopen', { repo: d.repo, number: d.number });
+    details.delete(d.id); toast(closing ? 'Marked done.' : 'Reopened.');
+    WzSheet.close ? WzSheet.close(el('detail')) : el('detail').close();
+    setTimeout(() => load(view, true), 800);
+  } catch (err) { pop(b, '', err.message); }
+  finally { b.disabled = false; }
+};
 function fill(d) {
+  closeCtl(d);
   el('d-title').textContent = d.title;
   el('d-meta').textContent = [`${d.repo}#${d.number}`, d.author && `opened by ${d.author}`, when(d.created_at)].filter(Boolean).join(' · ');
   el('d-labels').textContent = (d.labels || []).join(', ');
@@ -764,7 +817,7 @@ function drawItemFlow(f) {
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizard-os-tracker', version: '0.12.1' });
+  WizardApp.ready({ name: 'wizard-os-tracker', version: '0.12.2' });
   WizardApp.back.register({ canGoBack: () => false, back: () => false });
 }
 for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));
