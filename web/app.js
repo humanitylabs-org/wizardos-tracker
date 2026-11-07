@@ -1,7 +1,7 @@
 'use strict';
-// Wizard OS Tracker 0.5: Goals | Bugs; the builder switch and policy; a pipeline (Queued → Building →
-// Waiting for human, Done); bottleneck stats; Everyone ▾ and repo filters; status groups with the full
-// issue in a sheet on tap. Creating, accepting and closing are said in chat with the agent.
+// Wizard OS Tracker 0.6: Goals | Bugs; the builder switch; the workflow as three hand-off steps
+// (1 Open → 2 Build → 3 Review, then Done) with who does each; bottleneck stats; Everyone ▾ and repo
+// filters; status groups with the full issue in a sheet on tap. Creating and closing are said in chat.
 const el = id => document.getElementById(id);
 const make = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 const link = (cls, href) => { const a = make('a', cls); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; return a; };
@@ -9,7 +9,14 @@ const EMPTY = { goals: 'No open goals.', bugs: 'No open bugs. Nice.' };
 const GROUPS = ['test', 'building', 'queued'];
 let me = null, view = location.hash === '#bugs' ? 'bugs' : 'goals', gen = 0, held = null, lastLoad = 0, who = '';
 const NO_DATA = 'starts once the builder runs';
-const STAGES = [['queued', 'Queued'], ['building', 'Building'], ['test', 'Waiting for human']];
+// Fallback steps if the server is older; normally GET api/split returns `steps` built from the policy.
+const STEPS = {
+  goals: [{ key: 'open', n: 1, name: 'Open', group: 'queued', role: 'James', count_label: 'Queued' },
+          { key: 'build', n: 2, name: 'Build', group: 'building', role: 'Wizard OS Builder', count_label: 'Building' },
+          { key: 'review', n: 3, name: 'Review', group: 'test', role: 'Team, not the opener', count_label: 'Waiting for review' }],
+};
+STEPS.bugs = STEPS.goals.map((x, n) => n ? x : { ...x, role: 'Anyone on the team' });
+const COUNT_WORD = { queued: 'queued', building: 'building', test: 'waiting' };
 const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (_) { return null; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} } };
 const picked = { goals: new Set(store.get('board.repos.goals') || []), bugs: new Set(store.get('board.repos.bugs') || []) };
@@ -81,7 +88,7 @@ sw.addEventListener('click', e => {
   for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x === b));
   hold(false);
   if (cache[view]) render(cache[view]);
-  else { for (const g of GROUPS) el('sec-' + g).hidden = true; el('totals').textContent = ''; el('pipe').replaceChildren(); el('stats').replaceChildren(); el('empty').hidden = false; el('empty').textContent = 'Loading…'; }
+  else { for (const g of GROUPS) el('sec-' + g).hidden = true; el('totals').textContent = ''; el('steps').replaceChildren(); el('stats').replaceChildren(); el('empty').hidden = false; el('empty').textContent = 'Loading…'; }
   el('scroll').scrollTop = 0;
   load(view);
 });
@@ -143,17 +150,15 @@ function render(d) {
   const keep = i => byWho(i) && byRepo(i);
   const groups = Object.fromEntries(GROUPS.map(g => [g, d.groups[g].filter(keep)]));
   const st = d.stats || {}, hist = (st.items || []).filter(keep);
-  pipeline(groups, st.pending || st.error ? null : hist.filter(i => i.state === 'closed').length, st);
+  flow(d, groups, st.pending || st.error ? null : hist.filter(i => i.state === 'closed').length, st);
   stats(hist, st);
   el('totals').textContent = d.more ? `showing ${d.shown} of ${d.total}` : '';
   for (const g of GROUPS) {
     const list = groups[g];
     el('sec-' + g).hidden = !list.length;
     el('n-' + g).textContent = list.length || '';
-    if (g === 'test') {  // others' work gets Works / Doesn't work; your own waits quietly in rows below
-      const mine = list.filter(i => i.mine), box = make('div', 'bd-list rows');
-      box.append(...mine.map(i => row(i, d.view)));
-      el('list-test').replaceChildren(...list.filter(i => !i.mine).map(testCard), ...(mine.length ? [box] : []));
+    if (g === 'test') {  // others' work first (Works / Doesn't work); what you or your agent opened says someone else reviews it
+      el('list-test').replaceChildren(...list.filter(i => !i.mine).map(testCard), ...list.filter(i => i.mine).map(testCard));
     } else el('list-' + g).replaceChildren(...list.map(i => row(i, d.view)));
   }
   const none = !GROUPS.some(g => groups[g].length);
@@ -161,20 +166,48 @@ function render(d) {
   el('empty').textContent = who || chosen.size ? 'Nothing open here with these filters.' : EMPTY[d.view];
 }
 
-function pipeline(groups, done, st) {
+// The workflow: three hand-off steps in one row, each with its count and who does it; tap for the full list.
+let steps = null;
+function flow(d, groups, done, st) {
+  steps = d.steps && d.steps.length === 3 ? d.steps : STEPS[d.view];
   const out = [];
-  STAGES.forEach(([g, label], n) => {
+  steps.forEach((x, n) => {
     if (n) { const ar = make('li', 'bd-arrow', '→'); ar.setAttribute('aria-hidden', 'true'); out.push(ar); }
-    const li = make('li', 'bd-stage' + (groups[g].length ? ' on' : ''));
-    li.dataset.stage = g;
-    li.append(make('span', 'bd-stage-n', String(groups[g].length)), make('span', 'bd-stage-l', label));
-    out.push(li);
+    const count = groups[x.group].length;
+    const li = make('li', 'bd-stepli');
+    const b = make('button', 'bd-step' + (count ? ' on' : '')); b.type = 'button';
+    b.dataset.step = x.key; b.setAttribute('aria-haspopup', 'dialog');
+    b.setAttribute('aria-label', `Step ${x.n}, ${x.name}: ${x.role}. ${count} ${x.count_label.toLowerCase()}. Who does this?`);
+    const top = make('span', 'bd-step-top');
+    const nm = make('span', 'bd-step-name'); nm.append(make('i', 'bd-step-k', String(x.n)), document.createTextNode(x.name));
+    top.append(nm, make('span', 'bd-step-n', String(count)));
+    b.append(top, make('span', 'bd-step-role', x.role), make('span', 'bd-step-c', COUNT_WORD[x.group]));
+    b.onclick = () => openStep(x);
+    li.append(b); out.push(li);
   });
-  const dn = make('li', 'bd-stage bd-done');
-  dn.append(make('span', 'bd-stage-n', done == null ? '—' : String(done)), make('span', 'bd-stage-l', 'Done'));
+  el('steps').replaceChildren(...out);
+  const opener = steps[0].role === 'Anyone on the team' ? 'the opener' : steps[0].role;
+  el('works').textContent = `Works → ${opener} closes it`;
+  const dn = el('done');
+  dn.replaceChildren(make('b', '', done == null ? '—' : String(done)), document.createTextNode(' done'));
   dn.title = st.error ? st.error : done == null ? 'Counting…' : 'Closed, all time';
-  out.push(dn);
-  el('pipe').replaceChildren(...out);
+}
+function openStep(x) {
+  el('s-title').textContent = `Step ${x.n} · ${x.name}`;
+  el('s-about').textContent = x.about || '';
+  el('s-who-h').textContent = x.key === 'review' ? 'Who reviews' : x.key === 'build' ? 'Who builds' : 'Who opens and closes';
+  el('s-who').replaceChildren(...(x.who || []).map(p => {
+    const li = make('li', 'bd-s-person');
+    li.append(make('b', '', p.name));
+    const ls = make('span', 'bd-s-logins');
+    ls.append(...(p.logins || []).map(l => make('span', 'bd-s-login' + (l.kind === 'agent' ? ' agent' : ''),
+      l.kind === 'agent' ? `${l.login} · ${l.name ? l.name + ', ' : ''}agent` : l.login)));
+    li.append(ls);
+    return li;
+  }));
+  el('s-except').hidden = !x.except; el('s-except').textContent = x.except ? 'Except ' + x.except + '.' : '';
+  el('s-next').textContent = x.next ? 'Next: ' + x.next : '';
+  WzSheet.open(el('step'));
 }
 
 const dur = sec => {
@@ -200,7 +233,7 @@ function stats(items, st) {
   const rows = [
     ['Wait before builder starts', dur(s.wait), 'Average time from opened to first building label'],
     ['Build time', dur(s.build), 'Average time from first building label to first ready-to-test label'],
-    ['Waiting for human', s.human == null ? null : dur(s.human) + (s.longest > s.human + 60 ? ` · max ${dur(s.longest)}` : ''), 'Average and longest wait of items now labelled ready-to-test'],
+    ['Waiting for review', s.human == null ? null : dur(s.human) + (s.longest > s.human + 60 ? ` · max ${dur(s.longest)}` : ''), 'Average and longest wait of items now labelled ready-to-test'],
     ['Tries per item', s.tries == null ? null : String(Math.round(s.tries * 10) / 10), 'Times an item was labelled ready-to-test, on average'],
     ['Kicked back', s.tried ? String(s.kicks) : null, 'Ready-to-test removed without a close (Doesn\u2019t work)'],
   ];
@@ -234,7 +267,7 @@ function row(i, kind) {
   top.append(bubble(i.comments || 0));
   a.append(top);
   if (i.desc) a.append(make('span', 'bd-desc', i.desc));
-  const waiting = i.mine && i.group === 'test' ? 'waiting for a tester' : '';
+  const waiting = '';
   if (kind === 'goals') {
     const p = i.progress || { done: 0, total: 0 };
     const pct = p.total ? Math.round(100 * p.done / p.total) : 0;
@@ -279,7 +312,7 @@ el('repo-btn').onclick = openRepos;
 el('r-all').onclick = () => { picked[view].clear(); saveRepos(); WzSheet.close(el('repos')); };
 el('r-done').onclick = () => WzSheet.close(el('repos'));
 
-// ---------- builder switch (mock-up: stored on the box; the builder host will poll it) and policy ----------
+// ---------- builder switch (mock-up: stored on the box; the builder host will poll it) ----------
 function showBuilder(b) {
   const t = el('builder');
   t.setAttribute('aria-checked', String(!!b.running));
@@ -293,19 +326,8 @@ el('builder').onclick = async () => {
   catch (err) { showBuilder({ running: !next }); say(err.message, 'error'); }
   finally { t.disabled = false; }
 };
-function showPolicy(p) {
-  el('policy-lines').replaceChildren(...(p.lines || []).map((line, n) => {
-    const li = make('li', '', line);
-    if (n === 1 && p.members && p.members.length) li.title = 'Org members: ' + p.members.join(', ');
-    return li;
-  }));
-}
-const wide = window.matchMedia('(min-width: 641px)');
-const policyOpen = () => { el('policy').open = wide.matches; };
-policyOpen(); if (wide.addEventListener) wide.addEventListener('change', policyOpen);
 function loadSide() {
   api('api/builder').then(showBuilder).catch(() => {});
-  api('api/policy').then(showPolicy).catch(() => {});
 }
 
 function testCard(t) {
@@ -313,7 +335,12 @@ function testCard(t) {
   const h = tapTarget('bd-title', () => openDetail(t)); h.textContent = t.title;
   c.append(h);
   if (t.check) c.append(make('p', 'bd-check', t.check));
-  c.append(make('p', 'bd-hint', [owners(t), repoName(t.repo), `${t.comments || 0} comments`, 'turn it on in Settings › Tweaks'].filter(Boolean).join(' · ')));
+  c.append(make('p', 'bd-hint', [t.opener ? `Opened by ${t.mine ? 'you' : t.opener}` : '', owners(t), repoName(t.repo), `${t.comments || 0} comments`].filter(Boolean).join(' · ')));
+  if (t.mine) {  // nobody reviews what they (or their own agent) opened
+    c.classList.add('mine');
+    c.append(make('p', 'bd-mine', 'Someone else reviews this'));
+    return c;
+  }
   const btns = make('div', 'bd-btns');
   const ok = make('button', 'wz-button', 'Works'); ok.type = 'button';
   const no = make('button', 'wz-button secondary', 'Doesn’t work'); no.type = 'button';
@@ -376,6 +403,11 @@ function prose(html, empty) {
 }
 
 let openId = null;
+function roles(i) {
+  const r = el('d-roles'), who = i.opener || i.author;
+  r.hidden = !who;
+  r.textContent = who ? `Opened by ${who} · reviewed by anyone else on the team` : '';
+}
 function openDetail(i) {
   const dlg = el('detail');
   openId = i.id;
@@ -383,6 +415,7 @@ function openDetail(i) {
   el('d-meta').textContent = [`${i.repo}#${i.number}`, i.author].filter(Boolean).join(' · ');
   el('d-gh').href = i.url;
   el('d-labels').textContent = '';
+  roles(i);
   el('d-body').replaceChildren(make('p', 'bd-empty', 'Loading…'));
   el('d-comments').replaceChildren(); el('d-comments-h').hidden = true;
   WzSheet.open(dlg);
@@ -397,6 +430,7 @@ function fill(d) {
   el('d-title').textContent = d.title;
   el('d-meta').textContent = [`${d.repo}#${d.number}`, d.author && `opened by ${d.author}`, when(d.created_at)].filter(Boolean).join(' · ');
   el('d-labels').textContent = (d.labels || []).join(', ');
+  roles(d);
   el('d-gh').href = d.url;
   el('d-body').replaceChildren(prose(d.body_html, 'No description.'));
   const cs = d.comments || [];
@@ -416,7 +450,7 @@ el('detail').addEventListener('close', () => { openId = null; });
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'board', version: '0.5.0' });
+  WizardApp.ready({ name: 'board', version: '0.6.0' });
   WizardApp.back.register({ canGoBack: () => false, back: () => false });
 }
 for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));

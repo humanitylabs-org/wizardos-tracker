@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Wizard OS Tracker",
-    "version": "0.5.0",
+    "version": "0.6.0",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin."
   },
   "paths": {
@@ -796,7 +796,7 @@
     },
     "/api/test/works": {
       "post": {
-        "summary": "Comment 'Tested: works \u2014 @login', remove ready-to-test, add approved. Does not close.",
+        "summary": "Comment 'Tested: works — @login', remove ready-to-test, add approved. Does not close.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -834,7 +834,7 @@
     },
     "/api/split": {
       "get": {
-        "summary": "Goals or Bugs grouped by status: Waiting for human (ready-to-test, key test), Building (building), Queued (other open). Up to 300 items. Rows carry desc (first paragraph as plain text), assignees, comments (count).",
+        "summary": "Goals or Bugs grouped by status: Waiting for review (ready-to-test, key test), Building (building), Queued (other open). Up to 300 items. Rows carry desc (first paragraph as plain text), assignees, comments (count). Also returns steps (the three workflow steps for this view), me_person, and per item opener (team name of whoever opened it); mine is true when you or your own agent opened it.",
         "parameters": [
           {
             "name": "view",
@@ -948,7 +948,7 @@
         ],
         "responses": {
           "200": {
-            "description": "items [{id, repo, author, state, wait (s opened\u2192first building), build (s first building\u2192first ready-to-test), tries (times labelled ready-to-test), kicks (ready-to-test removed without close/approved within 10 min), waiting_for (s since ready-to-test, open items only)}], done, counted, total, computed_at, summary {wait_before_build, build_time, waiting_for_human, waiting_longest, tries_per_item, kicked_back, done, items}. Null means no data yet."
+            "description": "items [{id, repo, author, state, wait (s opened→first building), build (s first building→first ready-to-test), tries (times labelled ready-to-test), kicks (ready-to-test removed without close/approved within 10 min), waiting_for (s since ready-to-test, open items only)}], done, counted, total, computed_at, summary {wait_before_build, build_time, waiting_for_human, waiting_longest, tries_per_item, kicked_back, done, items}. Null means no data yet."
           }
         }
       }
@@ -994,10 +994,10 @@
     },
     "/api/policy": {
       "get": {
-        "summary": "Who writes Goals and Bugs and who builds. Defaults in code; DATA_DIR/policy.json overrides (keys goals.authors, bugs.text, builds.builders, *.text).",
+        "summary": "The workflow policy: team roster (person -> logins, agents), the builder, who opens each view, and the three steps (Open, Build, Review) per view. Defaults in code; DATA_DIR/policy.json overrides keys team, builder, open.",
         "responses": {
           "200": {
-            "description": "goals, bugs, builds, org, members (org members your token can see, or null), lines (the three display lines)."
+            "description": "version 2; team [{name, logins, agents [{login, name}]}], builder {name, logins}, open {goals, bugs}, steps {goals: [step], bugs: [step]} where step = {key open|build|review, n, name, group queued|building|test, label, count_label, role, who [{name, logins [{login, kind person|agent, name}]}], except, about, next}, me {login, person}, org; 0.5 keys kept: goals.authors, builds.builders, lines."
           }
         }
       }

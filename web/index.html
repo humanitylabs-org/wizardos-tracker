@@ -33,7 +33,7 @@
           <button type="button" role="tab" data-view="bugs" aria-selected="false">Bugs</button>
         </div>
 
-        <!-- Builder switch and who-may-do-what, compact. -->
+        <!-- Builder switch, compact. -->
         <div class="bd-ctl">
           <button type="button" class="bd-toggle" id="builder" role="switch" aria-checked="false" aria-describedby="builder-state">
             <span class="bd-track" aria-hidden="true"><i></i></span>
@@ -41,14 +41,15 @@
             <span class="bd-ctl-state" id="builder-state">Paused</span>
           </button>
           <p class="bd-ctl-note" id="builder-note" hidden>Not connected to the builder yet</p>
-          <details class="bd-policy" id="policy">
-            <summary>Who writes and builds</summary>
-            <ul id="policy-lines"></ul>
-          </details>
         </div>
 
-        <!-- The pipeline: Queued → Building → Waiting for human, then Done (all time). -->
-        <ol class="bd-pipe" id="pipe" aria-label="Pipeline"></ol>
+        <!-- The workflow, three hand-off steps: Open → Build → Review, then Done. Tap a step for who does it. -->
+        <div class="bd-flow" id="flow" role="group" aria-label="How work moves">
+          <ol class="bd-steps" id="steps"></ol>
+          <p class="bd-loop" id="loop"><span class="bd-loop-t">Doesn’t work → back to Build</span></p>
+          <p class="bd-works" id="works"></p>
+          <p class="bd-done" id="done"></p>
+        </div>
         <dl class="bd-stats" id="stats" aria-label="Where work waits"></dl>
 
         <div class="bd-sub">
@@ -58,7 +59,7 @@
         </div>
 
         <section class="bd-sec" id="sec-test" hidden>
-          <h2 class="bd-sec-h">Waiting for human <span class="bd-n" id="n-test"></span></h2>
+          <h2 class="bd-sec-h">Waiting for review <span class="bd-n" id="n-test"></span></h2>
           <div class="bd-list" id="list-test"></div>
         </section>
         <section class="bd-sec" id="sec-building" hidden>
@@ -80,11 +81,21 @@
       <div class="bd-r-list" id="r-list"></div>
       <div class="bd-btns"><button type="button" class="wz-button secondary" id="r-all">All repos</button><button type="button" class="wz-button" id="r-done">Done</button></div>
     </dialog>
+    <!-- One step of the workflow: who does it and what it means. -->
+    <dialog id="step" class="wz-sheet bd-stepsheet" aria-labelledby="s-title">
+      <h2 id="s-title"></h2>
+      <p id="s-about" class="bd-s-about"></p>
+      <h3 class="bd-sec-h bd-s-h" id="s-who-h">Who</h3>
+      <ul id="s-who" class="bd-s-who"></ul>
+      <p id="s-except" class="bd-meta" hidden></p>
+      <p id="s-next" class="bd-s-next"></p>
+    </dialog>
     <!-- The one pop-up: the issue in full. Bottom sheet on phones, side panel on wide screens. -->
     <dialog id="detail" class="wz-sheet bd-detail" aria-labelledby="d-title">
       <h2 id="d-title" class="bd-d-title"></h2>
       <p id="d-meta" class="bd-meta"></p>
       <p id="d-labels" class="bd-meta bd-labels"></p>
+      <p id="d-roles" class="bd-d-roles" hidden></p>
       <div id="d-body" class="bd-d-body"></div>
       <h3 id="d-comments-h" class="bd-sec-h bd-d-h" hidden>Comments <span class="bd-n" id="d-n-comments"></span></h3>
       <ol id="d-comments" class="bd-comments"></ol>

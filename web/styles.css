@@ -1,4 +1,4 @@
-/* Wizard OS Tracker 0.5 layout only. Colours, type and components come from the kit (wizard-ui.css, --wz-* roles). */
+/* Wizard OS Tracker 0.6 layout only. Colours, type and components come from the kit (wizard-ui.css, --wz-* roles). */
 [hidden] { display: none !important; }
 .bd-app { min-height: 100dvh; }
 .bd-scroll { padding-top: var(--wz-space-4); padding-bottom: calc(var(--wz-space-5) + env(safe-area-inset-bottom, 0px)); }
@@ -120,29 +120,69 @@ a.bd-title:hover { text-decoration: underline; }
 .bd-ctl-state { color: var(--ink-3); }
 .bd-toggle[aria-checked="true"] .bd-ctl-state { color: var(--accent); font-weight: 650; }
 .bd-ctl-note { flex-basis: 100%; margin: -4px 0 0; text-align: center; font-size: 12px; color: var(--ink-3); }
-.bd-policy { font-size: 12px; color: var(--ink-3); }
-.bd-policy summary { min-height: 44px; display: flex; align-items: center; cursor: pointer; list-style: none; }
-.bd-policy summary::-webkit-details-marker { display: none; }
-.bd-policy summary::after { content: "▾"; margin-left: 4px; }
-.bd-policy[open] summary::after { content: "▴"; }
-.bd-policy ul { margin: 0 0 4px; padding: 0; list-style: none; display: grid; gap: 2px; text-align: center; }
-@media (min-width: 641px) {
-  .bd-ctl { flex-direction: column; gap: 0; }
-  .bd-policy summary { display: none; }
-  .bd-policy ul { display: flex; flex-wrap: wrap; justify-content: center; gap: 0 18px; }
-}
-@media (max-width: 640px) { .bd-policy { flex-basis: 100%; text-align: center; } .bd-policy summary { justify-content: center; min-height: 32px; } }
+@media (min-width: 641px) { .bd-ctl { flex-direction: column; gap: 0; } }
 
-/* Pipeline: three stage chips joined by arrows, then Done. */
-.bd-pipe { display: flex; flex-wrap: nowrap; align-items: stretch; justify-content: center; gap: 4px; margin: 0 0 var(--wz-space-2); padding: 0; list-style: none; }
-.bd-stage { flex: 1 1 0; max-width: 150px; min-width: 0; display: grid; justify-items: center; gap: 1px; padding: 8px 6px; border: 1px solid var(--line); border-radius: var(--r-tile); background: var(--fill); text-align: center; }
-.bd-stage.on { border-color: var(--line-2); }
-.bd-stage[data-stage="test"].on { border-color: var(--accent); }
-.bd-stage-n { font-size: var(--wz-text-lg); font-weight: 700; line-height: 1.2; color: var(--ink); font-variant-numeric: tabular-nums; }
-.bd-stage:not(.on):not(.bd-done) .bd-stage-n { color: var(--ink-3); }
-.bd-stage-l { font-size: 11px; line-height: 1.25; color: var(--ink-3); font-weight: 600; }
-.bd-arrow { flex: none; align-self: center; color: var(--ink-3); font-size: 13px; }
-.bd-done { flex: 0 1 auto; min-width: 56px; margin-left: 6px; background: none; border-style: dashed; }
+/* 0.6 the workflow: 1 Open → 2 Build → 3 Review (one row), Done at the end; the loop back to Build under it. */
+.bd-flow { display: grid; grid-template-columns: 1fr 18px 1fr 18px 1fr 18px auto; align-items: stretch; column-gap: 2px; margin: 0 0 var(--wz-space-3); }
+.bd-steps { display: contents; list-style: none; }
+.bd-stepli { grid-row: 1; display: flex; min-width: 0; }
+.bd-stepli:nth-child(1) { grid-column: 1; } .bd-stepli:nth-child(3) { grid-column: 3; } .bd-stepli:nth-child(5) { grid-column: 5; }
+.bd-arrow { grid-row: 1; align-self: center; justify-self: center; color: var(--ink-2); font-size: 15px; font-weight: 700; }
+.bd-arrow:nth-child(2) { grid-column: 2; } .bd-arrow:nth-child(4) { grid-column: 4; }
+.bd-step { flex: 1; min-width: 0; display: grid; align-content: start; gap: 3px; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--r-tile); background: var(--fill); color: var(--ink); font: inherit; text-align: left; cursor: pointer; transition: border-color var(--wz-motion-fast) var(--wz-ease), background var(--wz-motion-fast) var(--wz-ease); }
+.bd-step:hover { background: var(--fill-2); }
+.bd-step:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.bd-step.on { border-color: var(--line-2); }
+.bd-step[data-step="review"].on { border-color: var(--accent); }
+.bd-step-top { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.bd-step-name { display: inline-flex; align-items: center; gap: 6px; font-size: var(--wz-text-md); font-weight: 700; }
+.bd-step-k { display: inline-grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; background: var(--fill-2); color: var(--ink-2); font-size: 11px; font-style: normal; font-weight: 700; }
+.bd-step.on .bd-step-k { background: var(--accent); color: var(--on-accent); }
+.bd-step-n { font-size: var(--wz-text-lg); font-weight: 700; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.bd-step:not(.on) .bd-step-n { color: var(--ink-3); }
+.bd-step-role { font-size: var(--wz-text-sm); line-height: 1.3; color: var(--ink-2); font-weight: 600; }
+.bd-step-c { font-size: 11px; color: var(--ink-3); }
+.bd-done { grid-row: 1; grid-column: 7; align-self: center; margin: 0; padding: 6px 10px; border: 1px dashed var(--line-2); border-radius: var(--r-tile); font-size: 12px; color: var(--ink-3); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.bd-done b { color: var(--ink-2); font-size: var(--wz-text-md); }
+.bd-flow::before { content: "→"; grid-row: 1; grid-column: 6; align-self: center; justify-self: center; color: var(--ink-3); font-size: 13px; }
+/* Doesn't work: a U from under Review back up into Build. */
+.bd-loop { grid-row: 2; grid-column: 3 / 6; position: relative; margin: 0 calc(50% - 50%) 0; height: 26px; }
+.bd-loop::before { content: ""; position: absolute; left: 25%; right: 25%; top: 0; height: 12px; border: 1.5px solid var(--ink-3); border-top: 0; border-radius: 0 0 10px 10px; opacity: .7; }
+.bd-loop::after { content: ""; position: absolute; left: calc(25% - 4.5px); top: -1px; border: 5px solid transparent; border-bottom: 6px solid var(--ink-3); border-top: 0; opacity: .7; }
+.bd-loop-t { position: absolute; left: 50%; top: 5px; transform: translateX(-50%); padding: 0 6px; background: var(--wz-base, var(--wz-panel)); font-size: 11px; line-height: 14px; color: var(--ink-2); white-space: nowrap; }
+.bd-works { grid-row: 2; grid-column: 1; margin: 6px 0 0; font-size: 11px; line-height: 1.3; color: var(--ink-2); text-align: center; }
+@media (max-width: 640px) {
+  .bd-flow { grid-template-columns: 1fr 12px 1fr 12px 1fr; column-gap: 1px; }
+  .bd-flow::before { display: none; }
+  .bd-step { padding: 8px 7px; gap: 2px; }
+  .bd-step-name { font-size: var(--wz-text-sm); gap: 4px; }
+  .bd-step-k { width: 16px; height: 16px; font-size: 10px; }
+  .bd-step-n { font-size: var(--wz-text-md); }
+  .bd-step-role { font-size: 11px; font-weight: 600; }
+  .bd-step-c { font-size: 10px; }
+  .bd-arrow { font-size: 12px; }
+  .bd-done { grid-row: 3; grid-column: 1; justify-self: center; margin-top: 4px; padding: 3px 8px; }
+  .bd-loop-t { font-size: 10.5px; }
+}
+
+/* Step sheet: what the step means and exactly who (person + their agents). */
+.bd-s-about { margin: 0 0 var(--wz-space-3); font-size: var(--wz-text-md); line-height: 1.5; color: var(--ink); }
+.bd-s-h { margin-top: var(--wz-space-3); padding: 0; }
+.bd-s-who { list-style: none; margin: 0; padding: 0; display: grid; gap: 2px; }
+.bd-s-person { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; padding: 8px 0; border-top: 1px solid var(--line); }
+.bd-s-person:first-child { border-top: 0; }
+.bd-s-person > b { min-width: 72px; font-size: var(--wz-text-md); }
+.bd-s-logins { display: flex; flex-wrap: wrap; gap: 6px; }
+.bd-s-login { padding: 2px 8px; border-radius: var(--r-pill); background: var(--fill); font-size: 12px; color: var(--ink-2); font-family: var(--wz-font-mono); }
+.bd-s-login.agent { background: none; border: 1px dashed var(--line-2); }
+.bd-stepsheet .bd-meta { margin-top: var(--wz-space-2); }
+.bd-s-next { margin: var(--wz-space-3) 0 0; font-size: var(--wz-text-sm); color: var(--ink-2); }
+.bd-s-next:empty { display: none; }
+
+/* Review cards for what you opened: no buttons, someone else reviews. */
+.bd-card.mine { border-color: var(--line); background: var(--fill); }
+.bd-mine { margin: 0; font-size: var(--wz-text-sm); font-weight: 650; color: var(--ink-2); }
+.bd-d-roles { margin: 6px 0 0; font-size: var(--wz-text-sm); color: var(--ink-2); }
 
 /* Bottleneck stats: plain small numbers, one calm row. */
 .bd-stats { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px 0; margin: 0 0 var(--wz-space-3); }

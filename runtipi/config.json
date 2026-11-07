@@ -3,15 +3,15 @@
   "id": "board",
   "wizard_type": "service",
   "available": true,
-  "short_desc": "Wizard OS Goals and Bugs on GitHub: pipeline, bottlenecks and the full issue on tap.",
+  "short_desc": "Goals and Bugs on GitHub: Open → Build → Review, who does each step, issue on tap.",
   "author": "Humanity Labs",
   "port": 18884,
   "categories": [
     "utilities"
   ],
-  "description": "Two views over a GitHub organisation: Goals and Bugs, each with a Queued \u2192 Building \u2192 Waiting for human pipeline, Done count, bottleneck stats, a Wizard OS Builder on/off switch (mock-up), the who-writes/who-builds policy, and Everyone/repo filters. Tap an issue to read it and its comments in the app. Each person signs in with their own GitHub token.",
-  "tipi_version": 7,
-  "version": "0.5.0",
+  "description": "Two views over a GitHub organisation, Goals and Bugs, each showing the workflow as three hand-off steps (1 Open → 2 Build → 3 Review, then Done) with counts and exactly who may do each step, bottleneck stats, a Wizard OS Builder on/off switch (mock-up), and Everyone/repo filters. Tap an issue to read it and its comments in the app. Each person signs in with their own GitHub token.",
+  "tipi_version": 8,
+  "version": "0.6.0",
   "source": "https://github.com/humanitylabs-org/wizard-board",
   "exposable": false,
   "supported_architectures": [
@@ -19,7 +19,7 @@
     "arm64"
   ],
   "created_at": 1793845776995,
-  "updated_at": 1794021600000,
+  "updated_at": 1794023108743,
   "dynamic_config": true,
   "min_tipi_version": "4.8.0",
   "uid": 1000,

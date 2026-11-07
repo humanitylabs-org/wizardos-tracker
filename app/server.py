@@ -23,7 +23,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'board'
-VERSION = '0.5.0'
+VERSION = '0.6.0'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -805,7 +805,7 @@ def _repo_list(arg):
 
 
 def board_split(person, args):
-    """0.5 screen: Goals or Bugs in status groups: Waiting for human (label ready-to-test, key `test`),
+    """0.6 screen: Goals or Bugs in status groups: Waiting for review (label ready-to-test, key `test`),
     Building (label building), Queued (every other open one), plus all-time bottleneck stats for that kind."""
     _, acct = account_for(person)
     view = args.get('view') or 'goals'
@@ -827,10 +827,11 @@ def board_split(person, args):
         hidden = {i for (k, i), v in _tested.items() if k == t and now - v <= RECENT_SECONDS}
         made = [v for (k, _), v in _made.items() if k == t and now - v[0] <= RECENT_SECONDS and v[1] == ('goals' if view == 'goals' else 'issues')]
     groups = {'test': [], 'building': [], 'queued': []}
+    base = policy_base()
     for n in nodes:
         names = {l['name'].lower() for l in (n.get('labels') or {}).get('nodes') or []}
         author = (n.get('author') or {}).get('login') or ''
-        mine = bool(login) and author.lower() == login.lower()
+        mine = same_person(author, login, base)  # a person and their own agent count as one: they never review it
         iid = f"{n['repository']['nameWithOwner']}#{n['number']}"
         if 'ready-to-test' in names and iid not in hidden:
             group, card = 'test', _card(n, 'test')
@@ -839,7 +840,7 @@ def board_split(person, args):
         else:
             group = 'building' if 'building' in names else 'queued'
             card = _card(n, 'goals' if view == 'goals' else 'issues')
-        card.update(group=group, mine=mine, created_at=n.get('createdAt'),
+        card.update(group=group, mine=mine, opener=person_of(author, base), created_at=n.get('createdAt'),
                     labels=[l['name'] for l in (n.get('labels') or {}).get('nodes') or []])
         groups[group].append(card)
     have = {i['id'] for g in groups.values() for i in g}
@@ -855,7 +856,7 @@ def board_split(person, args):
         stats = _filter_stats(stats, keep)
     shown = sum(len(g) for g in groups.values())
     others_test = [c for c in groups['test'] if not c['mine']]
-    return {'view': view, 'org': org, 'login': login, 'groups': groups,
+    return {'view': view, 'org': org, 'login': login, 'me_person': person_of(login, base), 'steps': steps_for(view, base), 'groups': groups,
             'counts': {k: len(v) for k, v in groups.items()}, 'done': stats.get('done', 0),
             'stats': {**stats, 'summary': None if stats.get('pending') else summarize(stats.get('items', []))},
             'total': total, 'shown': shown, 'more': total > len(nodes),
@@ -962,34 +963,108 @@ def view_stats(token, org, view, cached_only=False):
     return out
 
 
-# ---------- policy (who writes, who builds) and the builder switch ----------
+# ---------- policy (Open -> Build -> Review: who does each step) and the builder switch ----------
 
-POLICY_DEFAULT = {'goals': {'authors': sorted(GOAL_AUTHORS) + [a for a in ('defleur-agents',) if a not in GOAL_AUTHORS], 'text': 'Goals: written by {authors}'},
-                  'bugs': {'authors': [], 'text': 'Bugs: anyone in {org} (people + their agents)'},
-                  'builds': {'builders': [BUILDER], 'text': 'Builds: {builders} only'}}
+# 0.6: the workflow is three hand-off steps, Open -> Build -> Review. The team roster groups GitHub logins by
+# person (a person and their own agents count as one person: nobody reviews what they or their agent opened).
+POLICY_DEFAULT = {
+    'team': [
+        {'name': 'Miguel', 'logins': ['mistermizel'], 'agents': [{'login': 'oscarhenrycollins', 'name': 'Oscar'}]},
+        {'name': 'James', 'logins': ['jdefleur'], 'agents': [{'login': 'defleur-agents', 'name': 'Archimedes'}]},
+        {'name': 'Jan', 'logins': ['JanMesaric'], 'agents': []},
+        {'name': 'Robert', 'logins': ['hacalastudio'], 'agents': []},
+    ],
+    'builder': {'name': 'Wizard OS Builder', 'logins': [BUILDER]},
+    # Who may open and close items in each view: a list of team names, or "team" for everyone on it.
+    'open': {'goals': ['James'], 'bugs': 'team'},
+}
+STEP_TEXT = {
+    'open': {'goals': '{who} opens goals and closes them once they work. Nobody else adds or closes a goal.',
+             'bugs': 'Anyone on the team, or their own agent, opens a bug and closes it once it works.'},
+    'build': 'The Wizard OS Builder writes the code, then labels it ready-to-test and says what to check.',
+    'review': 'Someone on the team other than the opener tries it. Works: the opener closes it. '
+              "Doesn't work: it goes back to Build.",
+}
 
 
-def policy(person=None):
-    """Defaults in code; DATA_DIR/policy.json (same shape, any subset) overrides them so the lists can be edited."""
+def _team_entry(t):
+    if not isinstance(t, dict) or not isinstance(t.get('name'), str):
+        return None
+    logins = [x for x in t.get('logins') or [] if isinstance(x, str) and NAME.match(x)]
+    agents = [a for a in t.get('agents') or [] if isinstance(a, dict) and isinstance(a.get('login'), str) and NAME.match(a['login'])]
+    return {'name': t['name'][:40], 'logins': logins, 'agents': [{'login': a['login'], 'name': str(a.get('name') or '')[:40]} for a in agents]}
+
+
+def policy_base():
+    """Defaults in code; DATA_DIR/policy.json overrides any of team, builder, open."""
     try:
         over = json.loads((DATA / 'policy.json').read_text())
     except (FileNotFoundError, ValueError, OSError):
         over = {}
-    out = {k: dict(v) for k, v in POLICY_DEFAULT.items()}
-    for k in out:
-        if isinstance(over, dict) and isinstance(over.get(k), dict):
-            out[k].update({a: b for a, b in over[k].items() if isinstance(b, (str, list))})
+    over = over if isinstance(over, dict) else {}
+    team = [x for x in (_team_entry(t) for t in (over.get('team') if isinstance(over.get('team'), list) else POLICY_DEFAULT['team'])) if x]
+    b = over.get('builder') if isinstance(over.get('builder'), dict) else POLICY_DEFAULT['builder']
+    builder = {'name': str(b.get('name') or 'Wizard OS Builder')[:40], 'logins': [x for x in b.get('logins') or [BUILDER] if isinstance(x, str)]}
+    opn = dict(POLICY_DEFAULT['open'])
+    if isinstance(over.get('open'), dict):
+        opn.update({k: v for k, v in over['open'].items() if k in ('goals', 'bugs') and (v == 'team' or isinstance(v, list))})
+    return {'team': team, 'builder': builder, 'open': opn}
+
+
+def person_of(login, base=None):
+    """The team name a login belongs to (person or their agent); unknown logins are their own person."""
+    low = (login or '').lower()
+    for t in (base or policy_base())['team']:
+        if low in {x.lower() for x in t['logins']} | {a['login'].lower() for a in t['agents']}:
+            return t['name']
+    return login or ''
+
+
+def same_person(a, b, base=None):
+    return bool(a and b) and person_of(a, base).lower() == person_of(b, base).lower()
+
+
+def _who(t):
+    return {'name': t['name'], 'logins': [{'login': x, 'kind': 'person'} for x in t['logins']]
+            + [{'login': a['login'], 'kind': 'agent', 'name': a['name']} for a in t['agents']]}
+
+
+def steps_for(view, base=None):
+    base = base or policy_base()
+    team = base['team']
+    o = base['open'][view]
+    openers = team if o == 'team' else [t for t in team if t['name'].lower() in {str(n).lower() for n in o}]
+    names = ' and '.join(t['name'] for t in openers) or 'Nobody'
+    return [
+        {'key': 'open', 'n': 1, 'name': 'Open', 'group': 'queued', 'count_label': 'Queued',
+         'role': 'Anyone on the team' if o == 'team' else names, 'who': [_who(t) for t in openers],
+         'about': STEP_TEXT['open'][view].format(who=names), 'next': 'Queued for the builder.'},
+        {'key': 'build', 'n': 2, 'name': 'Build', 'group': 'building', 'label': 'building', 'count_label': 'Building',
+         'role': base['builder']['name'], 'who': [{'name': base['builder']['name'], 'logins': [{'login': x, 'kind': 'agent'} for x in base['builder']['logins']]}],
+         'about': STEP_TEXT['build'], 'next': 'Ready for review (label ready-to-test).'},
+        {'key': 'review', 'n': 3, 'name': 'Review', 'group': 'test', 'label': 'ready-to-test', 'count_label': 'Waiting for review',
+         'role': 'Team, not the opener', 'who': [_who(t) for t in team], 'except': 'whoever opened it (a person and their own agent count as one)',
+         'about': STEP_TEXT['review'], 'next': "Works: the opener closes it. Doesn't work: back to Build."},
+    ]
+
+
+def policy(person=None):
+    base = policy_base()
     org = settings()['org']
-    members = None
+    views = {v: steps_for(v, base) for v in ('goals', 'bugs')}
+    lines = [f"Goals: opened and closed by {views['goals'][0]['role']}",
+             f"Bugs: opened and closed by {views['bugs'][0]['role'].lower()}",
+             f"Build: {base['builder']['name']} only · Review: the team, not the opener"]
+    login = None
     try:
         _, acct = account_for(person)
-        members = sorted(m.get('login') for m in gh(acct['token'], 'GET', f'/orgs/{org}/members?per_page=100') if m.get('login'))
+        login = acct.get('login')
     except Problem:
         pass
-    lines = [out['goals']['text'].format(authors=', '.join(out['goals']['authors']), org=org),
-             out['bugs']['text'].format(org=org, authors=', '.join(out['bugs']['authors'])),
-             out['builds']['text'].format(builders=', '.join(out['builds']['builders']), org=org)]
-    return {**out, 'org': org, 'members': members, 'lines': lines, 'editable_file': 'DATA_DIR/policy.json'}
+    return {'version': 2, **base, 'org': org, 'steps': views, 'me': {'login': login, 'person': person_of(login, base) if login else None},
+            # 0.5 shape, kept for scripts
+            'goals': {'authors': [x['login'] for w in views['goals'][0]['who'] for x in w['logins']]},
+            'builds': {'builders': base['builder']['logins']}, 'lines': lines, 'editable_file': 'DATA_DIR/policy.json'}
 
 
 def builder_status():
@@ -1129,7 +1204,7 @@ def issue_detail(person, args):
     rows = gh(acct['token'], 'GET', f'/repos/{full}/issues/{number}/comments?per_page=100', accept=HTML_JSON) if count else []
     who = lambda x: ((x or {}).get('user') or {}).get('login')
     return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'title': it.get('title'), 'url': it.get('html_url'),
-            'state': it.get('state'), 'author': who(it), 'created_at': it.get('created_at'), 'updated_at': it.get('updated_at'),
+            'state': it.get('state'), 'author': who(it), 'opener': person_of(who(it)), 'created_at': it.get('created_at'), 'updated_at': it.get('updated_at'),
             'labels': [l.get('name') for l in it.get('labels') or [] if isinstance(l, dict)],
             'body_html': clean_html(it.get('body_html')),
             'comments': [{'author': who(c), 'created_at': c.get('created_at'), 'url': c.get('html_url'),
@@ -1149,9 +1224,13 @@ def tested(person, args, works):
     _, acct = account_for(person)
     full, number = _target(args)
     login = acct.get('login') or 'someone'
-    names = [l.get('name', '').lower() for l in _current(acct, full, number).get('labels') or []]
+    cur = _current(acct, full, number)
+    names = [l.get('name', '').lower() for l in cur.get('labels') or []]
     if 'ready-to-test' not in names:
         raise Problem(409, 'This is not waiting for a test any more. Refresh to see the latest.')
+    opener = ((cur.get('user') or {}).get('login') or '')
+    if same_person(opener, login):
+        raise Problem(403, f'Someone else reviews this: {person_of(opener)} opened it.')
     if works:
         body = f'Tested: works — @{login}'
     else:
