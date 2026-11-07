@@ -377,3 +377,12 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
 .bd-top:has(.bd-owners) .bd-title, .bd-card-top:has(.bd-owners) .bd-title { flex: 0 1 auto; }
 .bd-top:has(.bd-owners) .bd-cmt, .bd-card-top:has(.bd-owners) .bd-try { margin-left: auto; }
 .bd-top:has(.bd-owners), .bd-card-top:has(.bd-owners) { gap: 10px; }
+/* Two or more owners on a phone: the chips wrap onto their own line under the title instead of stacking. */
+@media (max-width: 640px) {
+  .bd-top.multi { flex-wrap: wrap; row-gap: 6px; }
+  .bd-top.multi .bd-title { flex: 1 1 100%; }
+  .bd-top.multi .bd-owners { max-width: none; justify-content: flex-start; }
+  .bd-card-top.multi { flex-wrap: wrap; row-gap: 6px; }
+  .bd-card-top.multi .bd-title { flex: 1 1 calc(100% - 52px); }
+  .bd-card-top.multi .bd-owners { order: 3; max-width: none; justify-content: flex-start; }
+}

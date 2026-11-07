@@ -534,7 +534,7 @@ function row(i, kind) {
   const wrap = make('div', 'bd-rowx');
   const a = tapTarget('bd-item', () => openDetail(i));
   const top = make('span', 'bd-top'); top.append(make('b', 'bd-title', i.title));
-  if (kind === 'goals') top.append(ownerChips(i), bubble(i.comments || 0));
+  if (kind === 'goals') { top.append(ownerChips(i), bubble(i.comments || 0)); if ((i.assignees || []).length > 1) top.classList.add('multi'); }
   a.append(top);
   if (i.desc) a.append(make('span', 'bd-desc' + (kind === 'bugs' ? ' one' : ''), i.desc));
   const meta = make('span', 'bd-meta');
@@ -551,7 +551,7 @@ function row(i, kind) {
   } else {  // bugs: title, one line, then repo · opener · comments
     meta.classList.add('bd-meta-b');
     const a2 = i.group !== 'done' && age(i.created_at);
-    meta.append(document.createTextNode([repoName(i.repo), i.opener || nameOf(i.author)].filter(Boolean).join(' · ') + ' · '));
+    meta.append(document.createTextNode([repoName(i.repo), nameOf(i.author) || i.opener].filter(Boolean).join(' · ') + ' · '));
     if (a2) { const g = make('span', 'bd-age', a2); g.title = 'Opened ' + when(i.created_at); meta.append(g, document.createTextNode(' · ')); }
     meta.append(bubble(i.comments || 0));
   }
@@ -589,8 +589,9 @@ function testCard(t, kind) {
   const top = make('div', 'bd-card-top');
   const h = tapTarget('bd-title', () => openDetail(t)); h.textContent = t.title;
   top.append(h, ...(kind === 'goals' ? [ownerChips(t)] : []), trySwitch(t)); c.append(top);
+  if (kind === 'goals' && (t.assignees || []).length > 1) top.classList.add('multi');
   if (t.check) c.append(make('p', 'bd-check' + (kind === 'bugs' ? ' one' : ''), t.check));
-  c.append(make('p', 'bd-hint', [repoName(t.repo), t.opener ? (t.mine ? 'you' : nameOf(t.opener)) : '', kind === 'bugs' ? age(t.created_at) : '', `${t.comments || 0} comments`].filter(Boolean).join(' · ')));
+  c.append(make('p', 'bd-hint', [repoName(t.repo), t.mine ? 'you' : nameOf(t.author) || t.opener || '', kind === 'bugs' ? age(t.created_at) : '', `${t.comments || 0} comments`].filter(Boolean).join(' · ')));
   if (t.mine) {  // nobody reviews what they (or their own agent) opened
     c.classList.add('mine');
     c.append(make('p', 'bd-mine', 'Someone else reviews this'));
@@ -749,7 +750,7 @@ function drawItemFlow(f) {
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'board', version: '0.10.0' });
+  WizardApp.ready({ name: 'board', version: '0.10.1' });
   WizardApp.back.register({ canGoBack: () => false, back: () => false });
 }
 for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));
