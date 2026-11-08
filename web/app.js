@@ -429,9 +429,9 @@ function spread(xs) {
   return { n: xs.length, avg: xs.reduce((a, b) => a + b, 0) / xs.length, median: q(.5), p25: three ? q(.25) : null, p75: three ? q(.75) : null };
 }
 function lineStats(items) {
-  const reviewed = items.filter(i => i.tries), kicked = items.filter(i => i.kicks);
+  const reviewed = items.filter(i => (i.review_rounds || []).length || i.kicks), kicked = items.filter(i => i.kicks);
   const toDone = kicked.map(i => i.kick_to_done).filter(x => x != null);
-  const aiSeen = items.filter(i => i.ai_tries), aiKicked = items.filter(i => i.ai_kicks);
+  const aiSeen = items.filter(i => (i.ai_rounds || []).length || i.ai_kicks), aiKicked = items.filter(i => i.ai_kicks);
   return { queued: spread(items.map(i => i.wait)), building: spread(items.map(i => i.build)),
     ai: spread(items.flatMap(i => i.ai_rounds || [])),
     review: spread(items.flatMap(i => i.review_rounds || [])), done: spread(items.map(i => i.total)),
