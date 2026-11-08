@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.13.8'
+VERSION = '0.13.9'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -47,7 +47,7 @@ MEMBER_SECONDS = 600
 NOT_MEMBER = f'This tracker is for the WizardOS team. Ask an owner of {TEAM_ORG} to add you.'
 NOT_HUMAN = "Sign in with your own GitHub account, not your agent's. Agents use the Tracker's tools instead."
 CACHE_SECONDS = 60
-STATS_SECONDS = 300
+STATS_SECONDS = 60  # 0.13.9: was 300; the arrows must follow the builder in near real time
 STATIC_TYPES = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml'}
 NAME = re.compile(r'^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,99})$')
 TASK = re.compile(r'^(\s*[-*+]\s+\[)([ xX])(\]\s?)(.*)$')
@@ -1413,10 +1413,10 @@ def line_stats(items):
     """The assembly-line stats (0.8): per bin avg + box, and the return arrow's kick-back numbers.
     rate = share of items that reached Review and were kicked back at least once; per_item = average
     kick-backs among those kicked back."""
-    reviewed = [i for i in items if i.get('tries')]
+    reviewed = [i for i in items if i.get('review_rounds') or i.get('kicks')]  # 0.13.9: decided, not merely waiting
     kicked = [i for i in items if i.get('kicks')]
     to_done = [i['kick_to_done'] for i in kicked if i.get('kick_to_done') is not None]
-    ai_seen = [i for i in items if i.get('ai_tries')]
+    ai_seen = [i for i in items if i.get('ai_rounds') or i.get('ai_kicks')]
     ai_kicked = [i for i in items if i.get('ai_kicks')]
     return {'queued': spread([i.get('wait') for i in items]), 'building': spread([i.get('build') for i in items]),
             'ai': spread([r for i in items for r in i.get('ai_rounds') or []]),
@@ -1930,6 +1930,7 @@ def ai_review(args, passed):
         raise Problem(403, 'The comment is saved, but GitHub did not change the labels (Triage or write access to this repo is needed).')
     with LOCK:
         _flows.pop((_tid(acct['token']), full.lower(), number), None)
+        _stats.clear()  # 0.13.9: a review decision shows on the arrows at once
     return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'passed': passed, 'labels': now,
             'stage': 'review' if passed else 'building', 'saved': True}
 
@@ -2149,6 +2150,8 @@ def issue_detail(person, args):
 
 
 def _drop_label(acct, full, number, label):
+    with LOCK:
+        _stats.clear()  # 0.13.9: any move by the Tracker shows on the arrows at once
     try:
         gh(acct['token'], 'DELETE', f'/repos/{full}/issues/{number}/labels/{label}')
     except Problem as e:
