@@ -2,7 +2,7 @@
 wizard: 0.2
 id: wizard-os-tracker
 renamed_from: [board]
-name: WizardOS Tracker
+name: Wizard OS Tracker
 type: view
 category: app
 version: 0.13.6
