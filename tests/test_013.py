@@ -353,3 +353,16 @@ class TrySwitch(unittest.TestCase):
 class BuiltInClientId(unittest.TestCase):
     def test_default_is_team_app(self):
         self.assertEqual(S.DEFAULT_GITHUB_CLIENT_ID, 'Ov23liRmzoKiwejdVDOo')
+
+
+class AppIdentity(unittest.TestCase):
+    """0.13.7: the id follows the name WizardOS Tracker; the old ids stay trusted in-network."""
+    def test_id_and_name(self):
+        root = Path(__file__).resolve().parent.parent
+        cfg = json.loads((root / 'runtipi' / 'config.json').read_text())
+        self.assertEqual(S.APP_ID, 'wizardos-tracker')
+        self.assertEqual((cfg['id'], cfg['name'], cfg['version']), ('wizardos-tracker', 'WizardOS Tracker', S.VERSION))
+        md = (root / 'wizard.md').read_text()
+        self.assertIn('id: wizardos-tracker\nrenamed_from: [board, wizard-os-tracker]\nname: WizardOS Tracker', md)
+        for old in ('wizard-os-tracker', 'board'):
+            self.assertIn(f"{old}:{os.environ.get('PORT', '8799')}", S.TRUSTED_HOSTS)

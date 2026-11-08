@@ -1,11 +1,11 @@
 ---
 wizard: 0.2
-id: wizard-os-tracker
-renamed_from: [board]
-name: Wizard OS Tracker
+id: wizardos-tracker
+renamed_from: [board, wizard-os-tracker]
+name: WizardOS Tracker
 type: view
 category: app
-version: 0.13.6
+version: 0.13.7
 summary: "The WizardOS team's build line: goals, bugs and the builder, on top of GitHub. Team members only."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -39,7 +39,7 @@ health: /healthz
 
 # WizardOS Tracker
 
-Display name "WizardOS Tracker". 0.12 (store listing): the app id follows the name, `wizard-os-tracker`, with `renamed_from: [board]`, so `wam app-rename board` moves an installed `board` (data, sign-ins, port, settings) to the new id; the repo stays `oscarhenrycollins/wizard-board`.
+Display name "WizardOS Tracker". 0.12 (store listing): the app id follows the name, `wizard-os-tracker`, with `renamed_from: [board]`, so `wam app-rename board` moves an installed `board` (data, sign-ins, port, settings) to the new id; the repo stays `oscarhenrycollins/wizard-board`. 0.13.7: the product is spelled WizardOS (one word), so the id became `wizardos-tracker` and the name `WizardOS Tracker`, with `renamed_from: [board, wizard-os-tracker]` (`wam app-rename wizard-os-tracker wizardos-tracker` moves an installed copy; agent tools are now `mcp__wizard__wizardos_tracker__*`).
 
 Humans manage the work; agents write the PRs. Board shows two kinds of GitHub issue across one organisation (default `humanitylabs-org`):
 

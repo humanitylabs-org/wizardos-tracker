@@ -23,8 +23,8 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Path(os.environ.get('APP_ROOT', '.')).resolve()
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
-APP_ID = 'wizard-os-tracker'  # 0.12: id follows the name (was board; renamed_from in wizard.md)
-VERSION = '0.13.6'
+APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
+VERSION = '0.13.7'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -2311,7 +2311,7 @@ def _csv(name):
 _LOOPBACK = {f"127.0.0.1:{os.environ.get('PORT', '8799')}", f"localhost:{os.environ.get('PORT', '8799')}"}
 # 0.12.1: in-network names (the app id and the old id) are always trusted, and loopback on any port (the host
 # publishes the app on its own APP_PORT; health checks and the agent use 127.0.0.1:<APP_PORT>).
-_IN_NETWORK = {f"{n}:{os.environ.get('PORT', '8799')}" for n in ('wizard-os-tracker', 'board')}
+_IN_NETWORK = {f"{n}:{os.environ.get('PORT', '8799')}" for n in ('wizardos-tracker', 'wizard-os-tracker', 'board')}
 _LOOPBACK_HOST = re.compile(r'^(127\.0\.0\.1|localhost|\[::1\])(:\d{1,5})?$')
 TRUSTED_HOSTS = _csv('WIZARD_TRUSTED_HOSTS') | _LOOPBACK | _IN_NETWORK
 TRUSTED_ORIGINS = _csv('WIZARD_TRUSTED_ORIGINS') | {'http://' + h for h in _LOOPBACK}

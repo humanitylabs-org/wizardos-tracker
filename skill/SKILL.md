@@ -1,7 +1,7 @@
 ---
-name: wizard-os-tracker
+name: wizardos-tracker
 description: Use when working with Wizard development Goals and Bugs on GitHub.
-version: 0.13.6
+version: 0.13.7
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -10,7 +10,9 @@ metadata:
     tags: [github, goals, bugs, project-board]
     related_skills: []
 ---
-# WizardOS Tracker (app id `wizard-os-tracker`, was `board`): Goals and Bugs
+# WizardOS Tracker (app id `wizardos-tracker`, was `wizard-os-tracker` and `board`): Goals and Bugs
+
+Agent tools are `mcp__wizard__wizardos_tracker__<tool>` (e.g. `mcp__wizard__wizardos_tracker__board_list`).
 
 Humans manage the work; agents write the PRs. There are exactly two kinds of GitHub issue:
 
