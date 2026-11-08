@@ -441,3 +441,12 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
 .bd-signin:has(#oauth:not([hidden])) .bd-h1 { display: none; }
 .bd-oauth, .bd-oauth-code { justify-items: center; text-align: center; }
 .bd-oauth { margin-top: 4px; }
+
+/* 0.13.5 refresh button + freshness */
+.bd-reload { border: 0; background: none; color: var(--ink-3); padding: 0; width: 32px; min-height: 32px; display: inline-grid; place-items: center; cursor: pointer; align-self: center; }
+.bd-reload:hover { color: var(--accent); }
+.bd-reload.spin svg { animation: bd-spin .8s linear infinite; color: var(--accent); }
+@keyframes bd-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .bd-reload.spin svg { animation-duration: 2.4s; } }
+.bd-fresh { color: var(--ink-3); }
+.bd-fresh.stale { color: var(--warn, #b26a00); }

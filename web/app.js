@@ -236,8 +236,22 @@ sw.addEventListener('click', e => {
   load(view);
 });
 
+// 0.13.5: a small refresh button top right; it spins while a reload is in flight, and 'updated 20s ago' says how fresh the list is.
+let inflight = 0, freshAt = 0;
+function freshness() {
+  const f = el('fresh'), r = el('reload'); if (!f || !r) return;
+  r.hidden = !(me && me.connected); r.classList.toggle('spin', inflight > 0);
+  r.setAttribute('aria-busy', String(inflight > 0));
+  if (inflight > 0) { f.textContent = 'updating…'; return; }
+  if (!freshAt) { f.textContent = ''; return; }
+  const s = Math.round((Date.now() - freshAt) / 1000);
+  f.textContent = s < 10 ? 'up to date' : s < 60 ? `updated ${s}s ago` : `updated ${Math.round(s / 60)}m ago`;
+  f.classList.toggle('stale', s >= 90);
+}
+setInterval(freshness, 5000);
+
 async function load(which, refresh = false) {
-  const g = ++gen; lastLoad = Date.now();
+  const g = ++gen; lastLoad = Date.now(); inflight++; freshness();
   try {
     const d = await api(`api/split?view=${which}${refresh ? '&refresh=1' : ''}`);
     if (d.stats && d.stats.pending && cache[which] && cache[which].stats && !cache[which].stats.pending) d.stats = cache[which].stats;
@@ -245,10 +259,11 @@ async function load(which, refresh = false) {
     if (which === view && g === gen && !typing()) render(d);
     say('');
     if (d.stats && d.stats.pending) loadStats(which);
+    if (which === view) freshAt = Date.now();
   } catch (err) {
     if (err.status === 401) { const s = await api('api/status').catch(() => null); if (s) show(s); }
     say(err.message, 'error');
-  }
+  } finally { inflight = Math.max(0, inflight - 1); freshness(); }
 }
 
 async function loadStats(which) {
@@ -945,4 +960,5 @@ const quiet = () => me && me.connected && !document.hidden && !typing() && !shee
 const tick = () => { if (quiet() && Date.now() - lastLoad > 20000) load(view, true); };
 window.addEventListener('focus', tick);
 document.addEventListener('visibilitychange', tick);
-setInterval(() => { if (quiet()) load(view, true); }, 60000);
+setInterval(() => { if (quiet()) load(view, true); }, 30000);
+el('reload').onclick = () => { if (!inflight) { load(view, true); loadSide(); } };

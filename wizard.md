@@ -5,7 +5,7 @@ renamed_from: [board]
 name: Wizard OS Tracker
 type: service
 category: app
-version: 0.13.4
+version: 0.13.5
 summary: "The Wizard OS team's build line: goals, bugs and the builder, on top of GitHub. Team members only."
 tags: [developer, productivity]
 license: GPL-3.0-only
