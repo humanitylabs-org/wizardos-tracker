@@ -455,3 +455,14 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
 .bd-pop-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 10px; }
 .bd-pop-actions .bd-btn { min-height: 36px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--line, #8884); background: none; color: inherit; font: inherit; cursor: pointer; }
 .bd-pop-actions .bd-danger { background: #c0392b; border-color: #c0392b; color: #fff; }
+
+/* 0.14.2: Goals | Features | Bugs always three across; on phones the Builder switch shrinks to its toggle. */
+.bd-switch { grid-template-columns: repeat(3, 1fr); }
+.bd-head .bd-switch { width: 330px; }
+.bd-switch button { white-space: nowrap; padding: 0 10px; }
+@media (max-width: 640px) {
+  .bd-head { display: flex; justify-content: space-between; gap: 8px; }
+  .bd-head .bd-switch { flex: 1 1 auto; width: auto; max-width: 330px; min-width: 0; }
+  .bd-switch button { padding: 0 4px; font-size: 14px; }
+  .bd-toggle .bd-ctl-state { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+}
