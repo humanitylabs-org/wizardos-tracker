@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.13.10'
+VERSION = '0.14.1'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -643,7 +643,7 @@ def shape(node):
     prs = _prs(node)
     return {'id': f"{node['repository']['nameWithOwner']}#{node['number']}", 'repo': node['repository']['nameWithOwner'],
             'number': node['number'], 'title': node.get('title'), 'url': node.get('url'),
-            'type': 'goal' if 'goal' in low else 'bug' if 'bug' in low else 'other',
+            'type': 'goal' if 'goal' in low else 'feature' if 'feature' in low else 'bug' if 'bug' in low else 'other',
             'state': (node.get('state') or '').lower(), 'state_reason': (node.get('stateReason') or '').lower() or None,
             'accepted': 'accepted' in low, 'labels': labels, 'author': (node.get('author') or {}).get('login'),
             'created_at': node.get('createdAt'), 'updated_at': node.get('updatedAt'), 'closed_at': node.get('closedAt'),
@@ -825,6 +825,19 @@ def report_bug(person, args, agent=False):
     if not isinstance(body, str) or len(body) > 8000:
         raise Problem(400, 'The description is too long (8000 characters max).')
     return _create(acct, full, title, body.strip(), 'bug')
+
+
+def report_feature(person, args, agent=False):
+    """A feature to try (label feature): built switched off, tried in the Tracker, kept or dropped."""
+    _, acct = account_for(person, agent)
+    full = _repo(settings()['org'], args.get('repo'))
+    if not full:
+        raise Problem(400, 'Pick a repo for the feature.')
+    title = _text(args.get('title'), 'Title', 3, 200)
+    body = args.get('body') or ''
+    if not isinstance(body, str) or len(body) > 8000:
+        raise Problem(400, 'The description is too long (8000 characters max).')
+    return _create(acct, full, title, body.strip(), 'feature')
 
 
 def _current(acct, full, number):
@@ -1205,21 +1218,31 @@ def _repo_list(arg):
     return [n.split('/')[-1] for n in names if NAME.match(n.split('/')[-1])]
 
 
+VIEWS = ('goals', 'features', 'bugs')
+VIEW_Q = {'goals': 'label:goal', 'features': 'label:feature -label:goal', 'bugs': '-label:goal -label:feature'}
+VIEW_KIND = {'goals': 'goal', 'features': 'feature', 'bugs': 'bug'}
+
+
+def _view(args):
+    view = args.get('view') or 'goals'
+    if view not in VIEWS:
+        raise Problem(400, 'view must be goals, features or bugs.')
+    return view
+
+
 def board_split(person, args):
     """0.6 screen: Goals or Bugs in status groups: Waiting for review (label ready-to-test, key `test`),
     Building (label building), Queued (every other open one), plus all-time bottleneck stats for that kind."""
     _, acct = account_for(person)
-    view = args.get('view') or 'goals'
-    if view not in ('goals', 'bugs'):
-        raise Problem(400, 'view must be goals or bugs.')
+    view = _view(args)
     org = settings()['org']
     login = (acct.get('login') or '').strip()
-    kind = 'label:goal' if view == 'goals' else '-label:goal'
+    kind = VIEW_Q[view]
     q = f"org:{org} is:issue is:open {kind} sort:updated-desc"
     if args.get('refresh'):
         _forget(acct['token'])
     nodes, total = _view_nodes(acct['token'], q, heavy=view == 'goals')
-    if view == 'bugs':  # the few in AI or Human review get the heavy fields (what to check, review comments)
+    if view != 'goals':  # the few in AI or Human review get the heavy fields (what to check, review comments)
         full, _ = _view_nodes(acct['token'], q.replace(' sort:', ' label:ready-to-test,ai-review sort:'), heavy=True, limit=80)
         by = {(n['repository']['nameWithOwner'], n['number']): n for n in full}
         nodes = [by.get((n['repository']['nameWithOwner'], n['number']), n) for n in nodes]
@@ -1236,7 +1259,7 @@ def board_split(person, args):
         mine = same_person(author, login, base)  # a person and their own agent count as one: they never review it
         iid = f"{n['repository']['nameWithOwner']}#{n['number']}"
         assignees = [a.get('login') for a in (n.get('assignees') or {}).get('nodes') or [] if a and a.get('login')]
-        kind = 'goal' if view == 'goals' else 'bug'
+        kind = 'goal' if view == 'goals' else 'bug'  # features follow the bug rules
         extra = {}
         if HUMAN_LABEL in names and iid not in hidden:
             group, card = 'test', _card(n, 'test')
@@ -1273,7 +1296,7 @@ def board_split(person, args):
     return {'view': view, 'org': org, 'login': login, 'me_person': person_of(login, base), 'steps': steps_for(view, base), 'groups': groups,
             'targets': base['targets'][view], 'names': display_names(base), 'since': base['since'], 'human_reviews': base['human_reviews'],
             # 0.9: Bugs shows a Repo chip for every non-archived org repo (owner/name), even with 0 open bugs
-            'repos': org_repos(acct['token'], org) if view == 'bugs' else [],
+            'repos': org_repos(acct['token'], org) if view != 'goals' else [],
             'counts': {k: len(v) for k, v in groups.items()}, 'done': stats.get('done', 0),
             'stats': {**stats, 'summary': None if stats.get('pending') else summarize(stats.get('items', []))},
             'total': total, 'shown': shown, 'more': total > len(nodes),
@@ -1489,11 +1512,9 @@ DONE_PAGE = 'query($q: String!, $after: String) { ' + _PAGE % (50, DONE_FIELDS) 
 def done_list(person, args):
     """GET /api/done?view=goals|bugs: the most recently closed items of that view (up to 50, newest first)."""
     _, acct = account_for(person)
-    view = args.get('view') or 'goals'
-    if view not in ('goals', 'bugs'):
-        raise Problem(400, 'view must be goals or bugs.')
+    view = _view(args)
     org = settings()['org']
-    kind = 'label:goal' if view == 'goals' else '-label:goal'
+    kind = VIEW_Q[view]
     if args.get('refresh'):
         _forget(acct['token'])
     nodes, total = _view_nodes(acct['token'], f'org:{org} is:issue is:closed {kind} sort:updated-desc', limit=50, query=DONE_PAGE)
@@ -1526,9 +1547,7 @@ def _filter_stats(stats, keep):
 def stats_view(person, args):
     """GET /api/stats: bottleneck numbers for one view (optionally author= and repos=a,b), 5-minute cache."""
     _, acct = account_for(person)
-    view = args.get('view') or 'goals'
-    if view not in ('goals', 'bugs'):
-        raise Problem(400, 'view must be goals or bugs.')
+    view = _view(args)
     stats = view_stats(acct['token'], settings()['org'], view)
     repos_wanted, author = _repo_list(args.get('repos')), (args.get('author') or '').strip().lower()
     if repos_wanted or author:
@@ -1545,7 +1564,7 @@ def view_stats(token, org, view, cached_only=False):
         return _since_stats(hit[1])
     if cached_only:
         return None
-    kind = 'label:goal' if view == 'goals' else '-label:goal'
+    kind = VIEW_Q[view]
     nodes, total = _view_nodes(token, f'org:{org} is:issue {kind} sort:created-desc', limit=STATS_MAX, query=STATS_PAGE)
     now = time.time()
     items = [item_history(n, now) for n in nodes if n.get('repository')]
@@ -1577,11 +1596,12 @@ POLICY_DEFAULT = {
     ],
     'builder': {'name': 'WizardOS Builder', 'logins': [BUILDER]},
     # Who may open and close items in each view: a list of team names, or "team" for everyone on it.
-    'open': {'goals': ['James'], 'bugs': 'team'},
+    'open': {'goals': ['James'], 'features': 'team', 'bugs': 'team'},
     # 0.9: target time per step (seconds). Drawn as a tick on each bin's range bar; the median turns
     # green-ish within target, amber over. DATA_DIR/policy.json `targets` overrides (seconds or '1h', '3d', '30m').
     # 0.13: AI review 30m and Human review 1d for both views.
     'targets': {'bugs': {'queued': 3600, 'building': 4 * 3600, 'ai': 1800, 'review': 86400, 'done': 2 * 86400},
+                'features': {'queued': 3600, 'building': 4 * 3600, 'ai': 1800, 'review': 86400, 'done': 2 * 86400},
                 # 0.10: Goals Queued 1h like Bugs (queue wait is builder pickup, the same for both)
                 'goals': {'queued': 3600, 'building': 3 * 86400, 'ai': 1800, 'review': 86400, 'done': 14 * 86400}},
     # 0.13: how many different humans must say Works before Done (1 or 2). DATA_DIR/policy.json `human_reviews`.
@@ -1620,10 +1640,12 @@ def _targets(over):
     return out
 STEP_TEXT = {
     'open': {'goals': '{who} opens goals and closes them once they work. Nobody else adds or closes a goal.',
+             'features': 'Anyone on the team, or their own agent, opens a feature to try and closes it once they like it.',
              'bugs': 'Anyone on the team, or their own agent, opens a bug and closes it once it works.'},
     'build': 'The WizardOS Builder writes the code, then labels it ai-review and says what to check.',
     'ai': "The opener's agent (a goal's owner's) checks the build matches the issue: pass to Human review, or back to Building.",
     'review': {'bugs': "Someone on the team, not whoever opened it, tries it and says Works or Doesn't work.",
+               'features': "Someone on the team, not whoever opened it, tries it and says Works or Doesn't work.",
                'goals': "The goal's owner, or {who}, tries it and says Works or Doesn't work."},
 }
 
@@ -1670,7 +1692,7 @@ def policy_base():
     builder = {'name': str(b.get('name') or 'WizardOS Builder')[:40], 'logins': [x for x in b.get('logins') or [BUILDER] if isinstance(x, str)]}
     opn = dict(POLICY_DEFAULT['open'])
     if isinstance(over.get('open'), dict):
-        opn.update({k: v for k, v in over['open'].items() if k in ('goals', 'bugs') and (v == 'team' or isinstance(v, list))})
+        opn.update({k: v for k, v in over['open'].items() if k in VIEWS and (v == 'team' or isinstance(v, list))})
     hr = over.get('human_reviews')
     return {'team': team, 'builder': builder, 'open': opn, 'targets': _targets(over.get('targets')),
             'since': _since(over.get('since'))[0],
@@ -1702,8 +1724,8 @@ def targets_set(person, args, agent=False):
     """POST /api/targets {view, step, seconds}: one step's target for everyone (DATA_DIR/policy.json).
     0.10: any signed-in person may change it (permissions later); agents only with the human's words."""
     view = args.get('view')
-    if view not in ('goals', 'bugs'):
-        raise Problem(400, 'view must be goals or bugs.')
+    if view not in VIEWS:
+        raise Problem(400, 'view must be goals, features or bugs.')
     step = TARGET_KEYS.get(str(args.get('step') or '').lower())
     if not step:
         raise Problem(400, 'step must be queued, building, ai, review or done.')
@@ -1778,14 +1800,14 @@ def steps_for(view, base=None):
          'role': base['builder']['name'], 'who': [{'name': base['builder']['name'], 'logins': [{'login': x, 'kind': 'agent'} for x in base['builder']['logins']]}],
          'about': STEP_TEXT['build'], 'next': 'AI review (label ai-review).'},
         {'key': 'ai', 'n': 3, 'name': 'AI review', 'group': 'airev', 'label': 'ai-review', 'count_label': 'AI review',
-         'role': "The opener's agent" if view == 'bugs' else "The goal owner's agent",
+         'role': "The opener's agent" if view != 'goals' else "The goal owner's agent",
          'who': [{'name': t['name'], 'logins': [{'login': a['login'], 'kind': 'agent', 'name': a['name']} for a in t['agents']]} for t in team if t['agents']],
          'except': 'outside the roster, or no agent listed: any team agent',
          'about': STEP_TEXT['ai'], 'next': 'Pass: Human review (label ready-to-test). Fail: back to Building.'},
         {'key': 'review', 'n': 4, 'name': 'Human review', 'group': 'test', 'label': 'ready-to-test', 'count_label': 'Human review',
-         'role': 'Team, not the opener' if view == 'bugs' else f'Goal owner or {goal_names}',
-         'who': [_who(t) for t in team] if view == 'bugs' else [_who(t) for t in openers],
-         'except': 'whoever opened it (a person and their own agent count as one)' if view == 'bugs' else '',
+         'role': 'Team, not the opener' if view != 'goals' else f'Goal owner or {goal_names}',
+         'who': [_who(t) for t in team] if view != 'goals' else [_who(t) for t in openers],
+         'except': 'whoever opened it (a person and their own agent count as one)' if view != 'goals' else '',
          'about': STEP_TEXT['review'][view].format(who=goal_names), 'reviews': base['human_reviews'],
          'next': ("Works: the opener closes it (Done). Doesn't work: back to Build." if base['human_reviews'] == 1
                   else f"Works from {base['human_reviews']} different people: the opener closes it (Done). Doesn't work: back to Build.")},
@@ -1795,8 +1817,9 @@ def steps_for(view, base=None):
 def policy(person=None):
     base = policy_base()
     org = settings()['org']
-    views = {v: steps_for(v, base) for v in ('goals', 'bugs')}
+    views = {v: steps_for(v, base) for v in VIEWS}
     lines = [f"Goals: opened and closed by {views['goals'][0]['role']}",
+             f"Features: opened and closed by {views['features'][0]['role'].lower()}",
              f"Bugs: opened and closed by {views['bugs'][0]['role'].lower()}",
              f"Build: {base['builder']['name']} only · Review: the team, not the opener"]
     login = None
@@ -2248,6 +2271,7 @@ TOOLS = [
     {'name': 'board_list', 'description': 'List Goals and Bugs on the board (GitHub issues labelled goal or bug in the org). Goals include done-list progress and open linked PR counts.', 'inputSchema': {'type': 'object', 'properties': FILTERS}},
     {'name': 'board_get', 'description': 'Read one Goal or Bug: body, done-list, linked PRs and recent comments.', 'inputSchema': {'type': 'object', 'properties': ISSUE}},
     {'name': 'board_report_bug', 'description': 'Report a small, specific bug (label bug). Anyone may report. Work starts only after a human accepts it.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What happens, what should happen, how to see it.'}}, 'required': ['repo', 'title']}},
+    {'name': 'board_report_feature', 'description': 'Add a feature or improvement to try (label feature). Anyone on the team may add one. The builder builds it behind an off-by-default switch; the team tries it with Try it in the Tracker and keeps or drops it.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What it should do, where, and why it is better.'}}, 'required': ['repo', 'title']}},
     {'name': 'board_comment', 'description': 'Add a comment to a Goal or Bug.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'body': {'type': 'string', 'minLength': 1}}, 'required': ['body']}},
     {'name': 'board_add_goal', 'description': 'HUMANS OPEN GOALS. Use only when a human explicitly asked you to add this goal for them; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string'}, 'done': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Done-list lines (1-20).'}, 'body': {'type': 'string'}, **ASKED}, 'required': ['repo', 'title', 'done', 'owner_request']}},
     {'name': 'board_accept_bug', 'description': 'ONLY HUMANS ACCEPT BUGS. Adds label accepted only when a human explicitly asked you to; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, **ASKED}, 'required': ['owner_request']}},
@@ -2257,7 +2281,7 @@ TOOLS = [
     {'name': 'try_status', 'description': "Which items the signed-in person switched 'Try it' on for (mock-up: records the wish, nothing runs yet).", 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'try_set', 'description': "Switch 'Try it' on or off for one item (repo owner/name + number) only when a human asked; pass their words as owner_request. Mock-up.", 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'number': {'type': 'integer'}, 'on': {'type': 'boolean'}, **ASKED}, 'required': ['repo', 'number', 'on', 'owner_request']}},
     {'name': 'board_flow', 'description': "One item's own assembly line from its GitHub label timeline: seconds spent in Queued, Building and Review, closed time, kick-backs (ready-to-test removed without a close), current stage.", 'inputSchema': {'type': 'object', 'properties': ISSUE}},
-    {'name': 'targets_set', 'description': "Change one step's target time for everyone (view goals|bugs, step queued|building|ai|review|done (ai = AI review, review = Human review), seconds or '4h'/'3d') only when a human asked; pass their words as owner_request. Current targets: GET /api/policy.", 'inputSchema': {'type': 'object', 'properties': {'view': {'type': 'string', 'enum': ['goals', 'bugs']}, 'step': {'type': 'string', 'enum': ['queued', 'building', 'ai', 'review', 'done']}, 'seconds': {'description': 'Seconds (60 to 31536000) or a string like 30m, 4h, 3d, 2w.', 'type': ['integer', 'string']}, **ASKED}, 'required': ['view', 'step', 'seconds', 'owner_request']}},
+    {'name': 'targets_set', 'description': "Change one step's target time for everyone (view goals|bugs, step queued|building|ai|review|done (ai = AI review, review = Human review), seconds or '4h'/'3d') only when a human asked; pass their words as owner_request. Current targets: GET /api/policy.", 'inputSchema': {'type': 'object', 'properties': {'view': {'type': 'string', 'enum': ['goals', 'features', 'bugs']}, 'step': {'type': 'string', 'enum': ['queued', 'building', 'ai', 'review', 'done']}, 'seconds': {'description': 'Seconds (60 to 31536000) or a string like 30m, 4h, 3d, 2w.', 'type': ['integer', 'string']}, **ASKED}, 'required': ['view', 'step', 'seconds', 'owner_request']}},
     {'name': 'ai_review_pass', 'description': "AI REVIEW (agents only). The builder hands work over with label ai-review. If you are the opener's agent (a goal's owner's agent; for openers outside the roster any team agent), check the build matches the issue's scope, then pass it on to Human review (ai-review -> ready-to-test) with a short note saying what you checked and what a human should try.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What you checked, and what the human reviewer should try.'}}, 'required': ['note']}},
     {'name': 'ai_review_fail', 'description': "AI REVIEW (agents only). The build does not match the issue's scope: send it back to Building (removes ai-review, adds building) with a short note saying what is missing or wrong; the builder picks it up again. Counted on the AI review -> Building return arrow.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What is missing or wrong, for the builder.'}}, 'required': ['note']}},
     {'name': 'board_reopen', 'description': 'Reopen a Bug when a human asked you to (pass their words). Goals are refused: only humans reopen goals.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, **ASKED}, 'required': ['owner_request']}},
@@ -2266,6 +2290,7 @@ CALLS = {
     'board_list': lambda a: board_list(None, a, agent=True),
     'board_get': lambda a: board_get(None, a, agent=True),
     'board_report_bug': lambda a: report_bug(None, a, agent=True),
+    'board_report_feature': lambda a: report_feature(None, a, agent=True),
     'board_comment': lambda a: add_comment(None, a, agent=True),
     'board_add_goal': lambda a: add_goal(None, a, agent=True),
     'board_accept_bug': lambda a: accept_bug(None, a, agent=True),
@@ -2445,6 +2470,7 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/settings': lambda: set_org(body),
                 '/api/goals': lambda: add_goal(who, body),
                 '/api/bugs': lambda: report_bug(who, body),
+                '/api/features': lambda: report_feature(who, body),
                 '/api/issue/accept': lambda: accept_bug(who, body),
                 '/api/issue/close': lambda: set_state(who, body, 'closed'),
                 '/api/issue/reopen': lambda: set_state(who, body, 'open'),
@@ -2468,7 +2494,7 @@ class Handler(BaseHTTPRequestHandler):
                 return routes[path]()
             if path not in ('/api/connect', '/api/disconnect', '/api/device/start', '/api/device/cancel'):
                 gate(who)  # 0.12: signed in, a human login, an active team member (cached 10 min)
-            return self.send(201 if path in ('/api/goals', '/api/bugs', '/api/new') else 200, routes[path]())
+            return self.send(201 if path in ('/api/goals', '/api/bugs', '/api/features', '/api/new') else 200, routes[path]())
         except Problem as e:
             self.send(e.code, {'error': e.message, **({'reason': e.reason} if e.reason else {})})
         except (ValueError, TypeError, AttributeError, KeyError):

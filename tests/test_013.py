@@ -366,3 +366,14 @@ class AppIdentity(unittest.TestCase):
         self.assertIn('id: wizardos-tracker\nrenamed_from: [board, wizard-os-tracker]\nname: WizardOS Tracker', md)
         for old in ('wizard-os-tracker', 'board'):
             self.assertIn(f"{old}:{os.environ.get('PORT', '8799')}", S.TRUSTED_HOSTS)
+
+
+class FeaturesView(unittest.TestCase):
+    def test_three_views_split_cleanly(self):
+        self.assertEqual(S.VIEWS, ('goals', 'features', 'bugs'))
+        self.assertIn('-label:feature', S.VIEW_Q['bugs'])
+        self.assertIn('label:feature', S.VIEW_Q['features'])
+        self.assertIn('-label:goal', S.VIEW_Q['features'])
+        for v in S.VIEWS:
+            self.assertEqual(S.steps_for(v)[0]['key'], 'open')
+        self.assertIn('features', S.policy_base()['targets'])

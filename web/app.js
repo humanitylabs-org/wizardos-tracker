@@ -13,11 +13,11 @@
 const el = id => document.getElementById(id);
 const make = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 const link = (cls, href) => { const a = make('a', cls); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; return a; };
-const EMPTY = { goals: 'No open goals.', bugs: 'No open bugs. Nice.' };
+const EMPTY = { goals: 'No open goals.', features: 'No open features.', bugs: 'No open bugs. Nice.' };
 const GROUPS = ['test', 'airev', 'building', 'queued'];
-const stage = { goals: null, bugs: null };   // tap a bin: show only that stage (not remembered)
+const stage = { goals: null, features: null, bugs: null };   // tap a bin: show only that stage (not remembered)
 const doneCache = {};   // view -> { at, items } recently closed, loaded when the Done bin is tapped
-let me = null, view = location.hash === '#bugs' ? 'bugs' : 'goals', gen = 0, held = null, lastLoad = 0, who = '';
+let me = null, view = ({ '#bugs': 'bugs', '#features': 'features' })[location.hash] || 'goals', gen = 0, held = null, lastLoad = 0, who = '';
 const NO_DATA = 'starts once the builder runs';
 const BINS = [
   { key: 'open', group: 'queued', word: 'Queued' },
@@ -35,12 +35,12 @@ const POP = {
 const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (_) { return null; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} } };
 // Chip filters live on Bugs only (0.9: Goals has none); picks are remembered on the device.
-const picked = { bugs: new Set(store.get('board.repos.bugs') || []) };
-const pickedWho = { bugs: new Set(store.get('board.who.bugs') || []) };
+const picked = { bugs: new Set(store.get('board.repos.bugs') || []), features: new Set(store.get('board.repos.features') || []) };
+const pickedWho = { bugs: new Set(store.get('board.who.bugs') || []), features: new Set(store.get('board.who.features') || []) };
 let repoMore = false;   // the Repo row's '+N more' is open (not remembered)
 const SORTS = [['oldest', 'Oldest'], ['newest', 'Newest'], ['discussed', 'Most discussed'], ['active', 'Recently active']];
 const savedSort = v => SORTS.some(([k]) => k === store.get('board.sort.' + v)) ? store.get('board.sort.' + v) : 'oldest';
-const sortBy = { goals: savedSort('goals'), bugs: savedSort('bugs') };
+const sortBy = { goals: savedSort('goals'), features: savedSort('features'), bugs: savedSort('bugs') };
 const ts = iso => { const t = Date.parse(iso || ''); return isNaN(t) ? 0 : t; };
 const SORT_FN = {
   oldest: (a, b) => ts(a.created_at) - ts(b.created_at),
@@ -287,8 +287,8 @@ function reposOf(d, keepWho) {
 }
 function render(d) {
   // Bugs only: Who and Repo chips (multi-select, remembered); picks no longer present drop out. Goals: no filters.
-  const bugs = d.view === 'bugs';
-  const whoSet = bugs ? pickedWho.bugs : new Set(), chosen = bugs ? picked.bugs : new Set();
+  const bugs = d.view !== 'goals';   // Features work like Bugs
+  const whoSet = bugs ? pickedWho[d.view] : new Set(), chosen = bugs ? picked[d.view] : new Set();
   const allPeople = new Set(authorsOf(d).map(([p]) => p.toLowerCase()));
   for (const p of [...whoSet]) if (!allPeople.has(p)) whoSet.delete(p);
   const known = new Map((d.repos || []).map(r => [r.toLowerCase(), r]));
@@ -578,7 +578,7 @@ function openStep(x, anchor, kind, extra = []) {
   if (x.key === 'open') {
     const s = (steps || []).find(y => y.key === 'open');
     const who = s ? s.role : kind === 'goals' ? 'James' : 'Anyone on the team';
-    return pop(anchor, who, [kind === 'goals' ? 'Opens goals. They wait here until the builder picks them up.' : 'Opens bugs. They wait here until the builder picks them up.', ...extra]);
+    return pop(anchor, who, [kind === 'goals' ? 'Opens goals. They wait here until the builder picks them up.' : kind === 'features' ? 'Opens features to try. They wait here until the builder picks them up.' : 'Opens bugs. They wait here until the builder picks them up.', ...extra]);
   }
   const s = (steps || []).find(y => y.key === x.key);
   let [who, text] = POP[x.key];
@@ -696,7 +696,7 @@ function row(i, kind) {
   const top = make('span', 'bd-top'); top.append(make('b', 'bd-title', i.title));
   if (kind === 'goals') { top.append(ownerChips(i), bubble(i.comments || 0)); if ((i.assignees || []).length > 1) top.classList.add('multi'); }
   a.append(top);
-  if (i.desc) a.append(make('span', 'bd-desc' + (kind === 'bugs' ? ' one' : ''), i.desc));
+  if (i.desc) a.append(make('span', 'bd-desc' + (kind !== 'goals' ? ' one' : ''), i.desc));
   const meta = make('span', 'bd-meta');
   if (kind === 'goals') {
     const p = i.progress || { done: 0, total: 0 };
@@ -759,8 +759,8 @@ function testCard(t, kind) {
   const h = tapTarget('bd-title', () => openDetail(t)); h.textContent = t.title;
   top.append(h, ...(kind === 'goals' ? [ownerChips(t)] : []), trySwitch(t)); c.append(top);
   if (kind === 'goals' && (t.assignees || []).length > 1) top.classList.add('multi');
-  if (t.check) c.append(make('p', 'bd-check' + (kind === 'bugs' ? ' one' : ''), t.check));
-  c.append(make('p', 'bd-hint', [repoName(t.repo), t.mine ? 'you' : nameOf(t.author) || t.opener || '', kind === 'bugs' ? age(t.created_at) : '', `${t.comments || 0} comments`].filter(Boolean).join(' · ')));
+  if (t.check) c.append(make('p', 'bd-check' + (kind !== 'goals' ? ' one' : ''), t.check));
+  c.append(make('p', 'bd-hint', [repoName(t.repo), t.mine ? 'you' : nameOf(t.author) || t.opener || '', kind !== 'goals' ? age(t.created_at) : '', `${t.comments || 0} comments`].filter(Boolean).join(' · ')));
   const rv = t.reviews || { done: 0, need: 1, by: [] };
   if (rv.need > 1) {  // 0.13: a second, different human reviews it too
     const pr = make('p', 'bd-revs'); pr.append(make('b', '', `${rv.done} of ${rv.need} reviews`));
@@ -962,7 +962,7 @@ if (!window.WizardApp || WizardApp.version !== 1) {
   WizardApp.back.register({ canGoBack: () => false, back: () => false });
 }
 for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));
-api('api/status').then(s => { show(s); if (s.connected) { load(view); loadSide(); const other = view === 'goals' ? 'bugs' : 'goals'; setTimeout(() => { if (!cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; }).catch(() => {}); }, 600); } })
+api('api/status').then(s => { show(s); if (s.connected) { load(view); loadSide(); setTimeout(() => { for (const other of ['goals', 'features', 'bugs']) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; }).catch(() => {}); }, 600); } })
   .catch(err => { el('loading').hidden = true; say(err.message, 'error'); });
 const quiet = () => me && me.connected && !document.hidden && !typing() && !sheetOpen() && !popFor;
 const tick = () => { if (quiet() && Date.now() - lastLoad > 20000) load(view, true); };

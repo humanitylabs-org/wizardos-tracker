@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
-description: Use when working with Wizard development Goals and Bugs on GitHub.
-version: 0.13.10
+description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
+version: 0.14.1
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -11,6 +11,8 @@ metadata:
     related_skills: []
 ---
 # WizardOS Tracker (app id `wizardos-tracker`, was `wizard-os-tracker` and `board`): Goals and Bugs
+
+**0.14.1: three views, Goals | Features | Bugs.** A feature (label `feature`) is a new idea or improvement someone wants to try, of any size, filed by anyone on the team with `board_report_feature`. It flows exactly like a bug: the builder builds it behind an off-by-default switch, the opener's agent does AI review, someone else tries it with Try it and says Works or Doesn't work, and the opener closes it once they like it (or closes it as not planned). Bugs = something that should clearly work in every case. Goals = big direction (James). When the owner asks in chat for an idea to try, file a feature, not a bug.
 
 Agent tools are `mcp__wizard__wizardos_tracker__<tool>` (e.g. `mcp__wizard__wizardos_tracker__board_list`).
 
