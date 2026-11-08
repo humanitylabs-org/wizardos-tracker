@@ -723,7 +723,7 @@ function row(i, kind) {
   return wrap;
 }
 
-// ---------- Builder switch (mock-up): Paused until the builder host is connected ----------
+// ---------- Builder switch (0.13.8): real. The builder checks it before every run; pausing asks first ----------
 let builderOn = false;
 function showBuilder(b) {
   builderOn = !!b.running;
@@ -732,13 +732,21 @@ function showBuilder(b) {
   el('builder-state').textContent = builderOn ? 'Running' : 'Paused';
   t.title = b.updated_by ? `Set by ${b.updated_by} ${when(new Date(b.updated_at * 1000).toISOString())}` : '';
 }
-el('builder').onclick = async () => {
-  const t = el('builder');
-  if (!builderOn) return pop(t, '', 'Not connected to the builder yet');  // stops it: stays Paused
-  t.disabled = true;
-  try { showBuilder(await api('api/builder', { running: false })); }
-  catch (err) { pop(t, '', err.status === 403 ? (err.message || 'Only team members can pause the builder.') : err.message); }
+async function setBuilder(on) {
+  const t = el('builder'); unpop(); t.disabled = true;
+  try { showBuilder(await api('api/builder', { running: on })); }
+  catch (err) { pop(t, '', err.status === 403 ? (err.message || 'Only team members can start or pause the builder.') : err.message); }
   finally { t.disabled = false; }
+}
+el('builder').onclick = () => {
+  const t = el('builder');
+  if (!builderOn) return setBuilder(true);
+  const yes = make('button', 'bd-btn bd-danger', 'Pause builder'), no = make('button', 'bd-btn', 'Keep running');
+  yes.type = no.type = 'button';
+  yes.onclick = () => setBuilder(false); no.onclick = unpop;
+  const row = make('div', 'bd-pop-actions'); row.append(no, yes);
+  pop(t, 'Pause the WizardOS Builder?', ['It finishes what it is doing now, then picks up nothing new until someone turns it back on.', row]);
+  no.focus();
 };
 function loadSide() {
   api('api/builder').then(showBuilder).catch(() => {});

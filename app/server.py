@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.13.7'
+VERSION = '0.13.8'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -1939,12 +1939,21 @@ def ai_review_human(*_):
                        'People review in Human review.', 'agents_only')
 
 
-def builder_status():
+def builder_status(seen=False):
+    # 0.13.8: the builder host polls GET /api/builder?from=builder before every run and skips the run when Paused.
+    if seen:
+        with LOCK:
+            _write('builder_seen.json', {'at': int(time.time())})
     b = _read('builder.json', {})
     b = b if isinstance(b, dict) else {}
-    return {'running': bool(b.get('running')), 'state': 'Running' if b.get('running') else 'Paused',
-            'updated_at': b.get('updated_at'), 'updated_by': b.get('updated_by'), 'connected': False,
-            'note': 'Not connected to the builder yet: this switch only records the wish. The builder host will poll GET /api/builder.'}
+    at = (_read('builder_seen.json', {}) or {}).get('at') or 0
+    connected = bool(at) and time.time() - at < 15 * 60
+    running = bool(b.get('running', True))
+    return {'running': running, 'state': 'Running' if running else 'Paused',
+            'updated_at': b.get('updated_at'), 'updated_by': b.get('updated_by'), 'connected': connected,
+            'last_seen': at or None,
+            'note': 'Paused: the builder finishes its current run, then picks up nothing new.' if not running
+            else 'Running: the builder picks up the next item 30 seconds after each run.'}
 
 
 def builder_set(person, args, agent=False):
@@ -2373,7 +2382,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/done':
                 return self.send(200, done_list(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
             if path == '/api/builder':
-                return self.send(200, builder_status())
+                return self.send(200, builder_status(seen=q.get('from') == 'builder'))
             if path == '/api/try':
                 return self.send(200, try_status(self.person()))
             if path == '/api/policy':
