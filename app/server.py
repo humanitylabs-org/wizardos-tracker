@@ -24,7 +24,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'wizard-os-tracker'  # 0.12: id follows the name (was board; renamed_from in wizard.md)
-VERSION = '0.13.5'
+VERSION = '0.13.6'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -44,7 +44,7 @@ MEDIA_REPO = os.environ.get('BOARD_MEDIA_REPO', 'humanitylabs-org/wizard-issue-m
 TEAM_ORG = os.environ.get('BOARD_TEAM_ORG', 'humanitylabs-org').strip()
 AGENT_LOGINS = {'oscarhenrycollins', 'defleur-agents', 'wizardosbuilder'}
 MEMBER_SECONDS = 600
-NOT_MEMBER = f'This tracker is for the Wizard OS team. Ask an owner of {TEAM_ORG} to add you.'
+NOT_MEMBER = f'This tracker is for the WizardOS team. Ask an owner of {TEAM_ORG} to add you.'
 NOT_HUMAN = "Sign in with your own GitHub account, not your agent's. Agents use the Tracker's tools instead."
 CACHE_SECONDS = 60
 STATS_SECONDS = 300
@@ -390,7 +390,7 @@ def connect(person, args, via='token'):
 _device = {}  # person key -> flow (device_code stays on the box, never returned)
 
 
-# The humanitylabs-org 'Wizard OS Tracker' OAuth App (Device Flow). A client id is public, not a secret.
+# The humanitylabs-org 'WizardOS Tracker' OAuth App (Device Flow). A client id is public, not a secret.
 DEFAULT_GITHUB_CLIENT_ID = 'Ov23liRmzoKiwejdVDOo'
 
 
@@ -1575,7 +1575,7 @@ POLICY_DEFAULT = {
         {'name': 'Jan', 'logins': ['JanMesaric'], 'agents': []},
         {'name': 'Robert', 'logins': ['hacalastudio'], 'agents': []},
     ],
-    'builder': {'name': 'Wizard OS Builder', 'logins': [BUILDER]},
+    'builder': {'name': 'WizardOS Builder', 'logins': [BUILDER]},
     # Who may open and close items in each view: a list of team names, or "team" for everyone on it.
     'open': {'goals': ['James'], 'bugs': 'team'},
     # 0.9: target time per step (seconds). Drawn as a tick on each bin's range bar; the median turns
@@ -1621,7 +1621,7 @@ def _targets(over):
 STEP_TEXT = {
     'open': {'goals': '{who} opens goals and closes them once they work. Nobody else adds or closes a goal.',
              'bugs': 'Anyone on the team, or their own agent, opens a bug and closes it once it works.'},
-    'build': 'The Wizard OS Builder writes the code, then labels it ai-review and says what to check.',
+    'build': 'The WizardOS Builder writes the code, then labels it ai-review and says what to check.',
     'ai': "The opener's agent (a goal's owner's) checks the build matches the issue: pass to Human review, or back to Building.",
     'review': {'bugs': "Someone on the team, not whoever opened it, tries it and says Works or Doesn't work.",
                'goals': "The goal's owner, or {who}, tries it and says Works or Doesn't work."},
@@ -1667,7 +1667,7 @@ def policy_base():
     over = _policy_file()
     team = [x for x in (_team_entry(t) for t in (over.get('team') if isinstance(over.get('team'), list) else POLICY_DEFAULT['team'])) if x]
     b = over.get('builder') if isinstance(over.get('builder'), dict) else POLICY_DEFAULT['builder']
-    builder = {'name': str(b.get('name') or 'Wizard OS Builder')[:40], 'logins': [x for x in b.get('logins') or [BUILDER] if isinstance(x, str)]}
+    builder = {'name': str(b.get('name') or 'WizardOS Builder')[:40], 'logins': [x for x in b.get('logins') or [BUILDER] if isinstance(x, str)]}
     opn = dict(POLICY_DEFAULT['open'])
     if isinstance(over.get('open'), dict):
         opn.update({k: v for k, v in over['open'].items() if k in ('goals', 'bugs') and (v == 'team' or isinstance(v, list))})
@@ -2240,8 +2240,8 @@ TOOLS = [
     {'name': 'board_add_goal', 'description': 'HUMANS OPEN GOALS. Use only when a human explicitly asked you to add this goal for them; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string'}, 'done': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Done-list lines (1-20).'}, 'body': {'type': 'string'}, **ASKED}, 'required': ['repo', 'title', 'done', 'owner_request']}},
     {'name': 'board_accept_bug', 'description': 'ONLY HUMANS ACCEPT BUGS. Adds label accepted only when a human explicitly asked you to; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, **ASKED}, 'required': ['owner_request']}},
     {'name': 'board_close', 'description': 'Close a Bug when a human asked you to (pass their words). Goals are refused: only humans close goals, in the app.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'enum': ['completed', 'not_planned']}, **ASKED}, 'required': ['owner_request']}},
-    {'name': 'builder_status', 'description': 'Is the Wizard OS Builder switch Running or Paused? (Mock-up: not wired to the builder host yet.)', 'inputSchema': {'type': 'object', 'properties': {}}},
-    {'name': 'builder_set', 'description': 'Set the Wizard OS Builder switch (running true = Running, false = Paused) only when a human asked; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'running': {'type': 'boolean'}, **ASKED}, 'required': ['running', 'owner_request']}},
+    {'name': 'builder_status', 'description': 'Is the WizardOS Builder switch Running or Paused? (Mock-up: not wired to the builder host yet.)', 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'builder_set', 'description': 'Set the WizardOS Builder switch (running true = Running, false = Paused) only when a human asked; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'running': {'type': 'boolean'}, **ASKED}, 'required': ['running', 'owner_request']}},
     {'name': 'try_status', 'description': "Which items the signed-in person switched 'Try it' on for (mock-up: records the wish, nothing runs yet).", 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'try_set', 'description': "Switch 'Try it' on or off for one item (repo owner/name + number) only when a human asked; pass their words as owner_request. Mock-up.", 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'number': {'type': 'integer'}, 'on': {'type': 'boolean'}, **ASKED}, 'required': ['repo', 'number', 'on', 'owner_request']}},
     {'name': 'board_flow', 'description': "One item's own assembly line from its GitHub label timeline: seconds spent in Queued, Building and Review, closed time, kick-backs (ready-to-test removed without a close), current stage.", 'inputSchema': {'type': 'object', 'properties': ISSUE}},

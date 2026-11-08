@@ -1,10 +1,10 @@
 'use strict';
-// Wizard OS Tracker 0.14: Try it is the change's real feature switch on this Wizard (builder line `Switch: <author>/<id>`,
+// WizardOS Tracker 0.14: Try it is the change's real feature switch on this Wizard (builder line `Switch: <author>/<id>`,
 // shell route /wizard-os-home/store-install/_feature-switches, same state as Settings › Try new features).
-// Wizard OS Tracker 0.13: two-step review. The line is Queued → Building → AI review → Human review → Done, with
+// WizardOS Tracker 0.13: two-step review. The line is Queued → Building → AI review → Human review → Done, with
 // two return arrows to Building (AI review fail, Human review Doesn't work), optional second human review
 // ('1 of 2 reviews' on cards), and Sign in with GitHub (device flow) when the box has a client id.
-// Wizard OS Tracker 0.10: stable chip order (sorted once by the unfiltered totals), goal owners as name chips on
+// WizardOS Tracker 0.10: stable chip order (sorted once by the unfiltered totals), goal owners as name chips on
 // the title line, shared step targets editable from a thin row under the bins (no control inside a bin).
 // 0.9: Goals | Bugs + a small Builder switch; the assembly line Queued → Building →
 // Review → Done (big numbers, arrows, a return arrow with the kick-back rate; each bin carries a tiny
@@ -27,7 +27,7 @@ const BINS = [
   { key: 'done', group: null, word: 'Done' },
 ];
 const POP = {
-  build: ['Wizard OS Builder', 'Writes the code, then hands it to Review.'],
+  build: ['WizardOS Builder', 'Writes the code, then hands it to Review.'],
   ai: ['The opener’s agent', 'Checks the build matches the issue: on to Human review, or back to Building. A goal’s owner’s agent checks goals; anyone outside the team gets any team agent.'],
   review: ['The team, not whoever opened it', 'Someone else tries it: Works, or back to Building.'],
   done: ['Closed', 'The opener closes it once it works.'],
@@ -129,7 +129,7 @@ const tapTarget = (cls, fn) => { const a = make('a', cls); a.setAttribute('role'
 const plainClick = e => !(e.metaKey || e.ctrlKey || e.shiftKey || e.button);
 
 // ---------- sign in ----------
-const REFUSED_TITLE = { not_member: 'For the Wizard OS team', agent: 'Your own account, please' };
+const REFUSED_TITLE = { not_member: 'For the WizardOS team', agent: 'Your own account, please' };
 function refuse(reason, message) {
   el('refused-title').textContent = REFUSED_TITLE[reason] || REFUSED_TITLE.not_member;
   el('refused-text').textContent = message;

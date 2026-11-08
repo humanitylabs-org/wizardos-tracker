@@ -1,4 +1,4 @@
-/* Wizard OS Tracker 0.9 layout only. Colours, type and components come from the kit (wizard-ui.css, --wz-* roles). */
+/* WizardOS Tracker 0.9 layout only. Colours, type and components come from the kit (wizard-ui.css, --wz-* roles). */
 [hidden] { display: none !important; }
 .bd-app { min-height: 100dvh; }
 .bd-scroll { padding-top: var(--wz-space-4); padding-bottom: calc(var(--wz-space-5) + env(safe-area-inset-bottom, 0px)); }
