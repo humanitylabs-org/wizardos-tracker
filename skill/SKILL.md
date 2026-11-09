@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.18.0
+version: 0.18.1
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -15,7 +15,7 @@ metadata:
 Repo: `humanitylabs-org/wizardos-tracker` (was `oscarhenrycollins/wizard-board`, then `oscarhenrycollins/wizardos-tracker`). Agent tools: `mcp__wizard__wizardos_tracker__<tool>`.
 
 ## Tabs and kinds (0.18)
-Goals | Core features | App features | Bugs. Labels stay `goal` / `feature` / `bug`; **core vs app comes from the repo**: core = `wizard-os`, `wizard-ux`, `wizard-app-manager`, `wizard-agent-service`, `try-wizard` (Mac app) — the list is `core_repos` in `/api/policy` (DATA_DIR/policy.json overrides). Every other repo (wizard-messenger, app repos) is an app.
+Goals (own header button) | Core features | App features | Bugs; an item with both `bug` and `feature` labels counts as a bug. Labels stay `goal` / `feature` / `bug`; **core vs app comes from the repo**: core = `wizard-os`, `wizard-ux`, `wizard-app-manager`, `wizard-agent-service`, `try-wizard` (Mac app) — the list is `core_repos` in `/api/policy` (DATA_DIR/policy.json overrides). Every other repo (wizard-messenger, app repos) is an app.
 - **Goal**: human-led, never built by the builder. Owners (assignees) post status; only James closes it.
 - **Feature**: an idea to try. File with `board_report_feature`. When the owner asks to try an idea, file a feature, not a bug.
 - **Bug**: something that should clearly work. File with `board_report_bug` (what happens, what should happen, how to see it).

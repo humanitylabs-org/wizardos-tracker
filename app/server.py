@@ -28,7 +28,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.18.0'
+VERSION = '0.18.1'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -788,7 +788,7 @@ def shape(node):
     prs = _prs(node)
     return {'id': f"{node['repository']['nameWithOwner']}#{node['number']}", 'repo': node['repository']['nameWithOwner'],
             'number': node['number'], 'title': node.get('title'), 'url': node.get('url'),
-            'type': 'goal' if 'goal' in low else 'feature' if 'feature' in low else 'bug' if 'bug' in low else 'other',
+            'type': 'goal' if 'goal' in low else 'bug' if 'bug' in low else 'feature' if 'feature' in low else 'other',   # 0.18.1: bug wins
             'category': category(node['repository']['nameWithOwner'], low),   # 0.18: goal | core | app | bug (core vs app from the repo)
             'stage': item_group(node['repository']['nameWithOwner'], low, (node.get('state') or '').lower()) if 'goal' not in low else None,
             'state': (node.get('state') or '').lower(), 'state_reason': (node.get('stateReason') or '').lower() or None,
@@ -1830,10 +1830,29 @@ def _repo_list(arg):
 # 0.18: four tabs. Core features and App features are both label `feature`; which one is derived from the repo
 # (policy `core_repos`, defaults CORE_REPOS). 'features' (both) stays for scripts and older views.
 VIEWS = ('goals', 'core', 'apps', 'bugs', 'features')
-VIEW_Q = {'goals': 'label:goal', 'features': 'label:feature -label:goal', 'core': 'label:feature -label:goal',
-          'apps': 'label:feature -label:goal', 'bugs': '-label:goal -label:feature'}
+# 0.18.1: an item labelled both `bug` and `feature` (wam#524) is a bug: features exclude `bug`, and Bugs adds a second
+# search (VIEW_ALSO) for bug+feature items, because GitHub search can't say '-label:feature OR label:bug'.
+VIEW_Q = {'goals': 'label:goal', 'features': 'label:feature -label:goal -label:bug', 'core': 'label:feature -label:goal -label:bug',
+          'apps': 'label:feature -label:goal -label:bug', 'bugs': '-label:goal -label:feature'}
+VIEW_ALSO = {'bugs': 'label:bug label:feature -label:goal'}
 VIEW_KIND = {'goals': 'goal', 'features': 'feature', 'core': 'feature', 'apps': 'feature', 'bugs': 'bug'}
 STATS_VIEW = {'goals': 'goals', 'features': 'features', 'core': 'features', 'apps': 'features', 'bugs': 'bugs'}
+
+
+def _view_search(token, view, q, order='updatedAt', **kw):
+    """_view_nodes for a view's query `q` (which contains VIEW_Q[view]), plus the view's VIEW_ALSO search merged in
+    (newest updated first, no duplicates)."""
+    nodes, total = _view_nodes(token, q, **kw)
+    also = VIEW_ALSO.get(view)
+    if not also or VIEW_Q[view] not in q:
+        return nodes, total
+    more, n2 = _view_nodes(token, q.replace(VIEW_Q[view], also), **kw)
+    seen = {(n['repository']['nameWithOwner'], n['number']) for n in nodes}
+    extra = [n for n in more if (n['repository']['nameWithOwner'], n['number']) not in seen]
+    if not extra:
+        return nodes, total
+    merged = sorted(nodes + extra, key=lambda n: n.get(order) or '', reverse=True)
+    return merged[:kw.get('limit', MAX_ITEMS)], total + n2
 
 
 def _view(args):
@@ -1947,12 +1966,12 @@ def board_split(person, args):
         return {**common, 'groups': {'goals': goals}, 'counts': {'goals': len(goals)}, 'total': total, 'shown': len(goals),
                 'more': total > len(nodes), 'repos': [], 'stats': {'pending': True, 'items': []}, 'steps': steps_for('goals', base),
                 'test': [], 'doing': goals}
-    nodes, total = _view_nodes(acct['token'], q, heavy=False)
+    nodes, total = _view_search(acct['token'], view, q, heavy=False)
     if view in ('core', 'apps'):
         kept = [n for n in nodes if view_keeps(view, n['repository']['nameWithOwner'], base)]
         total = len(kept) if total <= len(nodes) else total
         nodes = kept
-    full, _ = _view_nodes(acct['token'], q.replace(' sort:', ' label:ready-to-test,ai-review,show-and-tell,approved sort:'), heavy=True, limit=80)
+    full, _ = _view_search(acct['token'], view, q.replace(' sort:', ' label:ready-to-test,ai-review,show-and-tell,approved sort:'), heavy=True, limit=80)
     by = {(n['repository']['nameWithOwner'], n['number']): n for n in full}
     nodes = [by.get((n['repository']['nameWithOwner'], n['number']), n) for n in nodes]
     now = time.time()
@@ -2225,12 +2244,12 @@ def done_list(person, args):
     if args.get('refresh'):
         _forget(acct['token'])
     base = policy_base()
-    nodes, total = _view_nodes(acct['token'], f'org:{org} is:issue is:closed {VIEW_Q[view]} sort:updated-desc', limit=80, query=DONE_PAGE)
+    nodes, total = _view_search(acct['token'], view, f'org:{org} is:issue is:closed {VIEW_Q[view]} sort:updated-desc', limit=80, query=DONE_PAGE)
     ts = since_ts(base)
     nodes = [n for n in nodes if counts_since('closed', n.get('closedAt'), ts) and view_keeps(view, n['repository']['nameWithOwner'], base)]
     opened = []
     if view != 'goals':
-        opened, _ = _view_nodes(acct['token'], f'org:{org} is:issue is:open {VIEW_Q[view]} label:approved,switch-default sort:updated-desc', heavy=True, limit=60)
+        opened, _ = _view_search(acct['token'], view, f'org:{org} is:issue is:open {VIEW_Q[view]} label:approved,switch-default sort:updated-desc', heavy=True, limit=60)
         opened = [n for n in opened if view_keeps(view, n['repository']['nameWithOwner'], base)]
     token, login = acct['token'], acct.get('login') or ''
 
@@ -2295,7 +2314,7 @@ def view_stats(token, org, view, cached_only=False):
     if cached_only:
         return None
     kind = VIEW_Q[view]
-    nodes, total = _view_nodes(token, f'org:{org} is:issue {kind} sort:created-desc', limit=STATS_MAX, query=STATS_PAGE)
+    nodes, total = _view_search(token, view, f'org:{org} is:issue {kind} sort:created-desc', order='createdAt', limit=STATS_MAX, query=STATS_PAGE)
     now = time.time()
     base = policy_base()
     items = [item_history(n, now) for n in nodes if n.get('repository') and view_keeps(view, n['repository']['nameWithOwner'], base)]
@@ -2443,7 +2462,7 @@ def category(repo, labels, base=None):
     low = {str(l).lower() for l in labels or []}
     if 'goal' in low:
         return 'goal'
-    if 'feature' in low:
+    if 'feature' in low and 'bug' not in low:   # 0.18.1: bug wins when both labels are set (wam#524)
         return 'core' if is_core(repo, base) else 'app'
     return 'bug'
 
