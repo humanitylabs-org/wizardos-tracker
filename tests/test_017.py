@@ -155,6 +155,19 @@ class SameForEveryone(unittest.TestCase):
         self.assertEqual([i['can_close_goal'] for i in g_j['groups']['queued']], [True])
         self.assertEqual(g_m['groups']['test'][0]['progress'], {'done': 1, 'total': 3, 'of': 'done-list items'})
 
+    def test_just_filed_item_shows_for_everyone(self):
+        card = {'id': 'humanitylabs-org/wizard-ux#9', 'repo': 'humanitylabs-org/wizard-ux', 'number': 9, 'title': 'New', 'author': 'mistermizel'}
+        S._made[('someone-elses-token', card['id'])] = (S.time.time(), 'issues', card)
+        try:
+            a, b = S.board_split('m', {'view': 'bugs'}), S.board_split('j', {'view': 'bugs'})
+            self.assertEqual(self.shape(a), self.shape(b))
+            qa = next(i for i in a['groups']['queued'] if i['number'] == 9)
+            qb = next(i for i in b['groups']['queued'] if i['number'] == 9)
+            self.assertEqual((qa['mine'], qb['mine']), (True, False))
+            self.assertEqual([i['id'] for i in a['test']], [i['id'] for i in b['test']])  # 0.3 shape: same for everyone
+        finally:
+            S._made.clear()
+
     def test_test_tab_query_has_no_author_filter(self):
         src = open(str(S.__file__)).read()
         self.assertNotIn("-author:{login}", src)
