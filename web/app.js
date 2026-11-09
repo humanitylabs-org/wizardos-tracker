@@ -30,7 +30,9 @@ const GROUPS = ['test', 'show', 'james', 'airev', 'building', 'queued', 'shippin
 const VIEWS = ['goals', 'core', 'apps', 'bugs'];
 const stage = { goals: null, core: null, apps: null, bugs: null, features: null };   // tap a bin: show only that stage (not remembered)
 const doneCache = {};   // view -> { at, items } recently closed, loaded when the Done bin is tapped
-let me = null, view = ({ '#bugs': 'bugs', '#core': 'core', '#apps': 'apps', '#features': 'apps' })[location.hash] || 'goals', umOpen = false, umBack = 'goals', gen = 0, held = null, lastLoad = 0, who = '';
+// 0.18.1: the last view is remembered per device; first landing is Core features (Goals only if you last used Goals).
+const lastView = () => { try { const v = JSON.parse(localStorage.getItem('board.view')); return VIEWS.includes(v) ? v : 'core'; } catch (_) { return 'core'; } };
+let me = null, view = ({ '#goals': 'goals', '#bugs': 'bugs', '#core': 'core', '#apps': 'apps', '#features': 'apps' })[location.hash] || lastView(), umOpen = false, umBack = 'core', gen = 0, held = null, lastLoad = 0, who = '';
 const NO_DATA = 'starts once the builder runs';
 const BINS = [
   { key: 'open', group: 'queued', word: 'Queued' },
@@ -183,7 +185,7 @@ el('connect-form').onsubmit = async e => {
   e.preventDefault();
   const t = el('token'), b = el('connect');
   b.disabled = true; t.disabled = true; say('Checking with GitHub…', 'note');
-  try { const s = await api('api/connect', { token: t.value }); t.value = ''; say(''); show(s); load('goals'); loadSide(); }
+  try { const s = await api('api/connect', { token: t.value }); t.value = ''; say(''); show(s); load(view); loadSide(); }
   catch (err) { if (err.reason) { t.value = ''; refuse(err.reason, err.message); } else say(err.message, 'error'); }
   finally { b.disabled = false; t.disabled = false; }
 };
@@ -234,22 +236,36 @@ el('oauth-copy').onclick = async () => {
 el('oauth-cancel').onclick = () => { api('api/device/cancel', {}).catch(() => {}); stopDevice(); say(''); };
 el('oauth-token').onclick = () => { tokenWanted = !tokenWanted; if (tokenWanted) { api('api/device/cancel', {}).catch(() => {}); clearTimeout(devTimer); devTimer = null; } signinMode(me); (tokenWanted ? el('token') : el('oauth-go')).focus(); };
 
-// ---------- Goals | Bugs ----------
+// ---------- 0.18.1: Goals button (left) | Core features | App features | Bugs ----------
 const sw = document.querySelector('.bd-switch');
-sw.addEventListener('click', e => {
-  const b = e.target.closest('[data-view]');
-  if (!b || b.dataset.view === view) return;
-  view = b.dataset.view;
+function markView() {
+  for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));
+  el('goals-btn').setAttribute('aria-pressed', String(view === 'goals'));
+}
+// goals needing attention: no status yet, At risk, Blocked, or a status older than 7 days
+function goalsBadge() {
+  const g = cache.goals && cache.goals.groups && cache.goals.groups.goals, n = el('goals-n');
+  if (!g) { n.hidden = true; return; }
+  const k = g.filter(x => !x.status || x.status.stale || x.status.color !== 'green').length;
+  n.hidden = !k; n.textContent = k ? String(k) : '';
+  n.setAttribute('aria-label', k ? `${k} need${k === 1 ? 's' : ''} attention` : '');
+  el('goals-btn').title = k ? `${k} goal${k === 1 ? '' : 's'} need attention (no status, at risk, blocked or status old)` : 'Goals';
+}
+function pickView(v) {
+  if (!v || v === view) return;
+  view = v; store.set('board.view', v);
   for (const k of Object.keys(stage)) stage[k] = null;   // 0.15: a new tab always starts unfiltered (all stages)
-  for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x === b));
+  markView();
   hold(false);
-  try { history.replaceState(null, '', view === 'goals' ? location.pathname + location.search : '#' + view); } catch (_) {}
+  try { history.replaceState(null, '', '#' + view); } catch (_) {}
   unpop(); repoMore = false;
   el('scroll').scrollTop = 0;
   if (cache[view]) render(cache[view]);
   else { el('secs').replaceChildren(); el('totals').textContent = ''; el('strip').replaceChildren(); el('filtered').hidden = true; el('empty').hidden = false; el('empty').textContent = 'Loading…'; }
   load(view);
-});
+}
+sw.addEventListener('click', e => { const b = e.target.closest('[data-view]'); if (b) pickView(b.dataset.view); });
+el('goals-btn').onclick = () => pickView('goals');
 
 // 0.13.5: a small refresh button top right; it spins while a reload is in flight, and 'updated 20s ago' says how fresh the list is.
 let inflight = 0, freshAt = 0;
@@ -271,6 +287,7 @@ async function load(which, refresh = false) {
     const d = await api(`api/split?view=${which}${refresh ? '&refresh=1' : ''}`);
     if (d.stats && d.stats.pending && cache[which] && cache[which].stats && !cache[which].stats.pending) d.stats = cache[which].stats;
     cache[which] = d;
+    if (which === 'goals') goalsBadge();
     if (which === view && g === gen && !typing()) render(d);
     if (el('settings').open) tryList();
     say('');
@@ -1170,7 +1187,7 @@ function statusForm(g, area, btn) {
     try {
       const res = await api('api/goal/status', { repo: g.repo, number: g.number, color, text });
       g.status = { ...res.status, by_person: (cache.goals && cache.goals.me_person) || res.status.by_person };
-      details.delete(g.id); close();
+      details.delete(g.id); close(); goalsBadge();
       toast('Status posted.');
       if (cache[view]) render(cache[view]);
       if (openId === g.id) openDetail(g);
@@ -1590,12 +1607,12 @@ el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.18.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.18.1' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
-for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));
+markView();
 loadCatalog().catch(() => {});
-api('api/status').then(s => { show(s); if (s.connected) { load(view); loadSide(); setTimeout(() => { for (const other of VIEWS) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; }).catch(() => {}); }, 600); } })
+api('api/status').then(s => { show(s); if (s.connected) { load(view); loadSide(); setTimeout(() => { for (const other of VIEWS) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; if (other === 'goals') goalsBadge(); }).catch(() => {}); }, 600); } })
   .catch(err => { el('loading').hidden = true; say(err.message, 'error'); });
 const quiet = () => me && me.connected && !document.hidden && !typing() && !sheetOpen() && !popFor;
 const tick = () => { if (quiet() && Date.now() - lastLoad > 20000) load(view, true); };

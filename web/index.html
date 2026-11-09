@@ -49,11 +49,14 @@
       </section>
 
       <div id="board" class="bd-board" hidden>
-        <!-- Goals | Bugs and the small Builder switch, one row. -->
+        <!-- 0.18.1: Goals is its own button on the left; three tabs (Core features | App features | Bugs); the small Builder switch on the right. -->
         <div class="bd-head">
+          <button type="button" class="bd-goals-btn" id="goals-btn" data-view="goals" aria-pressed="false" aria-describedby="goals-n">
+            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/></svg>
+            <span>Goals</span><b class="bd-goals-n" id="goals-n" hidden></b>
+          </button>
           <div class="bd-switch" role="tablist" aria-label="Show">
-            <button type="button" role="tab" data-view="goals" aria-selected="true">Goals</button>
-            <button type="button" role="tab" data-view="core" aria-selected="false">Core features</button>
+            <button type="button" role="tab" data-view="core" aria-selected="true">Core features</button>
             <button type="button" role="tab" data-view="apps" aria-selected="false">App features</button>
             <button type="button" role="tab" data-view="bugs" aria-selected="false">Bugs</button>
           </div>
