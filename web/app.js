@@ -1,7 +1,11 @@
 'use strict';
+// WizardOS Tracker 0.18.2: the default sort is 'Your turn first': items the viewer can act on now (their Human review,
+// approvals for James or Miguel, show-and-tell for James, goals they own needing a status update) on top under a small
+// 'Your turn' divider, then everything else oldest first. Core features wait for approval by James OR Miguel
+// (wizard-os#423). Stats count items 'Still not working' (Doesn't work said more than once); the detail shows a badge.
 // WizardOS Tracker 0.18: Goals | Core features | App features | Bugs. Core vs app comes from the repo (policy
 // core_repos). Bugs and app features: Filed → Building → AI review → Human review (by the filer) → Shipping → Done.
-// Core features: Waiting for James → Building → AI review → Human review → Show-and-tell (James) → Shipping → Done.
+// Core features: Waiting for approval (0.18.2: James or Miguel) → Building → AI review → Human review → Show-and-tell (James) → Shipping → Done.
 // Shipping = approved, not yet in a release for everyone; Done = 'Shipped in <version>'. Goals are human-led: a status
 // light (On track / At risk / Blocked) with a short human status, owners, linked items by stage. Cards: title, one
 // 'where it is and what's next' line, ONE action area (Update / Try / Works · Doesn't work / Approve), small meta.
@@ -53,16 +57,36 @@ const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } cat
 const picked = Object.fromEntries([...VIEWS, 'features'].map(v => [v, new Set(store.get('board.repos.' + v) || [])]));
 const pickedWho = Object.fromEntries([...VIEWS, 'features'].map(v => [v, new Set(store.get('board.who.' + v) || [])]));
 let repoMore = false;   // the Repo row's '+N more' is open (not remembered)
-const SORTS = [['oldest', 'Oldest'], ['newest', 'Newest'], ['discussed', 'Most discussed'], ['active', 'Recently active']];
-const savedSort = v => SORTS.some(([k]) => k === store.get('board.sort.' + v)) ? store.get('board.sort.' + v) : 'oldest';
+const SORTS = [['turn', 'Your turn first'], ['oldest', 'Oldest'], ['newest', 'Newest'], ['discussed', 'Most discussed'], ['active', 'Recently active']];
+// 0.18.2: new default 'turn' for everyone (new key board.sort2.*); an earlier explicit pick other than Oldest carries over
+const savedSort = v => {
+  const now = store.get('board.sort2.' + v), old = store.get('board.sort.' + v);
+  if (SORTS.some(([k]) => k === now)) return now;
+  return old && old !== 'oldest' && SORTS.some(([k]) => k === old) ? old : 'turn';
+};
 const sortBy = Object.fromEntries([...VIEWS, 'features'].map(v => [v, savedSort(v)]));
 const ts = iso => { const t = Date.parse(iso || ''); return isNaN(t) ? 0 : t; };
 const SORT_FN = {
+  turn: (a, b) => ts(a.created_at) - ts(b.created_at),   // within each group: the existing order (oldest first)
   oldest: (a, b) => ts(a.created_at) - ts(b.created_at),
   newest: (a, b) => ts(b.created_at) - ts(a.created_at),
   discussed: (a, b) => (b.comments || 0) - (a.comments || 0) || ts(a.created_at) - ts(b.created_at),
   active: (a, b) => ts(b.updated_at) - ts(a.updated_at),
 };
+// 0.18.2: can the viewer act on this now? Human review (theirs), approval (James or Miguel), show-and-tell (James),
+// a goal they own that needs a status update (none yet or old; the server's `turn`).
+function myTurn(i) {
+  if (!i || i.closed_at || i.state === 'closed') return false;
+  if (i.group === 'test') return !!i.can_review;
+  if (i.group === 'james' || i.group === 'show') return !!i.can_james;
+  if (i.group === 'goals' || i.category === 'goal') return !!i.turn;
+  return false;
+}
+function turnDivider(n) {
+  const d = make('div', 'bd-turn-div'); d.setAttribute('role', 'separator');
+  d.append(make('span', 'bd-turn-w', 'Your turn'), make('span', 'bd-n', String(n)));
+  return d;
+}
 const cache = {};
 const details = new Map();   // issue id -> { at, data }: a short cache so reopening is instant
 const DETAIL_SECONDS = 60;
@@ -365,8 +389,18 @@ function render(d) {
   el('totals').textContent = d.more && !only ? `showing ${d.shown} of ${d.total}` : '';
   const secs = [];
   let any = false;
+  // 0.18.2: 'Your turn first' lifts what the viewer can act on now above every section, under a small divider
+  const turnFirst = sortBy[d.view] === 'turn';
+  const mine = turnFirst ? sectionsOf(d.view).filter(([g]) => showing(g) && groups[g]).flatMap(([g]) => groups[g].filter(myTurn)) : [];
+  if (mine.length) {
+    any = true;
+    const s = make('section', 'bd-sec bd-turn'); s.id = 'sec-turn';
+    const l = make('div', 'bd-list'); l.replaceChildren(...mine.map(itemCard));
+    s.append(turnDivider(mine.length), l); secs.push(s, make('hr', 'bd-turn-end'));
+  }
+  const mineSet = new Set(mine);
   for (const [g, title] of sectionsOf(d.view)) {
-    const list = groups[g];
+    const list = groups[g] && groups[g].filter(i => !mineSet.has(i));
     if (!showing(g) || !list || !list.length) continue;
     any = true;
     const s = make('section', 'bd-sec'); s.id = 'sec-' + g;
@@ -374,6 +408,7 @@ function render(d) {
     const l = make('div', 'bd-list'); l.replaceChildren(...list.map(itemCard));
     s.append(h, l); secs.push(s);
   }
+  if (secs.length && secs[secs.length - 1].tagName === 'HR') secs.pop();   // nothing below the 'Your turn' group
   el('secs').replaceChildren(...secs);
   if ((d.groups.test || []).length) setTimeout(() => checkOnBox(d.groups.test || []), 0);   // 0.16: in the background, cached
   el('empty').hidden = any;
@@ -409,7 +444,7 @@ el('sort-btn').onclick = () => {
   for (const [k, label] of SORTS) {
     const it = make('button', 'bd-menu-i', label); it.type = 'button'; it.setAttribute('role', 'menuitemradio');
     it.setAttribute('aria-checked', String(sortBy[view] === k));
-    it.onclick = () => { sortBy[view] = k; store.set('board.sort.' + view, k); unpop(); if (cache[view]) render(cache[view]); };
+    it.onclick = () => { sortBy[view] = k; store.set('board.sort2.' + view, k); unpop(); if (cache[view]) render(cache[view]); };
     list.append(it);
   }
   pop(b, '', [list]);
@@ -490,6 +525,7 @@ function lineStats(items) {
     kick: { reviewed: reviewed.length, kicked: kicked.length, rate: reviewed.length ? kicked.length / reviewed.length : null,
       per: kicked.length ? kicked.reduce((a, i) => a + i.kicks, 0) / kicked.length : null,
       toDone: toDone.length ? toDone.reduce((a, b) => a + b, 0) / toDone.length : null },
+    still: items.filter(i => (i.kicks || 0) >= 2).length,   // 0.18.2: Doesn't work said more than once
     aiKick: { reviewed: aiSeen.length, kicked: aiKicked.length, rate: aiSeen.length ? aiKicked.length / aiSeen.length : null,
       per: aiKicked.length ? aiKicked.reduce((a, i) => a + i.ai_kicks, 0) / aiKicked.length : null } };
 }
@@ -571,14 +607,20 @@ function flow(d, groups, done, st, hist) {
     return c;
   }));
   kickLabel(ls, st);
+  const sn = el('still-n');   // 0.18.2
+  sn.hidden = !ls;
+  if (ls) {
+    sn.replaceChildren(make('b', '', 'Still not working: ' + ls.still), document.createTextNode(' · items where someone said Doesn’t work more than once'));
+    sn.classList.toggle('warn', ls.still > 0);
+  }
 }
 
 // 0.18: each list tab has its own stage strip; every stage has a small ⓘ saying what happens there and who does it.
 const STAGE_INFO = {
   queued: 'Filed. The WizardOS Builder picks it up on its next run.',
-  james: 'Core features change WizardOS for everyone, so James approves them before the builder may start. James: Approve or Decline on the card.',
+  james: 'James or Miguel approves before the builder starts. Core features change WizardOS for everyone. James or Miguel: Approve or Decline on the card.',
   building: 'The WizardOS Builder writes the change (a feature arrives behind a switch, off by default).',
-  corebuild: 'Approved by James. The WizardOS Builder writes the change behind a switch, off by default.',
+  corebuild: 'Approved by James or Miguel. The WizardOS Builder writes the change behind a switch, off by default.',
   airev: 'The filer’s agent checks that the build matches the issue: on to Human review, or back to Building (counted as a kick-back).',
   test: 'The person who filed it tries it on their Wizard (Update first if needed, then the switch if there is one) and says Works or Doesn’t work. Doesn’t work goes back to Building.',
   show: 'James sees it working. When he approves, the switch is removed (on for everyone) and it ships.',
@@ -588,13 +630,13 @@ const STAGE_INFO = {
 function binsOf(v) {
   const tail = [{ key: 'airev', word: 'AI review', groups: ['airev'] }, { key: 'test', word: 'Human review', groups: ['test'] }];
   const end = [{ key: 'shipping', word: 'Shipping', groups: ['shipping'] }, { key: 'done', word: 'Done', groups: ['done'] }];
-  if (v === 'core') return [{ key: 'james', word: 'Waiting for James', groups: ['james'] },
+  if (v === 'core') return [{ key: 'james', word: 'Waiting for approval', groups: ['james'], tip: 'James or Miguel approves before the builder starts' },
     { key: 'building', word: 'Building', groups: ['queued', 'building'], info: 'corebuild' }, ...tail,
     { key: 'show', word: 'Show-and-tell', groups: ['show'] }, ...end];
   return [{ key: 'queued', word: 'Filed', groups: ['queued'] }, { key: 'building', word: 'Building', groups: ['building'] }, ...tail, ...end];
 }
 function sectionsOf(v) {
-  return [['test', 'Human review'], ['show', 'Show-and-tell'], ['james', 'Waiting for James'], ['airev', 'AI review'],
+  return [['test', 'Human review'], ['show', 'Show-and-tell'], ['james', 'Waiting for approval'], ['airev', 'AI review'],
     ['building', 'Building'], ['queued', v === 'core' ? 'Approved · waiting for the builder' : 'Filed'], ['shipping', 'Shipping'], ['done', 'Done']]
     .filter(([g]) => v === 'core' || !['show', 'james'].includes(g));
 }
@@ -614,6 +656,7 @@ function strip(d, bins, groups) {
     const info = make('button', 'bd-i bd-i-s'); info.type = 'button'; info.setAttribute('aria-label', 'What happens in ' + x.word); info.append(infoIcon());
     info.onclick = e => { e.stopPropagation(); pop(info, x.word, STAGE_INFO[x.info || x.key]); };
     w.append(info);
+    if (x.tip) { li.title = x.tip; b.title = x.tip; }
     li.append(b, w);
     li.onclick = () => setStage(x.key);
     out.push(li);
@@ -980,10 +1023,10 @@ function whereLine(i) {
     return ['Your turn: try it', 'turn'];
   }
   if (g === 'show') return i.can_james ? ['Your turn: show-and-tell', 'turn'] : ['Waiting for James’ show-and-tell', ''];
-  if (g === 'james') return i.can_james ? ['Your turn: approve or decline', 'turn'] : ['Waiting for James to approve', ''];
+  if (g === 'james') return i.can_james ? ['Your turn: approve or decline', 'turn'] : ['Waiting for James or Miguel to approve', ''];
   if (g === 'airev') return [i.ai_reviewer && i.ai_reviewer !== 'any team agent' ? `Waiting for ${i.ai_reviewer}’s AI check` : 'Waiting for an AI check', ''];
   if (g === 'building') return i.blocked ? ['The builder is stuck: needs a human', 'warn'] : ['The builder is on it', ''];
-  if (g === 'queued') return [i.category === 'core' ? 'Approved by James · waiting for the builder' : 'Filed · waiting for the builder', ''];
+  if (g === 'queued') return [i.category === 'core' ? 'Approved · waiting for the builder' : 'Filed · waiting for the builder', ''];
   if (g === 'shipping') return [i.ship ? i.ship.text : 'Approved · checking releases…', ''];
   if (g === 'done') return [i.ship ? i.ship.text : 'Done', 'done'];
   return ['', ''];
@@ -1112,12 +1155,17 @@ function updateFor(v) {
 // ---------- 0.18 Goals: the home tab. One larger card per goal: status light, the latest human status, owners,
 // linked bugs and features by stage, and Update status (the goal's owners or James; greyed for others) ----------
 const LIGHT = { green: 'On track', yellow: 'At risk', red: 'Blocked' };
-const STAGE_WORD = { test: 'human review', show: 'show-and-tell', james: 'waiting for James', airev: 'AI review', building: 'building', queued: 'filed', shipping: 'shipping', done: 'done' };
+const STAGE_WORD = { test: 'human review', show: 'show-and-tell', james: 'waiting for approval', airev: 'AI review', building: 'building', queued: 'filed', shipping: 'shipping', done: 'done' };
 function renderGoals(d, keep, order) {
   const list = (d.groups.goals || []).filter(keep);
   if (order) list.sort(order);
   el('strip').replaceChildren(); el('totals').textContent = '';
-  el('secs').replaceChildren(...(list.length ? [(() => { const l = make('div', 'bd-list bd-goals'); l.append(...list.map(goalCard)); return l; })()] : []));
+  const mine = sortBy[d.view] === 'turn' ? list.filter(myTurn) : [], rest = list.filter(g => !mine.includes(g));
+  const block = (xs, cls) => { const l = make('div', 'bd-list bd-goals' + (cls ? ' ' + cls : '')); l.append(...xs.map(goalCard)); return l; };
+  const out = [];
+  if (mine.length) { const s = make('section', 'bd-sec bd-turn'); s.id = 'sec-turn'; s.append(turnDivider(mine.length), block(mine)); out.push(s); if (rest.length) out.push(make('hr', 'bd-turn-end')); }
+  if (rest.length) out.push(block(rest));
+  el('secs').replaceChildren(...out);
   el('empty').hidden = !!list.length;
   el('empty').textContent = EMPTY.goals;
 }
@@ -1226,7 +1274,7 @@ function roles(i) {
   r.hidden = !who;
   if (!who) return;
   if (goal) { r.textContent = 'Human-led goal, never built by the builder · its owners or James post status · only James closes it'; return; }
-  r.textContent = `Filed by ${who} · AI review by their agent · ${who} tries it` + (i.category === 'core' ? ' · James approves before building and after a show-and-tell' : '') + ' · then Shipping until it’s in a release for everyone';
+  r.textContent = `Filed by ${who} · AI review by their agent · ${who} tries it` + (i.category === 'core' ? ' · James or Miguel approves before building, James after a show-and-tell' : '') + ' · then Shipping until it’s in a release for everyone';
 }
 function openDetail(i, toAct) {
   const dlg = el('detail');
@@ -1236,6 +1284,7 @@ function openDetail(i, toAct) {
   el('d-gh').href = i.url;
   el('d-labels').textContent = '';
   roles(i);
+  el('d-still').hidden = true;   // 0.18.2: set from the item's own flow (Doesn't work said more than once)
   const inReview = i.group === 'test';   // 0.16
   el('d-onbox').hidden = !inReview;
   if (inReview) onboxLine(el('d-onbox'), i);
@@ -1403,6 +1452,9 @@ function itemFlow(i) {
 }
 function drawItemFlow(f) {
   const box = el('d-flow');
+  const still = el('d-still'), k2 = f.kicks || 0;
+  still.hidden = !(f.still_not_working || k2 >= 2);
+  if (!still.hidden) { still.textContent = `Still not working · Doesn’t work ${k2}×`; still.title = `Someone said Doesn’t work ${k2} times on this item`; }
   const ol = make('ol', 'bd-dflow'); ol.setAttribute('aria-label', 'This item so far');
   const staged = !!f.staged, closedDate = f.closed_at ? new Date(f.closed_at * 1000) : null;
   const val = {
@@ -1607,7 +1659,7 @@ el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.18.1' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.18.2' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.18.1
+version: 0.18.2
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -25,8 +25,8 @@ Anyone on the allowlist files: Miguel/Oscar (`mistermizel`, `oscarhenrycollins`)
 ## Flows (agreed with James, 9 Nov)
 - **Bugs**: Filed → Building → AI review (the filer's agent) → Human review by **the filer** → Shipping → Done.
 - **App features**: same as bugs; the filer tries it with its switch. No James step.
-- **Core features**: Filed → **Waiting for James** (the builder must not start until the issue has label `james-approved`; James gets Approve / Decline, Decline closes it as not planned) → Building → AI review → Human review by the filer → **Show-and-tell** (label `show-and-tell`; James approves: no switch → closed, with a switch → label `switch-default`, the builder removes the switch / turns it on for everyone, merges and closes) → Shipping → Done.
-- **Kick-backs** (AI review fail, Human Doesn't work) go back to Building and are counted in stats.
+- **Core features**: Filed → **Waiting for approval** (0.18.2, wizard-os#423: **James or Miguel** approves — policy `core_approvers`; the builder must not start until the issue has label `james-approved`; Approve / Decline, Decline closes it as not planned; others see 'Only James or Miguel can approve core features.') → Building → AI review → Human review by the filer → **Show-and-tell** (label `show-and-tell`; James approves: no switch → closed, with a switch → label `switch-default`, the builder removes the switch / turns it on for everyone, merges and closes) → Shipping → Done.
+- **Kick-backs** (AI review fail, Human Doesn't work) go back to Building and are counted in stats. Stats also show **Still not working**: items where a human said Doesn't work more than once (`summary.still_not_working`; `board_flow` returns `still_not_working` per item, the detail shows a badge).
 
 Labels: `building`, `ai-review`, `ready-to-test` (Human review), `show-and-tell`, `james-approved`, `approved`, `switch-default`.
 
@@ -44,6 +44,9 @@ Every person sees the exact same UI: the same tabs, lists, items, buttons and sw
 
 ## Switches
 Name the switch in the hand-over with one `Switch:` line. A shell tweak (`Switch: <author>/<id>`) becomes a real toggle on the card, in the detail and in Settings › Try changes. Anything else is shown as the exact place to flip it: a Mac user default (write the full `defaults write …` command in the hand-over; the Tracker shows it with Copy), a setting inside an app (`Switch: Settings › <place>`, with an Open <app> button), or a box knob for whoever runs the box.
+
+## Your turn first (0.18.2)
+The default list sort is **Your turn first**: what the viewer can act on now (their Human review, approvals for James or Miguel, show-and-tell for James, goals they own with no status or an old one) sits on top under a small 'Your turn' divider, then everything else oldest first. Oldest, Newest, Most discussed and Recently active stay in the Sort menu.
 
 ## Updates
 The Update manager and Try changes live only in the Tracker's **Settings** (WizardOS and every app, installed vs latest, Update / Update all). Cards show Update or the switch just in time, in their one action area.

@@ -28,7 +28,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.18.1'
+VERSION = '0.18.2'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1940,6 +1940,10 @@ def goal_card(n, login, base):
                 can_status=can, status_rule='' if can else goal_updaters_rule(assignees, base),
                 can_close=goal_closer(login, base), close_rule=f'Only {goal_closers_text(base)} closes a goal.',
                 all_done=bool(tasks) and all(t['done'] for t in tasks), mine=same_person(author, login, base))
+    # 0.18.2: the viewer's turn on a goal = they own it (assignee) and it needs a status update (none yet, or old)
+    me = person_of(login, base).lower()
+    owns = bool(login) and me in {person_of(a, base).lower() for a in assignees or []}
+    card['turn'] = owns and (not card['status'] or bool(card['status'].get('stale')))
     return card
 
 
@@ -1959,7 +1963,7 @@ def board_split(person, args):
     sview = STATS_VIEW[view]
     common = {'view': view, 'org': org, 'login': login, 'me_person': person_of(login, base), 'names': display_names(base),
               'since': base['since'], 'targets': base['targets'][sview], 'core_repos': base['core_repos'],
-              'james': is_james(login, base)}
+              'james': is_james(login, base), 'core_approver': is_core_approver(login, base)}
     if view == 'goals':
         nodes, total = _view_nodes(acct['token'], q, query=GOAL_PAGE, limit=60)
         goals = [goal_card(n, login, base) for n in nodes]
@@ -1979,7 +1983,7 @@ def board_split(person, args):
         hidden = {i for (k, i), v in _tested.items() if now - v <= RECENT_SECONDS}
         made = [v for (k, _), v in _made.items() if now - v[0] <= RECENT_SECONDS and v[1] == 'issues']
     groups = {g: [] for g in OPEN_GROUPS}
-    james = is_james(login, base)
+    james, approver = is_james(login, base), is_core_approver(login, base)
     for n in nodes:
         repo = n['repository']['nameWithOwner']
         names = [l['name'] for l in (n.get('labels') or {}).get('nodes') or []]
@@ -1996,8 +2000,10 @@ def board_split(person, args):
             extra = {'can_review': ok, 'review_rule': rule, 'turn': ok and same_person(author, login, base)}
         elif group == 'airev':
             extra = {'ai_reviewer': ai_reviewers('bug', author, [], base)[1]}
-        elif group in ('james', 'show'):
-            extra = {'can_james': james, 'james_rule': '' if james else JAMES_RULE['approve' if group == 'james' else 'show'], 'turn': james}
+        elif group == 'james':   # 0.18.2: James or Miguel approve core features; show-and-tell stays James's
+            extra = {'can_james': approver, 'james_rule': '' if approver else JAMES_RULE['approve'], 'turn': approver}
+        elif group == 'show':
+            extra = {'can_james': james, 'james_rule': '' if james else JAMES_RULE['show'], 'turn': james}
         elif group == 'shipping':
             extra = {'delivers_ship': True}
         card.update(group=group, category=cat, kind='bug' if cat == 'bug' else 'feature', mine=same_person(author, login, base),
@@ -2011,8 +2017,9 @@ def board_split(person, args):
             if (view == 'bugs') == (cat == 'bug'):
                 own = same_person(it.get('author') or '', login, base)
                 g = 'james' if cat == 'core' else 'queued'
-                groups[g].insert(0, {**it, 'group': g, 'category': cat, 'mine': own, 'can_close': own, 'can_james': james,
-                                     'james_rule': '' if james else JAMES_RULE['approve'], 'opener': person_of(it.get('author') or '', base)})
+                ok = approver if g == 'james' else False
+                groups[g].insert(0, {**it, 'group': g, 'category': cat, 'mine': own, 'can_close': own, 'can_james': ok, 'turn': ok,
+                                     'james_rule': '' if ok else JAMES_RULE['approve'], 'opener': person_of(it.get('author') or '', base)})
     stats = view_stats(acct['token'], org, view, cached_only=not args.get('with_stats')) or {'pending': True, 'items': [], 'done': None}
     repos_wanted = _repo_list(args.get('repos'))
     if repos_wanted:
@@ -2189,7 +2196,9 @@ def summarize(items):
             'build_time': avg([i['build'] for i in items if i['build'] is not None]),
             'waiting_for_human': avg(waiting), 'waiting_longest': max(waiting) if waiting else None,
             'tries_per_item': round(sum(tried) / len(tried), 2) if tried else None,
-            'kicked_back': sum(i['kicks'] for i in items), 'ai_kicked_back': sum(i.get('ai_kicks') or 0 for i in items), 'done': sum(1 for i in items if i['state'] == 'closed'),
+            'kicked_back': sum(i['kicks'] for i in items),
+            # 0.18.2: items a human said Doesn't work on more than once
+            'still_not_working': sum(1 for i in items if (i.get('kicks') or 0) >= 2), 'ai_kicked_back': sum(i.get('ai_kicks') or 0 for i in items), 'done': sum(1 for i in items if i['state'] == 'closed'),
             'items': len(items), 'line': line_stats(items)}
 
 
@@ -2221,7 +2230,8 @@ def item_flow(person, args, agent=False):
     ev = sorted(((_ts(e.get('created_at')), _REST_KIND[e.get('event')], ((e.get('label') or {}).get('name') or '').lower())
                  for e in rows if isinstance(e, dict) and e.get('event') in _REST_KIND and _ts(e.get('created_at'))), key=lambda x: x[0])
     h = history_of(ev, _ts(it.get('created_at')), it.get('closed_at'), it.get('state'))
-    out = {'id': f'{full}#{number}', 'repo': full, 'number': number, 'state': it.get('state'), **h, 'computed_at': int(time.time())}
+    out = {'id': f'{full}#{number}', 'repo': full, 'number': number, 'state': it.get('state'), **h,
+           'still_not_working': (h.get('kicks') or 0) >= 2, 'computed_at': int(time.time())}
     with LOCK:
         _flows[key] = (time.time(), out)
         if len(_flows) > 300:
@@ -2361,6 +2371,9 @@ POLICY_DEFAULT = {
     'since': '2026-11-07T14:45:00Z',
     # 0.18: core repos (everything else is an app). A feature in a core repo waits for James before the builder starts.
     'core_repos': list(CORE_REPOS),
+    # 0.18.2 (wizard-os#423): who approves core features before the builder starts (team names). Show-and-tell stays
+    # James's (open.goals). DATA_DIR/policy.json `core_approvers` overrides.
+    'core_approvers': ['James', 'Miguel'],
 }
 TARGET_KEYS = {'queued': 'queued', 'open': 'queued', 'building': 'building', 'build': 'building', 'ai': 'ai', 'ai-review': 'ai',
                'ai_review': 'ai', 'review': 'review', 'human': 'review', 'human-review': 'review', 'human_review': 'review',
@@ -2448,7 +2461,10 @@ def policy_base():
     hr = over.get('human_reviews')
     core = over.get('core_repos')
     core = [str(x).split('/')[-1].lower() for x in core if isinstance(x, str) and NAME.match(str(x).split('/')[-1])] if isinstance(core, list) else list(CORE_REPOS)
+    ca = over.get('core_approvers')
+    ca = [str(x) for x in ca if isinstance(x, str) and x.strip()] if isinstance(ca, list) and ca else list(POLICY_DEFAULT['core_approvers'])
     return {'team': team, 'builder': builder, 'open': opn, 'targets': _targets(over.get('targets')), 'core_repos': core,
+            'core_approvers': ca,
             'since': _since(over.get('since'))[0],
             'human_reviews': hr if isinstance(hr, int) and not isinstance(hr, bool) and hr in (1, 2) else POLICY_DEFAULT['human_reviews']}
 
@@ -2590,7 +2606,7 @@ def policy(person=None):
     lines = [f"Goals: opened and closed by {views['goals'][0]['role']}",
              f"Features: opened and closed by {views['features'][0]['role'].lower()}",
              f"Bugs: opened and closed by {views['bugs'][0]['role'].lower()}",
-             f"Build: {base['builder']['name']} only · Human review: the filer · Core features: James approves first and after the show-and-tell"]
+             f"Build: {base['builder']['name']} only · Human review: the filer · Core features: James or Miguel approves first, James after the show-and-tell"]
     login = None
     try:
         _, acct = account_for(person)
@@ -3076,11 +3092,21 @@ def is_james(login, base=None):
     return bool(login) and person_of(login, base).lower() in james_people(base)
 
 
-JAMES_RULE = {'approve': 'Only James can approve core features.', 'show': 'Only James approves show-and-tell.'}
+def core_approver_people(base=None):
+    """0.18.2: who approves core features before building: policy core_approvers (James or Miguel)."""
+    base = base or policy_base()
+    return {str(n).lower() for n in base.get('core_approvers') or POLICY_DEFAULT['core_approvers']}
+
+
+def is_core_approver(login, base=None):
+    return bool(login) and person_of(login, base).lower() in core_approver_people(base)
+
+
+JAMES_RULE = {'approve': 'Only James or Miguel can approve core features.', 'show': 'Only James approves show-and-tell.'}
 
 
 def james_decide(person, args):
-    """POST /api/james {repo, number, decision approve|decline, note}: a core feature waiting for James. Approve adds
+    """POST /api/james {repo, number, decision approve|decline, note}: a core feature waiting for approval (James or Miguel, 0.18.2). Approve adds
     label james-approved (the builder may start); Decline comments and closes it as not planned."""
     _, acct = account_for(person)
     full, number = _target(args)
@@ -3089,17 +3115,17 @@ def james_decide(person, args):
     decision = args.get('decision')
     if decision not in ('approve', 'decline'):
         raise Problem(400, 'decision must be approve or decline.')
-    if not is_james(login, base):
+    if not is_core_approver(login, base):
         raise Problem(403, JAMES_RULE['approve'], 'not_james')
     cur = _current(acct, full, number)
     names = _labels(cur)
     if category(full, names, base) != 'core':
-        raise Problem(409, 'Only core features wait for James.', 'not_core')
+        raise Problem(409, 'Only core features wait for approval.', 'not_core')
     if JAMES_LABEL in names or cur.get('state') == 'closed':
-        raise Problem(409, 'This is not waiting for James any more. Refresh to see the latest.')
+        raise Problem(409, 'This is not waiting for approval any more. Refresh to see the latest.')
     note = args.get('note') if isinstance(args.get('note'), str) else ''
     note = note.strip()[:4000]
-    body = f"James: {'approved' if decision == 'approve' else 'declined'} \u2014 @{login}" + (f'\n\n{note}' if note else '')
+    body = f"{person_of(login, base) or 'James'}: {'approved' if decision == 'approve' else 'declined'} \u2014 @{login}" + (f'\n\n{note}' if note else '')
     gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
     if decision == 'approve':
         _add_label(acct, full, number, JAMES_LABEL)
@@ -3316,7 +3342,7 @@ def rpc(msg):
             r = {'protocolVersion': '2025-06-18', 'capabilities': {'tools': {}}, 'serverInfo': {'name': APP_ID, 'version': VERSION},
                  'instructions': 'Tracker rules: agents may list, read, report bugs and comment. Never open, close or reopen goals on your own. A filed bug is ready to work. '
                                  'Line: Queued -> Building -> AI review (label ai-review) -> Human review (label ready-to-test) -> Done. '
-                                 "Bugs and features: Works / Doesn't work by whoever filed them. Core features (repos in /api/policy core_repos) wait for James (label james-approved) before building, and James approves them again after a show-and-tell. "
+                                 "Bugs and features: Works / Doesn't work by whoever filed them. Core features (repos in /api/policy core_repos) wait for approval by James or Miguel (label james-approved) before building, and James approves them again after a show-and-tell. "
                                  "After Works an item is Shipping until its merged change is in a release for everyone, then Done. Goals are human-led and never built: owners post status with goal_status_set; only James closes a goal. "
                                  "The builder hands over with ai-review; the opener's (or goal owner's) agent then calls ai_review_pass or ai_review_fail with a short note."}
         elif m == 'tools/list':
