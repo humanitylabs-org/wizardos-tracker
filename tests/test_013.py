@@ -175,7 +175,7 @@ class Rules(unittest.TestCase):
     def test_human_rules(self):
         # 0.18: the filer tests (Miguel's agent Oscar filed it, so Miguel tests); nobody else on the team does
         self.assertEqual(S.human_rule('bug', 'oscarhenrycollins', [], 'mistermizel'), (True, ''))
-        self.assertEqual(S.human_rule('bug', 'jdefleur', [], 'mistermizel'), (False, 'Only James tests this: they filed it.'))
+        self.assertEqual(S.human_rule('bug', 'jdefleur', [], 'mistermizel'), (False, 'James checks this one (he filed it)'))
         self.assertTrue(S.human_rule('bug', 'stranger', [], 'mistermizel')[0])   # outside the roster: anyone
         ok, rule = S.human_rule('goal', 'jdefleur', ['JanMesaric'], 'mistermizel')
         self.assertFalse(ok)
