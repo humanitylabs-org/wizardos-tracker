@@ -328,6 +328,7 @@ function render(d) {
     el('n-' + g).textContent = list.length || '';
     if (g === 'test') {  // others' work first (Works / Doesn't work); what you or your agent opened says someone else reviews it
       el('list-test').replaceChildren(...list.filter(i => !i.mine).map(i => testCard(i, d.view)), ...list.filter(i => i.mine).map(i => testCard(i, d.view)));
+      if (list.length) setTimeout(() => checkOnBox(d.groups.test || []), 0);   // 0.16: in the background, cached
     } else el('list-' + g).replaceChildren(...list.map(i => row(i, d.view)));
   }
   let none = only ? only !== 'done' && !groups[only].length : !GROUPS.some(g => groups[g].length);
@@ -662,11 +663,6 @@ function tryWhy(i) {
 // 0.15: bug fixes ship live, not behind a switch; a Switch line that isn't a shell tweak (a device setting, an env knob)
 // can't be flipped from here, so both get a plain line saying how to try it instead of a dead switch.
 const LIVE_NOTE = 'Live once your Wizard has the update';
-function howToTry(i) {
-  const need = 'still needs a person to test it: Works or Doesn’t work.';
-  return i.switch_how ? `Turn on: ${i.switch_how}, once your Wizard has the update. It ${need}`
-    : `${LIVE_NOTE}. No switch to try, but it ${need}`;
-}
 function trySwitch(i) {
   const live = i.group === 'test' || (i.group == null && (i.labels || []).some(l => String(l).toLowerCase() === 'ready-to-test'));  // Human review only
   const sw = live && box && box.ok && i.switch ? box.switches[i.switch] : null;
@@ -762,14 +758,89 @@ function loadSide() {
   loadSwitches();
 }
 
+// ---------- 0.16 Is it on my Wizard? The page reads what this box runs (WizardOS release + channel from the shell's
+// owner-only _updates route, each app's version from its own /<id>/healthz); the server maps that to commits and asks
+// GitHub whether the build contains the merged PR(s). Painted from a local cache first, checked in the background. ----
+const UPDATES_API = '/wizard-os-home/store-install/_updates';
+const ONBOX_SECONDS = 300;
+const facts = { release: null, channel: null, apps: {} };
+const appsTried = new Set();
+let factsReady = null;
+const onbox = new Map(Object.entries(store.get('board.onbox') || {}));   // id -> { at, key, v }
+const factsKey = () => JSON.stringify([facts.release, facts.channel, facts.apps]);
+function loadFacts() {
+  if (!factsReady) factsReady = fetch(UPDATES_API, { credentials: 'same-origin', cache: 'no-store' })
+    .then(r => r.ok ? r.json() : null).then(b => { if (b && b.installed) { facts.release = String(b.installed); facts.channel = b.channel || null; } })
+    .catch(() => {});
+  return factsReady;
+}
+async function appVersion(id) {
+  appsTried.add(id);
+  try {
+    const r = await fetch('/' + encodeURIComponent(id) + '/healthz', { credentials: 'same-origin', cache: 'no-store' });
+    const b = r.ok ? await r.json() : null;
+    if (b && typeof b.version === 'string') facts.apps[id] = b.version;
+  } catch (_) {}
+}
+const deliversOf = t => ({ id: t.id, delivers: t.delivers || [], open_prs: t.open_prs || 0 });
+const onboxOf = t => {
+  if (!(t.delivers || []).length && !t.open_prs) return { state: 'unknown' };
+  const hit = onbox.get(t.id);
+  return hit ? hit.v : null;
+};
+let onboxBusy = false;
+async function checkOnBox(items) {
+  if (onboxBusy) return;
+  const want = items.filter(t => (t.delivers || []).length || t.open_prs);
+  if (!want.length) return;
+  onboxBusy = true;
+  let changed = false;
+  try {
+    await loadFacts();
+    for (let round = 0; round < 2; round++) {
+      const key = factsKey();
+      const ask = want.filter(t => { const h = onbox.get(t.id); return !h || h.key !== key || Date.now() - h.at > ONBOX_SECONDS * 1000; });
+      if (!ask.length) break;
+      const r = await api('api/onbox', { box: facts, items: ask.map(deliversOf) });
+      const need = new Set();
+      for (const [id, v] of Object.entries(r.items || {})) {
+        const was = onbox.get(id);
+        if (!was || JSON.stringify(was.v) !== JSON.stringify(v)) changed = true;
+        onbox.set(id, { at: Date.now(), key, v });
+        for (const a of v.apps || []) if (!(a in facts.apps) && !appsTried.has(a)) need.add(a);
+      }
+      if (!need.size) break;
+      await Promise.all([...need].map(appVersion));     // then ask again with those versions
+    }
+    store.set('board.onbox', Object.fromEntries([...onbox.entries()].filter(([, h]) => Date.now() - h.at < 864e5).slice(-80)));
+    if (!changed) return;   // nothing new: no repaint (a repaint would ask again)
+    if (cache[view] && !typing() && !document.querySelector('.bd-confirm')) render(cache[view]);
+    if (openId) { const d = (cache[view] && cache[view].groups.test || []).find(x => x.id === openId); if (d) onboxLine(el('d-onbox'), d); }
+  } catch (_) {
+  } finally { onboxBusy = false; }
+}
+const ONBOX_TEXT = { yes: 'On your Wizard ✓', no: 'Not on your Wizard yet', unknown: 'Can’t tell if this is on your Wizard' };
+function onboxLine(p, t) {
+  const v = onboxOf(t);
+  p.className = (p.id ? 'bd-d-onbox ' : 'bd-onbox ') + (v ? v.state : 'wait');
+  p.replaceChildren(document.createTextNode(v ? ONBOX_TEXT[v.state] || ONBOX_TEXT.unknown : 'Checking your Wizard…'));
+  if (v && v.state === 'no' && v.fix) p.append(document.createTextNode(' · '), make('b', '', v.fix));
+  p.hidden = false;
+  return p;
+}
+const cap = x => x ? x[0].toUpperCase() + x.slice(1) : x;
+
 function testCard(t, kind) {
   const c = make('article', 'bd-card');
   const top = make('div', 'bd-card-top');
   const h = tapTarget('bd-title', () => openDetail(t)); h.textContent = t.title;
   top.append(h, ...(kind === 'goals' ? [ownerChips(t)] : []), ...(t.switch ? [trySwitch(t)] : [])); c.append(top);
   if (kind === 'goals' && (t.assignees || []).length > 1) top.classList.add('multi');
-  if (t.check) c.append(make('p', 'bd-check' + (kind !== 'goals' ? ' one' : ''), t.check));
-  if (!t.switch) c.append(make('p', 'bd-how', howToTry(t)));   // 0.15: fixes ship live; nothing to switch on
+  // 0.16: one line that says what to do to test it (the AI review note's test steps), then the buttons
+  const guide = t.steps ? 'To test: ' + cap(t.steps) : t.check;
+  if (guide) { const g = make('p', 'bd-check one bd-guide', guide); g.title = guide; c.append(g); }
+  c.append(onboxLine(make('p'), t));
+  if (!t.switch && t.switch_how) c.append(make('p', 'bd-how', `Turn on: ${t.switch_how}.`));
   c.append(make('p', 'bd-hint', [repoName(t.repo), t.mine ? 'you' : nameOf(t.author) || t.opener || '', kind !== 'goals' ? age(t.created_at) : '', `${t.comments || 0} comments`].filter(Boolean).join(' · ')));
   const rv = t.reviews || { done: 0, need: 1, by: [] };
   if (rv.need > 1) {  // 0.13: a second, different human reviews it too
@@ -777,15 +848,17 @@ function testCard(t, kind) {
     if (rv.by && rv.by.length) pr.append(document.createTextNode(' · Works from ' + rv.by.join(', ')));
     c.append(pr);
   }
-  // 0.12.2: the same buttons for everyone; on your own item (or your agent's) they explain who reviews it.
   const btns = make('div', 'bd-btns');
   const ok = make('button', 'wz-button', 'Works'); ok.type = 'button';
   const no = make('button', 'wz-button secondary', 'Doesn’t work'); no.type = 'button';
   btns.append(ok, no); c.append(btns);
-  const rule = t.can_review === false ? (t.review_rule || 'Someone else reviews this — you opened it.') : t.can_review == null && t.mine ? 'Someone else reviews this — you opened it.' : '';
-  if (rule) {
-    const why = e => { e.preventDefault(); pop(e.currentTarget, '', rule); };
-    ok.onclick = why; no.onclick = why;
+  // 0.16: who may not review it, or a build this Wizard doesn't run yet, greys the buttons out with the reason in place
+  const rule = t.can_review === false ? (t.review_rule || 'You filed this, so someone else tests it.') : t.can_review == null && t.mine ? 'You filed this, so someone else tests it.' : '';
+  const ob = onboxOf(t);
+  const why = rule || (ob && ob.state === 'no' ? `Test it once it’s on your Wizard: ${ob.fix || 'Not released yet'}.` : '');
+  if (why) {
+    for (const b of [ok, no]) { b.setAttribute('aria-disabled', 'true'); b.onclick = e => { e.preventDefault(); pop(e.currentTarget, '', why); }; }
+    if (rule) c.append(make('p', 'bd-why', rule));   // the on-your-Wizard line above already says why otherwise
     return c;
   }
   const status = make('p', 'wz-status'); c.append(status);
@@ -793,36 +866,46 @@ function testCard(t, kind) {
   const done = msg => {
     hold(false);
     const d = cache[view]; if (d) { d.groups.test = d.groups.test.filter(x => x.id !== t.id); render(d); }
-    details.delete(t.id);
+    details.delete(t.id); onbox.delete(t.id);
     toast(msg); setTimeout(() => load(view, true), 1500);
   };
-  ok.onclick = async () => {
-    if (t.reviewed_by_me) return pop(ok, '', `You already said Works. A second, different person reviews it too (${rv.done} of ${rv.need}).`);
-    busy(true); status.textContent = '';
-    try {
-      const r = await api('api/test/works', { repo: t.repo, number: t.number });
-      if (r.final === false) { busy(false); hold(false); t.reviewed_by_me = true; toast(`Thanks — ${r.reviews.done} of ${r.reviews.need} reviews.`); setTimeout(() => load(view, true), 1500); return; }
-      done('Thanks — marked as working.');
+  // 0.16: both buttons ask first; Cancel is the default
+  const askFirst = (title, text, yesText, withNote, act) => {
+    const f = make('form', 'bd-fail bd-confirm'); f.autocomplete = 'off';
+    const q = make('p', 'bd-ask'); q.append(make('b', '', title)); if (text) q.append(document.createTextNode(' ' + text));
+    f.append(q);
+    let ta = null;
+    if (withNote) {
+      ta = make('textarea', 'wz-input bd-area'); ta.rows = 2; ta.maxLength = 4000;
+      ta.placeholder = 'What went wrong? (optional)'; ta.setAttribute('aria-label', 'What went wrong (optional)');
+      ta.oninput = () => hold(!!ta.value.trim());
+      f.append(ta);
     }
-    catch (err) { busy(false); if (err.status === 403 || err.status === 409) pop(ok, '', err.message); else status.textContent = err.message; }
-  };
-  no.onclick = () => {
-    const f = make('form', 'bd-fail'); f.autocomplete = 'off';
-    const ta = make('textarea', 'wz-input bd-area'); ta.rows = 2; ta.required = true; ta.minLength = 3; ta.maxLength = 4000;
-    ta.placeholder = 'What went wrong?'; ta.setAttribute('aria-label', 'What went wrong');
     const r = make('div', 'bd-btns');
-    const cancel = make('button', 'wz-button quiet', 'Cancel'); cancel.type = 'button';
-    const send = make('button', 'wz-button', 'Send'); send.type = 'submit';
-    r.append(cancel, send); f.append(ta, r);
-    btns.hidden = true; btns.after(f); ta.focus();
-    ta.oninput = () => hold(!!ta.value.trim());
-    cancel.onclick = () => { f.remove(); btns.hidden = false; hold(false); };
-    f.onsubmit = async e => {
-      e.preventDefault(); busy(true); status.textContent = '';
-      try { await api('api/test/fails', { repo: t.repo, number: t.number, note: ta.value }); f.remove(); done('Sent back to the builder.'); }
-      catch (err) { status.textContent = err.message; busy(false); }
-    };
+    const cancel = make('button', 'wz-button secondary', 'Cancel'); cancel.type = 'button';
+    const yes = make('button', 'wz-button', yesText); yes.type = 'submit';
+    r.append(cancel, yes); f.append(r);
+    btns.hidden = true; btns.after(f); cancel.focus();
+    const close = () => { f.remove(); btns.hidden = false; hold(false); status.textContent = ''; };
+    cancel.onclick = close;
+    f.onkeydown = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    f.onsubmit = async e => { e.preventDefault(); busy(true); status.textContent = ''; await act(ta ? ta.value.trim() : '', close); };
   };
+  ok.onclick = () => {
+    if (t.reviewed_by_me) return pop(ok, '', `You already said Works. A second, different person reviews it too (${rv.done} of ${rv.need}).`);
+    const last = rv.need <= 1 || rv.done + 1 >= rv.need;
+    askFirst('Mark as works?', last ? 'This moves it to Done.' : `This counts as review ${rv.done + 1} of ${rv.need}.`, 'Mark as works', false, async (_, close) => {
+      try {
+        const r = await api('api/test/works', { repo: t.repo, number: t.number });
+        if (r.final === false) { close(); busy(false); t.reviewed_by_me = true; toast(`Thanks — ${r.reviews.done} of ${r.reviews.need} reviews.`); setTimeout(() => load(view, true), 1500); return; }
+        done('Thanks — marked as working.');
+      } catch (err) { busy(false); if (err.status === 403 || err.status === 409) { close(); pop(ok, '', err.message); } else status.textContent = err.message; }
+    });
+  };
+  no.onclick = () => askFirst('Send back to Build?', 'The builder picks it up again.', 'Send back', true, async note => {
+    try { await api('api/test/fails', { repo: t.repo, number: t.number, note }); done('Sent back to the builder.'); }
+    catch (err) { status.textContent = err.message; busy(false); }
+  });
   return c;
 }
 
@@ -865,6 +948,11 @@ function openDetail(i) {
   el('d-gh').href = i.url;
   el('d-labels').textContent = '';
   roles(i);
+  const inReview = !!(cache[view] && (cache[view].groups.test || []).some(x => x.id === i.id));   // 0.16
+  el('d-onbox').hidden = !inReview;
+  if (inReview) onboxLine(el('d-onbox'), i);
+  el('d-steps').hidden = !(inReview && i.steps);
+  if (inReview && i.steps) el('d-steps').textContent = 'To test: ' + cap(i.steps);
   el('d-body').replaceChildren(make('p', 'bd-empty', 'Loading…'));
   closeCtl(null);
   el('d-comments').replaceChildren(); el('d-comments-h').hidden = true;
@@ -968,7 +1056,7 @@ function drawItemFlow(f) {
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.13.7' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.16.0' });
   WizardApp.back.register({ canGoBack: () => false, back: () => false });
 }
 for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));
