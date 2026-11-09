@@ -1,5 +1,7 @@
 'use strict';
-// WizardOS Tracker 0.19.0: bugs ship before review (Miguel, 10 Nov): the builder merges a fix switched on, so the Bugs
+// WizardOS Tracker 0.19.1: the Goals number is every open goal; Human review / Shipping / Done cards and the detail
+// name the release that has it (wizardos-tracker#7); wizardos-tracker and wizardos-builder items are never shown.
+// 0.19.0: bugs ship before review (Miguel, 10 Nov): the builder merges a fix switched on, so the Bugs
 // strip is Queued → Building → Shipped (AI check, then the filer's check, after the fact) → Done. The filer's card says
 // 'Fixed and shipping. Check it when you can'; Doesn't work (any time, even after it closed) reopens it to Building.
 // Done = in a For everyone release and the filer said Works, or 7 days in the filer's check with no Doesn't work.
@@ -272,12 +274,12 @@ function markView() {
   for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));
   el('goals-btn').setAttribute('aria-pressed', String(view === 'goals'));
 }
-// 0.19: the number is only goals of yours needing a status update (you own it; no status yet, or older than 7 days)
-const GOALS_TIP = 'Goals of yours needing a status update';
-function goalsDue(g) { return (g || []).filter(x => !!x.turn).length; }
+// 0.19.1: the number is every open goal (all goals count the same, whoever looks)
+const GOALS_TIP = 'Open goals';
+function goalsOpen(d) { const g = d && d.groups && d.groups.goals; return g ? Math.max(g.length, d.total || 0) : 0; }
 function goalsBadge() {
-  const g = cache.goals && cache.goals.groups && cache.goals.groups.goals, n = el('goals-n');
-  const k = g ? goalsDue(g) : 0;
+  const n = el('goals-n');
+  const k = goalsOpen(cache.goals);
   n.hidden = !k; n.textContent = k ? String(k) : '';
   n.title = GOALS_TIP;
   n.setAttribute('aria-label', k ? `${k}: ${GOALS_TIP.toLowerCase()}` : '');
@@ -1026,6 +1028,13 @@ async function checkOnBox(items) {
 const ONBOX_TEXT = { yes: 'On your Wizard ✓', no: 'Not on your Wizard yet', unknown: 'Can’t tell if this is on your Wizard' };
 const cap = x => x ? x[0].toUpperCase() + x.slice(1) : x;
 
+// 0.19.1 (wizardos-tracker#7): which release has it, from the same release lookup as Shipping. Human review: from
+// api/onbox (`release`); Shipping and Done: from api/done (`ship`, when it names a version).
+function releaseOf(i) {
+  if (i.group === 'test') { const v = onboxOf(i); return v && v.release && v.release.text || ''; }
+  if (i.group === 'shipping' || i.group === 'done') return i.ship && i.ship.version ? i.ship.text : '';
+  return '';
+}
 // ---------- 0.18 cards: title; one plain line 'where it is and what's next'; ONE action area; small meta ----------
 function whereLine(i) {
   const g = i.group;
@@ -1056,6 +1065,8 @@ function itemCard(i) {
   top.append(h); c.append(top);
   const [text, cls] = whereLine(i);
   if (text) c.append(make('p', 'bd-where' + (cls ? ' ' + cls : ''), text));
+  const rel = releaseOf(i);
+  if (rel && rel !== (i.ship && i.ship.text)) c.append(make('p', 'bd-hint bd-rel', rel));   // Shipping/Done say it above
   const act = actionArea(i);
   if (act) c.append(act);
   const when_ = i.group === 'done' || i.group === 'shipping' && i.closed_at ? (i.closed_at ? 'closed ' + when(i.closed_at) : '') : age(i.created_at);
@@ -1161,7 +1172,11 @@ function statusLine(p, t) {
   p.hidden = false;
   return p;
 }
-function onboxLine(p, t) { return statusLine(p, t); }
+function onboxLine(p, t) { const r = statusLine(p, t); if (p.id === 'd-onbox') releaseLine(t); return r; }
+function releaseLine(i) {
+  const p = el('d-release'), t = ['test', 'shipping', 'done'].includes(i.group) ? releaseOf(i) : '';
+  p.hidden = !t; p.textContent = t ? 'Release: ' + t : '';
+}
 // 0.18: Update performs the update in place (the box's own App Manager routes), no separate panel.
 function updateFor(v) {
   const fix = v.fix || '';
@@ -1320,6 +1335,7 @@ function openDetail(i, toAct) {
   const inReview = i.group === 'test';   // 0.16
   el('d-onbox').hidden = !inReview;
   if (inReview) onboxLine(el('d-onbox'), i);
+  releaseLine(i);
   el('d-steps').hidden = !(inReview && (i.steps || i.check));
   if (inReview) el('d-steps').textContent = i.steps ? 'To test: ' + cap(i.steps) : i.check || '';
   detailSwitch(i);
@@ -1688,7 +1704,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.19.0';
+const PAGE_VERSION = '0.19.1';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -1711,7 +1727,7 @@ setTimeout(checkVersion, 5000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.19.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.19.1' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

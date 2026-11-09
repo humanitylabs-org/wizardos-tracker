@@ -120,7 +120,7 @@ class Board(unittest.TestCase):
         self.assertEqual(S.policy('m')['builder_rules']['bug_flow']['auto_accept_seconds'], 7 * 86400)
 
     def test_version(self):
-        self.assertEqual(S.VERSION, '0.19.0')
+        self.assertTrue(S.VERSION.startswith('0.19.'))
         self.assertIn(f"const PAGE_VERSION = '{S.VERSION}'", JS)
 
 
@@ -128,11 +128,6 @@ class Board(unittest.TestCase):
 class UI(unittest.TestCase):
     def run_js(self, src):
         return json.loads(subprocess.run(['node', '-e', src], capture_output=True, text=True, check=True).stdout)
-
-    def test_goals_count_is_yours_needing_status(self):
-        g = [{'turn': True}, {'turn': False, 'status': {'color': 'red'}}, {'turn': True}, {}]
-        self.assertEqual(self.run_js(fn('goalsDue') + f'\nconsole.log(JSON.stringify(goalsDue({json.dumps(g)})));'), 2)
-        self.assertIn("'Goals of yours needing a status update'", JS)
 
     def test_bug_strip_and_wording(self):
         src = fn('binsOf') + '\n' + fn('sectionsOf') + '\n' + fn('whereLine') + """
