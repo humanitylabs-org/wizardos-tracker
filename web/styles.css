@@ -665,3 +665,16 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
 .bd-turn-end { border: 0; height: 1px; margin: var(--wz-space-3, 12px) 4px; background: var(--line, color-mix(in srgb, var(--ink) 12%, transparent)); }
 .bd-still { display: inline-block; margin: 4px 0; padding: 2px 10px; border-radius: var(--r-pill, 999px); font-size: 0.75rem; font-weight: 650; color: var(--wz-warning, var(--danger)); border: 1px solid currentColor; }
 .bd-still-n.warn b { color: var(--wz-warning, var(--danger)); }
+
+/* 0.19: minimal goal card, queued reason, 'Tracker updated · Reload' bar */
+.bd-gline { display: flex; align-items: center; gap: 8px; margin: 0; min-width: 0; font-size: var(--wz-text-md); }
+.bd-gline .bd-gword { flex: none; }
+.bd-gone { color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.bd-gmeta { margin: 0; }
+.bd-goal-min { gap: 6px; }
+.bd-where.oscar { color: var(--ink-3, var(--ink-2)); font-style: italic; }
+.bd-newer { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 60; display: flex; align-items: center; gap: 6px;
+  padding: 6px 12px; border-radius: 999px; background: var(--ink); color: var(--wz-canvas); font-size: var(--wz-text-sm);
+  box-shadow: 0 4px 16px color-mix(in srgb, var(--ink) 18%, transparent); }
+.bd-newer[hidden] { display: none; }
+.bd-newer-go { background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: 650; text-decoration: underline; cursor: pointer; }
