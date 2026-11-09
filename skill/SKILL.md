@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.14.2
+version: 0.15.0
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -48,3 +48,5 @@ Board acts with the GitHub account of the first person who connected on this box
 **0.13.0 Sign in with GitHub** — with a GitHub OAuth App client id (Device Flow enabled, no secret) set in DATA_DIR/policy.json `github_client_id`, env `GITHUB_CLIENT_ID`, or `POST /api/settings/github-client-id {"client_id": "..."}` (a signed-in team member), the sign-in card shows one Sign in with GitHub button and a code to type on github.com/login/device; the box polls GitHub and applies the same team + human-only checks as a pasted token. 'Use a token instead' stays as a small link. Never put a client secret or token in the repo or in chat.
 
 **0.14.0 Try it / `Switch:` line** — when you hand work over (builder) or pass AI review, if the change is behind a shell feature switch, end the "What to check" comment with one line `Switch: <author>/<id>` (the tweak id from wizard-ux `wizard-os-home/tweaks/catalog.json`, e.g. `Switch: miguel/send-and-go`). The Tracker shows it as the item's Try it switch, which turns that feature on for the person's own Wizard (For testers only). No line = nothing to switch.
+
+**0.15.0 Try it only for switched changes; GitHub App sign-in** — bug fixes ship live, so Human review cards show the Try it switch only when the hand-over names a shell tweak (`Switch: <author>/<id>`); otherwise a plain line says how to try it ("Live once your Wizard has the update", or "Turn on: <words of a non-tweak Switch line>, …" for a device setting or env knob such as `Switch: Settings > Drafts at top`). Rows carry `switch` (tweak id or null) and `switch_how` (text or null). Sign in with GitHub now works with a GitHub App client id (`Iv…`, owned by humanitylabs-org, Device Flow on, expiring user tokens): no scope is asked, the 8-hour token renews itself with its 6-month refresh token (no client secret; before expiry, in a background check every 5 min, and once on any 401), and only an expired refresh token asks the person to sign in again. The classic OAuth App (`Ov23liRmzoKiwejdVDOo`) stays the fallback, also used automatically if the GitHub App refuses device flow. Set the app's client id with `POST /api/settings/github-client-id`, policy.json `github_client_id` or env `GITHUB_APP_CLIENT_ID`/`GITHUB_CLIENT_ID`. Every Human review card without a Tracker switch says it still needs a person's Works / Doesn't work. Switching between Goals, Features and Bugs resets the stage filter to all stages; the picked stage bin is filled with the accent and the others greyed out.
