@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "WizardOS Tracker",
-    "version": "0.13.7",
+    "version": "0.16.0",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged. 0.13: two-step review (Queued → Building → AI review [label ai-review] → Human review [label ready-to-test] → Done; AI review is agents-only via MCP ai_review_pass / ai_review_fail; policy human_reviews 1|2) and Sign in with GitHub via the OAuth device flow (no client secret)."
   },
   "paths": {
@@ -820,7 +820,7 @@
     },
     "/api/test/fails": {
       "post": {
-        "summary": "Comment what went wrong and remove ready-to-test. Body: repo, number, note. 0.13: Doesn't work removes ready-to-test and adds building (back to Building).",
+        "summary": "Comment what went wrong (note optional since 0.16) and remove ready-to-test. Body: repo, number, note?. Doesn't work removes ready-to-test and adds building (back to Building).",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1429,6 +1429,16 @@
         "responses": {
           "403": {
             "description": "agents_only"
+          }
+        }
+      }
+    },
+    "/api/onbox": {
+      "post": {
+        "summary": "0.16 Is it on my Wizard? Body {box: {release, channel, apps: {app id: running version}}, items: [{id, delivers: [{repo, number, sha}], open_prs}]} (the page reads the box from store-install/_updates and /<app>/healthz). Answer {items: {id: {state: yes|no|unknown, text, fix, parts, apps}}, box}: a merged PR is on the box when its build contains the merge commit (GitHub compare: identical/ahead). fix: Update WizardOS in Settings | Switch to For testers in Settings | Update <App> | Needs a Mac app build | Not released yet. Cached; apps lists app ids whose version to send.",
+        "responses": {
+          "200": {
+            "description": "{items, box}"
           }
         }
       }

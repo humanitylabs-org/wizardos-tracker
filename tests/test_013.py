@@ -173,11 +173,11 @@ class Rules(unittest.TestCase):
         reset()
 
     def test_human_rules(self):
-        self.assertEqual(S.human_rule('bug', 'oscarhenrycollins', [], 'mistermizel'), (False, 'Someone else reviews this — you opened it.'))
+        self.assertEqual(S.human_rule('bug', 'oscarhenrycollins', [], 'mistermizel'), (False, 'You filed this, so someone else tests it.'))
         self.assertTrue(S.human_rule('bug', 'jdefleur', [], 'mistermizel')[0])
         ok, rule = S.human_rule('goal', 'jdefleur', ['JanMesaric'], 'mistermizel')
         self.assertFalse(ok)
-        self.assertEqual(rule, 'Only Jan or James review this goal.')
+        self.assertEqual(rule, 'Only Jan or James test this goal.')
         self.assertTrue(S.human_rule('goal', 'jdefleur', ['JanMesaric'], 'JanMesaric')[0])
         self.assertTrue(S.human_rule('goal', 'jdefleur', [], 'jdefleur')[0])  # James reviews goals
 
@@ -248,6 +248,10 @@ class Reviews(unittest.TestCase):
         GH.issues[9] = {'user': 'mistermizel', 'labels': {'bug', 'ready-to-test'}, 'comments': []}
         S.tested('j', {'repo': 'wizard-ux', 'number': 9, 'note': 'Button missing'}, False)
         self.assertEqual(GH.issues[9]['labels'], {'bug', 'building'})
+        GH.issues[11] = {'user': 'mistermizel', 'labels': {'bug', 'ready-to-test'}, 'comments': []}
+        S.tested('j', {'repo': 'wizard-ux', 'number': 11}, False)   # 0.16: the note is optional
+        self.assertEqual(GH.issues[11]['labels'], {'bug', 'building'})
+        self.assertEqual(GH.issues[11]['comments'][-1], ('jdefleur', "Tested: doesn't work — @jdefleur"))
         GH.issues[10] = {'user': 'mistermizel', 'labels': {'bug', 'ai-review'}, 'comments': []}
         with self.assertRaises(S.Problem) as e:
             S.tested('j', {'repo': 'wizard-ux', 'number': 10}, True)

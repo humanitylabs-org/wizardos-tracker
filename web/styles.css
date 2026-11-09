@@ -470,3 +470,13 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
   .bd-switch button { padding: 0 4px; font-size: 14px; }
   .bd-toggle .bd-ctl-state { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
 }
+
+/* 0.16: Is it on my Wizard? · who may review · confirm before Works / Doesn't work */
+.bd-onbox, .bd-d-onbox { margin: 0; font-size: var(--wz-text-sm); color: var(--ink-3); }
+.bd-d-onbox { margin-top: 6px; }
+.bd-onbox.yes, .bd-d-onbox.yes { color: var(--ink-2); }
+.bd-onbox.no b, .bd-d-onbox.no b { color: var(--ink); font-weight: 600; }
+.bd-btns .wz-button[aria-disabled="true"] { background: var(--fill); color: var(--ink-3); border: 1px solid var(--line-2); box-shadow: none; cursor: default; }
+.bd-why { margin: -4px 0 0; font-size: var(--wz-text-sm); color: var(--ink-2); }
+.bd-ask { margin: 0; font-size: var(--wz-text-md); color: var(--ink-2); }
+.bd-ask b { color: var(--ink); }

@@ -4,6 +4,7 @@ Stdlib only. GitHub is the only backend; this app stores just each person's toke
 (0600, server side, never returned) and one setting (the org). The host gateway owns
 authentication; direct ports stay loopback.
 """
+import base64
 import hashlib
 import html as htmllib
 import json
@@ -13,7 +14,9 @@ import secrets
 import threading
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -24,7 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.15.0'
+VERSION = '0.16.0'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -280,7 +283,7 @@ _no_redirect = urllib.request.build_opener(_NoRedirect)
 def _gh_code(token, path):
     """(status, json or None) for one GET, no redirects followed, nothing cached. Network trouble -> (0, None)."""
     req = urllib.request.Request(GITHUB + path, headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json',
-                                                         'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'wizard-board/' + VERSION})
+                                                         'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'wizardos-tracker/' + VERSION})
     try:
         with _no_redirect.open(req, timeout=15) as r:
             raw = r.read(1 << 20)
@@ -296,7 +299,7 @@ def _gql_member(token):
     Works for fine-grained tokens, which REST treats as outsiders without the org Members permission."""
     req = urllib.request.Request(GITHUB + '/graphql', data=json.dumps({'query': 'query($o: String!) { organization(login: $o) { viewerIsAMember } }',
                                                                        'variables': {'o': TEAM_ORG}}).encode(), method='POST',
-                                 headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'User-Agent': 'wizard-board/' + VERSION})
+                                 headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'User-Agent': 'wizardos-tracker/' + VERSION})
     try:
         with _no_redirect.open(req, timeout=15) as r:
             out = json.loads(r.read(1 << 20) or b'{}')
@@ -416,7 +419,7 @@ def gh(token, method, path, body=None, cache=True, accept='application/vnd.githu
             return hit[1]
     data = None if body is None else json.dumps(body).encode()
     headers = {'Authorization': 'Bearer ' + token, 'Accept': accept,
-               'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'wizard-board/' + VERSION}
+               'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'wizardos-tracker/' + VERSION}
     if data is not None:
         headers['Content-Type'] = 'application/json'
     req = urllib.request.Request(url, data=data, method='POST' if method == 'GRAPHQL' else method, headers=headers)
@@ -469,7 +472,7 @@ def connect(person, args, via='token', client_id=None):
         raise Problem(400, 'Paste a GitHub personal access token (it starts with github_pat_ or ghp_).')
     token = token.strip()
     req = urllib.request.Request(GITHUB + '/user', headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json',
-                                                            'User-Agent': 'wizard-board/' + VERSION, 'X-GitHub-Api-Version': '2022-11-28'})
+                                                            'User-Agent': 'wizardos-tracker/' + VERSION, 'X-GitHub-Api-Version': '2022-11-28'})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             user = json.loads(r.read(1 << 20))
@@ -561,7 +564,7 @@ def _gh_form(url, fields):
     """POST a form to github.com (device flow endpoints), JSON back. -> (status, dict or None)."""
     req = urllib.request.Request(url, data=urlencode(fields).encode(), method='POST',
                                  headers={'Accept': 'application/json', 'Content-Type': 'application/x-www-form-urlencoded',
-                                          'User-Agent': 'wizard-board/' + VERSION})
+                                          'User-Agent': 'wizardos-tracker/' + VERSION})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             return r.status, json.loads(r.read(1 << 16) or b'{}')
@@ -1144,7 +1147,7 @@ def avatar(person):
     if hit and time.time() - hit[0] < 3600:
         return hit[1], hit[2]
     try:
-        with urllib.request.urlopen(urllib.request.Request(url + ('&' if '?' in url else '?') + 's=96', headers={'User-Agent': 'wizard-board'}), timeout=10) as r:
+        with urllib.request.urlopen(urllib.request.Request(url + ('&' if '?' in url else '?') + 's=96', headers={'User-Agent': 'wizardos-tracker'}), timeout=10) as r:
             data, kind = r.read(512 * 1024), r.headers.get('Content-Type', '')
     except (urllib.error.URLError, OSError):
         raise Problem(502, 'No picture.') from None
@@ -1163,8 +1166,8 @@ VIEW_FIELDS = (' number title url body createdAt updatedAt author { login } assi
                ' timelineItems(itemTypes: [CROSS_REFERENCED_EVENT, CONNECTED_EVENT], last: 60) { nodes {'
                '  ... on CrossReferencedEvent { source { __typename'
                '    ... on Issue { number url state repository { nameWithOwner } }'
-               '    ... on PullRequest { number url state title repository { nameWithOwner } } } }'
-               '  ... on ConnectedEvent { subject { __typename ... on PullRequest { number url state title repository { nameWithOwner } } } }'
+               '    ... on PullRequest { number url state title merged mergeCommit { oid } baseRefName repository { nameWithOwner } } } }'
+               '  ... on ConnectedEvent { subject { __typename ... on PullRequest { number url state title merged mergeCommit { oid } baseRefName repository { nameWithOwner } } } }'
                ' } }')
 VIEW = 'query($q: String!) { search(query: $q, type: ISSUE, first: 80) { issueCount nodes { ... on Issue {' + VIEW_FIELDS + ' } } } }'
 MAX_ITEMS = 300
@@ -1273,6 +1276,9 @@ def _card(node, tab):
         prs = [r for r in refs if r['kind'] == 'pr']
         pr = next((r for r in prs if r['state'] == 'open'), None) or next((r for r in prs if r['state'] == 'merged'), None) or (prs[0] if prs else None)
         out['pr'] = {'url': pr['url'], 'number': pr['number'], 'repo': pr['repo']} if pr else None
+        out['delivers'], out['open_prs'] = delivered(node)          # 0.16: what to look for on this Wizard
+        out['steps'] = test_steps([(((c.get('author') or {}).get('login') or ''), c.get('body') or '')
+                                   for c in (node.get('comments') or {}).get('nodes') or []])
     return out
 
 
@@ -1313,6 +1319,302 @@ def switch_info(builder_bodies, issue_body=None):
 
 def switch_of(builder_bodies, issue_body=None):
     return switch_info(builder_bodies, issue_body)[0]
+
+
+# ---------- 0.16 'Is it on my Wizard?' ----------
+# A Human review item is testable on a Wizard only once the box runs a build that contains the merged PR(s) that
+# delivered it. The page (on the box's own shell origin) reads what the box runs: the WizardOS release
+# (store-install/_updates) and each app's /<id>/healthz version. This server maps those to commits (release manifest
+# in wizard-app-manager/releases, the Store index listing, the app recipe's pinned `sha-<commit>` image) and asks
+# GitHub's compare API whether that build contains the merge commit (identical/ahead = contains). Immutable answers are
+# cached for good, pointers and listings ~10 min, verdicts 5 min: the list never waits for any of it.
+SHA40 = re.compile(r'^[0-9a-f]{40}$')
+REPO_FULL = re.compile(r'^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$')
+APP_ID_RE = re.compile(r'^[a-z0-9][a-z0-9-]{0,60}$')
+VERSION_RE = re.compile(r'^[0-9A-Za-z][0-9A-Za-z.+_-]{0,60}$')
+RELEASES_REPO = os.environ.get('WIZARD_RELEASES_REPO', 'humanitylabs-org/wizard-app-manager')
+STORE_INDEX = os.environ.get('WIZARD_STORE_INDEX', 'https://apps.aiwizards.com').rstrip('/')
+MAC_REPOS = {'try-wizard'}                                   # the Mac app: ships as a Mac build, not on the box
+OFF_BOX = {'wizard-os', 'wizard-app-index', 'wizard-issue-media', '.github'}   # specs, tools, websites: never on a box
+FIX_ORDER = ('Not released yet', 'Needs a Mac app build', 'Switch to For testers in Settings', 'Update WizardOS in Settings')
+ON_TEXT, OFF_TEXT, UNKNOWN_TEXT = 'On your Wizard ✓', 'Not on your Wizard yet', 'Can’t tell if this is on your Wizard'
+_forever = {}     # immutable lookups: compare(sha, sha), manifests, version -> commit, recipe -> image commit
+_timed = {}       # key -> (time, value): release pointers, Store listings, Mac releases (10 min)
+_verdicts = {}    # (token id, item id, box key) -> (time, verdict)
+TIMED_SECONDS, VERDICT_SECONDS = 600, 300
+_NONE = object()
+
+
+def delivered(node):
+    """([{repo, number, sha, url}] merged PRs that link to this issue, count of open ones)."""
+    seen, open_prs = {}, 0
+    for t in (node.get('timelineItems') or {}).get('nodes') or []:
+        x = (t or {}).get('source') or (t or {}).get('subject')
+        if not x or x.get('__typename') != 'PullRequest':
+            continue
+        repo = (x.get('repository') or {}).get('nameWithOwner')
+        sha = ((x.get('mergeCommit') or {}).get('oid') or '').lower()
+        if x.get('merged') and repo and SHA40.match(sha):
+            seen[(repo.lower(), x.get('number'))] = {'repo': repo, 'number': x.get('number'), 'sha': sha, 'url': x.get('url')}
+        elif (x.get('state') or '').upper() == 'OPEN':
+            open_prs += 1
+    return list(seen.values())[:12], open_prs
+
+
+_STEPS = re.compile(r'(?:^|\n|[.!?)]\s+)[ \t>*_]*(?:human(?:\s+(?:test|review|check))?|for the (?:person|human|tester) (?:checking|testing|reviewing)|'
+                    r'to test(?: it)?|how to test|for the tester|test steps)[*_]*(?:\s*\([^)\n]*\))?[*_]*\s*[:—][*_]*\s*(.+?)(?=\n\s*\n|\Z)', re.I | re.S)
+
+
+def test_steps(rows, limit=280):
+    """What a person does to test it, from the newest 'AI review: pass' note ('Human test: …', 'For the person
+    checking: …', 'Human: …'). One plain line; '' when the note has none."""
+    for _, body in reversed(rows or []):
+        if not re.match(r'^\s*AI review:\s*pass', body or '', re.I):
+            continue
+        m = _STEPS.search(body)
+        if not m:
+            return ''
+        t = re.sub(r'(?m)^\s*(\d+[.)]|[-*+])\s+', '', m.group(1))
+        t = re.sub(r'\[([^\]]+)\]\([^)]*\)', r'\1', t)
+        t = re.sub(r'`+|\*{1,3}|(?<![A-Za-z0-9])_{1,2}|_{1,2}(?![A-Za-z0-9])', '', t)   # code marks, not snake_case
+        t = re.sub(r'\s+', ' ', t).strip()
+        return t if len(t) <= limit else t[:limit - 1].rsplit(' ', 1)[0] + '…'
+    return ''
+
+
+def _timed_get(key, fn, seconds=TIMED_SECONDS):
+    with LOCK:
+        hit = _timed.get(key)
+    if hit and time.time() - hit[0] < seconds:
+        return hit[1]
+    try:
+        v = fn()
+    except Problem:
+        v = None
+    with LOCK:
+        _timed[key] = (time.time(), v)
+    return v
+
+
+def _forever_get(key, fn):
+    with LOCK:
+        if key in _forever:
+            return _forever[key]
+    try:
+        v = fn()
+    except Problem as e:
+        if e.code in (401, 429, 502):
+            return None          # transient: ask again next time
+        v = None                 # 404/403: the commit or file isn't there; that won't change
+    with LOCK:
+        _forever[key] = v
+        if len(_forever) > 4000:
+            for k in list(_forever)[:500]:
+                _forever.pop(k, None)
+    return v
+
+
+def _file_at(token, repo, path, ref):
+    got = gh(token, 'GET', f'/repos/{repo}/contents/{path}?ref={urllib.parse.quote(ref, safe="")}')
+    if not isinstance(got, dict) or got.get('encoding') != 'base64':
+        return None
+    return base64.b64decode(got.get('content') or '').decode('utf-8', 'replace')
+
+
+def contains(token, repo, sha, build):
+    """True when commit `build` of `repo` contains `sha`; None when GitHub can't say."""
+    if not sha or not build:
+        return None
+    if sha == build:
+        return True
+    def ask():
+        got = gh(token, 'GET', f'/repos/{repo}/compare/{sha}...{build}?per_page=1')
+        st = (got or {}).get('status')
+        return st in ('identical', 'ahead') if st else None
+    return (_forever_get(('cmp', repo.lower(), sha, build), ask) if SHA40.match(build)
+            else _timed_get(('cmp', repo.lower(), sha, build), ask))
+
+
+def release_manifest(token, version):
+    if not version or not VERSION_RE.match(version):
+        return None
+    def get():
+        raw = _file_at(token, RELEASES_REPO, f'releases/{version}.json', 'main')
+        return json.loads(raw) if raw else None
+    return _forever_get(('rel', version), get)
+
+
+def release_pointer(token, name):
+    def get():
+        raw = (_file_at(token, RELEASES_REPO, f'releases/{name}', 'main') or '').strip()
+        return raw if VERSION_RE.match(raw) else None
+    return _timed_get(('ptr', name), get)
+
+
+def release_commit(manifest, repo):
+    """The commit a release pins for a box component (components: App Manager, Agent Service, Wizard UX)."""
+    for c in ((manifest or {}).get('components') or {}).values():
+        if isinstance(c, dict) and str(c.get('repo') or '').lower() == repo.lower() and SHA40.match(str(c.get('commit') or '')):
+            return c['commit']
+    return None
+
+
+def store_listing(repo):
+    def get():
+        try:
+            req = urllib.request.Request(f'{STORE_INDEX}/v1/apps/{repo}', headers={'User-Agent': 'wizardos-tracker/' + VERSION})
+            with urllib.request.urlopen(req, timeout=8) as r:
+                d = json.loads(r.read(1024 * 1024) or b'{}')
+        except (OSError, ValueError):
+            return None
+        if not isinstance(d, dict) or not d.get('id'):
+            return None
+        commit = str(((d.get('install') or {}).get('commit')) or '').lower()
+        return {'id': d['id'], 'name': d.get('name') or d['id'], 'version': str(d.get('version') or ''),
+                'commit': commit if SHA40.match(commit) else None}
+    return _timed_get(('store', repo.lower()), get)
+
+
+def version_commit(token, repo, version):
+    """The recipe commit whose runtipi/config.json carries `version` (newest first, last 30 changes)."""
+    def get():
+        rows = gh(token, 'GET', f'/repos/{repo}/commits?path=runtipi/config.json&per_page=30')
+        for row in rows if isinstance(rows, list) else []:
+            sha = (row or {}).get('sha') or ''
+            raw = _forever_get(('file', repo.lower(), 'runtipi/config.json', sha), lambda: _file_at(token, repo, 'runtipi/config.json', sha))
+            try:
+                if raw and str(json.loads(raw).get('version')) == version:
+                    return sha
+            except ValueError:
+                continue
+        return None
+    return _forever_get(('ver', repo.lower(), version), get)
+
+
+def code_commit(token, repo, recipe):
+    """The code commit a recipe runs: its compose pins the repo's own image as `sha-<40 hex>`; else the recipe itself."""
+    if not recipe:
+        return None
+    def get():
+        raw = _file_at(token, repo, 'runtipi/docker-compose.yml', recipe) or ''
+        m = re.search(r'ghcr\.io/' + re.escape(repo.lower()) + r':sha-([0-9a-f]{40})', raw.lower())
+        return m.group(1) if m else recipe
+    return _forever_get(('img', repo.lower(), recipe), get) or recipe
+
+
+def mac_release(token, repo):
+    def get():
+        rows = gh(token, 'GET', f'/repos/{repo}/releases?per_page=10')
+        rows = [r for r in rows if isinstance(r, dict) and not r.get('draft') and r.get('published_at') and r.get('tag_name')] if isinstance(rows, list) else []
+        rows.sort(key=lambda r: r['published_at'], reverse=True)
+        return rows[0]['tag_name'] if rows else None
+    return _timed_get(('mac', repo.lower()), get)
+
+
+def where(token, d, box):
+    """One merged PR on this Wizard: ('yes'|'no'|'unknown'|'na', fix text or None, app id the box should report)."""
+    repo, sha = d['repo'], d['sha']
+    name = repo.split('/')[-1].lower()
+    if name in OFF_BOX:
+        return 'na', None, None
+    if name in MAC_REPOS:
+        tag = mac_release(token, repo)
+        got = contains(token, repo, sha, tag) if tag else False
+        return ('na', None, None) if got else ('no', 'Needs a Mac app build', None) if got is False else ('unknown', None, None)
+    release = box.get('release')
+    manifest = release_manifest(token, release) if release else None
+    pinned = release_commit(manifest, repo)
+    if pinned or name in ('wizard-ux', 'wizard-agent-service', 'wizard-app-manager'):
+        if not pinned:
+            return 'unknown', None, None
+        have = contains(token, repo, sha, pinned)
+        if have is None:
+            return 'unknown', None, None
+        if have:
+            return 'yes', None, None
+        chan = 'latest' if box.get('channel') == 'latest' else 'stable'
+        def in_release(v):
+            return bool(v) and v != release and bool(contains(token, repo, sha, release_commit(release_manifest(token, v), repo)))
+        if in_release(release_pointer(token, chan)):
+            return 'no', 'Update WizardOS in Settings', None
+        if chan != 'latest' and in_release(release_pointer(token, 'latest')):
+            return 'no', 'Switch to For testers in Settings', None
+        return 'no', 'Not released yet', None
+    app = store_listing(repo)
+    if not app:
+        return 'unknown', None, None
+    ver = (box.get('apps') or {}).get(app['id'])
+    if not ver:
+        return 'unknown', None, app['id']
+    recipe = app['commit'] if ver == app['version'] else version_commit(token, repo, ver)
+    have = contains(token, repo, sha, code_commit(token, repo, recipe)) if recipe else None
+    if have is None:
+        return 'unknown', None, app['id']
+    if have:
+        return 'yes', None, app['id']
+    listed = contains(token, repo, sha, code_commit(token, repo, app['commit'])) if app['commit'] else None
+    return 'no', (f"Update {app['name']}" if listed else 'Not released yet'), app['id']
+
+
+def verdict(token, delivers, open_prs, box):
+    """Combine every merged PR of one item: any missing -> not on this Wizard (the most blocking fix first)."""
+    parts = [(d, *where(token, d, box)) for d in delivers]
+    apps = sorted({a for *_, a in parts if a})
+    shown = [{'repo': d['repo'], 'number': d['number'], 'state': st, 'fix': fix} for d, st, fix, _ in parts]
+    nos = [fix for _, st, fix, _ in parts if st == 'no']
+    if nos or (not delivers and open_prs):
+        fix = min(nos or ['Not released yet'], key=lambda f: FIX_ORDER.index(f) if f in FIX_ORDER else len(FIX_ORDER))
+        return {'state': 'no', 'text': OFF_TEXT, 'fix': fix, 'parts': shown, 'apps': apps}
+    states = {st for _, st, _, _ in parts if st != 'na'}
+    if states == {'yes'}:
+        return {'state': 'yes', 'text': ON_TEXT, 'fix': None, 'parts': shown, 'apps': apps}
+    return {'state': 'unknown', 'text': UNKNOWN_TEXT, 'fix': None, 'parts': shown, 'apps': apps}
+
+
+def _box_facts(raw):
+    raw = raw if isinstance(raw, dict) else {}
+    rel = raw.get('release') if isinstance(raw.get('release'), str) and VERSION_RE.match(raw.get('release')) else None
+    apps = {k: v for k, v in (raw.get('apps') or {}).items() if isinstance(k, str) and APP_ID_RE.match(k)
+            and isinstance(v, str) and VERSION_RE.match(v)} if isinstance(raw.get('apps'), dict) else {}
+    return {'release': rel, 'channel': 'latest' if raw.get('channel') == 'latest' else 'stable' if raw.get('channel') == 'stable' else None,
+            'apps': dict(list(apps.items())[:40])}
+
+
+def on_box(person, args):
+    """POST /api/onbox {box: {release, channel, apps: {id: version}}, items: [{id, delivers: [{repo, number, sha}],
+    open_prs}]} -> {items: {id: {state yes|no|unknown, text, fix, parts, apps}}}. `apps` lists app ids whose running
+    version the page should send next time (read from /<id>/healthz on the box)."""
+    _, acct = account_for(person)
+    box = _box_facts(args.get('box'))
+    raw = args.get('items') if isinstance(args.get('items'), list) else []
+    items = []
+    for it in raw[:60]:
+        if not isinstance(it, dict) or not isinstance(it.get('id'), str) or len(it['id']) > 220:
+            continue
+        ds = [{'repo': d['repo'], 'number': d.get('number') if isinstance(d.get('number'), int) else None, 'sha': d['sha'].lower()}
+              for d in (it.get('delivers') or [])[:12] if isinstance(d, dict) and isinstance(d.get('repo'), str)
+              and REPO_FULL.match(d['repo']) and isinstance(d.get('sha'), str) and SHA40.match(d['sha'].lower())]
+        n = it.get('open_prs') if isinstance(it.get('open_prs'), int) and not isinstance(it.get('open_prs'), bool) else 0
+        items.append((it['id'], ds, n))
+    token, tid = acct['token'], _tid(acct['token'])
+    bkey = json.dumps(box, sort_keys=True)
+    def one(x):
+        iid, ds, n = x
+        key = (tid, iid, bkey, json.dumps(ds, sort_keys=True), n)
+        with LOCK:
+            hit = _verdicts.get(key)
+        if hit and time.time() - hit[0] < VERDICT_SECONDS:
+            return iid, hit[1]
+        v = verdict(token, ds, n, box)
+        with LOCK:
+            _verdicts[key] = (time.time(), v)
+            if len(_verdicts) > 2000:
+                for k in sorted(_verdicts, key=lambda k: _verdicts[k][0])[:500]:
+                    _verdicts.pop(k, None)
+        return iid, v
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        out = dict(ex.map(one, items))
+    return {'items': out, 'box': box}
 
 
 def board_view(person, args):
@@ -2019,10 +2321,10 @@ def human_rule(kind, opener, assignees, me, base=None):
         g = base['open']['goals']
         others = [] if g == 'team' else [t['name'] for t in base['team'] if t['name'].lower() in {str(n).lower() for n in g}]
         names = list(dict.fromkeys(owners + others)) or ['James']
-        rule = ('Only ' + (' or '.join(names) if len(names) < 3 else ', '.join(names[:-1]) + ' or ' + names[-1]) + ' review this goal.')
+        rule = ('Only ' + (' or '.join(names) if len(names) < 3 else ', '.join(names[:-1]) + ' or ' + names[-1]) + ' test this goal.')
         return mine in allowed, rule
     if same_person(opener, me, base):
-        return False, 'Someone else reviews this — you opened it.'
+        return False, 'You filed this, so someone else tests it.'
     return True, ''
 
 
@@ -2373,8 +2675,10 @@ def tested(person, args, works):
     if works:
         body = f'Tested: works — @{login}' + (f' ({prog["done"] + 1} of {need} reviews)' if need > 1 else '')
     else:
-        note = _text(args.get('note'), 'What went wrong', 3, 4000)
-        body = f"Tested: doesn't work — @{login}\n\n{note}"
+        note = (args.get('note') or '').strip() if isinstance(args.get('note') or '', str) else ''
+        if len(note) > 4000:
+            raise Problem(400, 'What went wrong is too long (4000 characters max).')
+        body = f"Tested: doesn't work — @{login}" + (f'\n\n{note}' if note else '')  # 0.16: the note is optional
     gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
     if final:
         _drop_label(acct, full, number, HUMAN_LABEL)
@@ -2641,6 +2945,7 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/new': lambda: new_item(who, body),
                 '/api/test/works': lambda: tested(who, body, True),
                 '/api/test/fails': lambda: tested(who, body, False),
+                '/api/onbox': lambda: on_box(who, body),
                 '/api/builder': lambda: builder_set(who, body),
                 '/api/try': lambda: try_set(who, body),
                 '/api/targets': lambda: targets_set(who, body),
