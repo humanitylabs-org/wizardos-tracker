@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.17.0
+version: 0.17.1
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -36,8 +36,8 @@ Every person sees the exact same UI: the same tabs, lists, items, buttons and sw
 ## Switches
 Name the switch in the hand-over with one `Switch:` line. A shell tweak (`Switch: <author>/<id>`) becomes a real toggle on the card, in the detail and in Settings › Try changes. Anything else is shown as the exact place to flip it: a Mac user default (write the full `defaults write …` command in the hand-over; the Tracker shows it with Copy), a setting inside an app (`Switch: Settings › <place>`, with an Open <app> button), or a box knob for whoever runs the box.
 
-## Wizards view
-The Wizards tab shows this Wizard's WizardOS (version, channel, last failed update) and every app, installed vs latest, with Update and Update all through the box's own App Manager (the same exact-release update the Store runs). Only this Wizard is listed: no list of team Wizards exists yet.
+## Update manager
+The Update manager (a small button top left of the Tracker, also in Settings; its own view with Back, not one of the Goals / Features / Bugs tabs) shows this Wizard's WizardOS (version, channel, last failed update) and every app, installed vs latest, with Update and Update all through the box's own App Manager (the same exact-release update the Store runs). A card's 'Not on your Wizard yet · Update' opens it at that app. The Tracker's own row shows the version actually running. Only this Wizard is listed: no list of team Wizards exists yet.
 
 ## Rules for agents
 - Read freely: `board_list` (`repo`, `type` all|goal|bug — features come with `all`, `state` open|closed), `board_get` (`issue` "owner/repo#123" or `repo` + `number`), `board_flow` (time per stage, kick-backs), `builder_status`, `try_status`.

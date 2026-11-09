@@ -28,7 +28,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.17.0'
+VERSION = '0.17.1'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -826,7 +826,7 @@ def _remember(token, item):
 def _merge_recent(token, items, f):
     now, t = time.time(), _tid(token)
     with LOCK:
-        mine = [v for (k, _), (at, v) in list(_recent.items()) if k == t and now - at < RECENT_SECONDS]
+        mine = [v for (k, _), (at, v) in list(_recent.items()) if now - at < RECENT_SECONDS]  # 0.17: shared, not per token
         for key in [k for k, (at, _) in _recent.items() if now - at >= RECENT_SECONDS]:
             _recent.pop(key, None)
     by_id = {i['id']: i for i in items}
@@ -1691,8 +1691,9 @@ def board_view(person, args):
             _tested.pop(k, None)
         for k in [k for k, v in _made.items() if now - v[0] > RECENT_SECONDS]:
             _made.pop(k, None)
-        hidden = {i for (k, i) in _tested if k == t}
-        made = [v for (k, _), v in _made.items() if k == t and v[1] == tab]
+        # 0.17: shared by everyone (same items for every viewer), not per token
+        hidden = {i for (k, i) in _tested}
+        made = [v for (k, _), v in _made.items() if v[1] == tab]
     if tab == 'test':
         items = [i for i in items if i['id'] not in hidden]
     have = {i['id'] for i in items}
@@ -1756,8 +1757,9 @@ def board_split(person, args):
         nodes = [by.get((n['repository']['nameWithOwner'], n['number']), n) for n in nodes]
     t, now = _tid(acct['token']), time.time()
     with LOCK:
-        hidden = {i for (k, i), v in _tested.items() if k == t and now - v <= RECENT_SECONDS}
-        made = [v for (k, _), v in _made.items() if k == t and now - v[0] <= RECENT_SECONDS and v[1] == ('goals' if view == 'goals' else 'issues')]
+        # 0.17: a just-filed or just-tested item shows the same way to everyone while search catches up
+        hidden = {i for (k, i), v in _tested.items() if now - v <= RECENT_SECONDS}
+        made = [v for (k, _), v in _made.items() if now - v[0] <= RECENT_SECONDS and v[1] == ('goals' if view == 'goals' else 'issues')]
     # 0.13: test = Human review (label ready-to-test, as before), airev = AI review (label ai-review)
     groups = {'test': [], 'airev': [], 'building': [], 'queued': []}
     base = policy_base()
@@ -1802,7 +1804,9 @@ def board_split(person, args):
     have = {i['id'] for g in groups.values() for i in g}
     for _, _, it in made:
         if it['id'] not in have:
-            groups['queued'].insert(0, {**it, 'group': 'queued', 'mine': True, 'can_close': True})
+            own = same_person(it.get('author') or '', login, base)
+            if it['repo'].lower().startswith(org.lower() + '/'):
+                groups['queued'].insert(0, {**it, 'group': 'queued', 'mine': own, 'can_close': own})
     # Stats ride along when cached; otherwise the view asks GET /api/stats right after (keeps the list fast).
     stats = view_stats(acct['token'], org, view, cached_only=not args.get('with_stats')) or {'pending': True, 'items': [], 'done': None}
     repos_wanted = _repo_list(args.get('repos'))
@@ -1811,7 +1815,6 @@ def board_split(person, args):
         groups = {k: [i for i in v if keep(i)] for k, v in groups.items()}
         stats = _filter_stats(stats, keep)
     shown = sum(len(g) for g in groups.values())
-    others_test = [c for c in groups['test'] if not c['mine']]
     return {'view': view, 'org': org, 'login': login, 'me_person': person_of(login, base), 'steps': steps_for(view, base), 'groups': groups,
             'targets': base['targets'][view], 'names': display_names(base), 'since': base['since'], 'human_reviews': base['human_reviews'],
             # 0.9: Bugs shows a Repo chip for every non-archived org repo (owner/name), even with 0 open bugs
@@ -1820,7 +1823,8 @@ def board_split(person, args):
             'stats': {**stats, 'summary': None if stats.get('pending') else summarize(stats.get('items', []))},
             'total': total, 'shown': shown, 'more': total > len(nodes),
             # 0.3 shape, kept for older views and scripts
-            'test': others_test, 'doing': [c for c in groups['test'] if c['mine']] + groups['airev'] + groups['building'] + groups['queued']}
+            # 0.17: the same lists for everyone ('test' no longer drops the viewer's own items)
+            'test': groups['test'], 'doing': groups['airev'] + groups['building'] + groups['queued']}
 
 
 # ---------- bottleneck stats (label history, cached 5 min per token/org/view) ----------

@@ -2,7 +2,7 @@
 // WizardOS Tracker 0.17: a calmer list (stage strip with count and name only; Stats, Filter and Sort behind small
 // buttons; Works / Doesn't work in the detail), switches you can find (a real toggle, or the exact place with a button,
 // on the card, in the detail and in Settings › Try changes), goals steered with Keep going / Change direction, and a
-// Wizards view (WizardOS and every app: installed vs latest, Update, Update all). Everyone sees the same UI: anything a
+// Update manager (WizardOS and every app: installed vs latest, Update, Update all). Everyone sees the same UI: anything a
 // viewer can't do is greyed out with the reason in place.
 // WizardOS Tracker 0.14: Try it is the change's real feature switch on this Wizard (builder line `Switch: <author>/<id>`,
 // shell route /wizard-os-home/store-install/_feature-switches, same state as Settings › Try new features).
@@ -22,7 +22,7 @@ const EMPTY = { goals: 'No open goals.', features: 'No open features.', bugs: 'N
 const GROUPS = ['test', 'airev', 'building', 'queued'];
 const stage = { goals: null, features: null, bugs: null };   // tap a bin: show only that stage (not remembered)
 const doneCache = {};   // view -> { at, items } recently closed, loaded when the Done bin is tapped
-let me = null, view = ({ '#bugs': 'bugs', '#features': 'features', '#wizards': 'wizards' })[location.hash] || 'goals', gen = 0, held = null, lastLoad = 0, who = '';
+let me = null, view = ({ '#bugs': 'bugs', '#features': 'features' })[location.hash] || 'goals', umOpen = /^#(updates|wizards)$/.test(location.hash), umBack = 'goals', gen = 0, held = null, lastLoad = 0, who = '';
 const NO_DATA = 'starts once the builder runs';
 const BINS = [
   { key: 'open', group: 'queued', word: 'Queued' },
@@ -84,7 +84,7 @@ const repoName = r => (r || '').split('/').pop();
 // 0.10: GitHub login -> the name people know, from the policy roster (served as `names`).
 const nameOf = login => { const n = ((cache[view] || {}).names || {})[(login || '').toLowerCase()]; return n || login || ''; };
 const typing = () => !!document.querySelector('.bd-fail');
-const sheetOpen = () => ['detail', 'stats', 'filter', 'settings'].some(x => el(x).open);
+const sheetOpen = () => ['detail', 'filter', 'settings'].some(x => el(x).open);
 
 // ---------- one small anchored popover (bins, Builder, Try it); tap outside or Esc closes it ----------
 let popFor = null;
@@ -238,8 +238,6 @@ sw.addEventListener('click', e => {
   try { history.replaceState(null, '', view === 'goals' ? location.pathname + location.search : '#' + view); } catch (_) {}
   unpop(); repoMore = false;
   el('scroll').scrollTop = 0;
-  if (view === 'wizards') return showWizards();
-  el('lists').hidden = false; el('wizards').hidden = true;
   if (cache[view]) render(cache[view]);
   else { for (const g of [...GROUPS, 'done']) el('sec-' + g).hidden = true; el('totals').textContent = ''; el('strip').replaceChildren(); el('filtered').hidden = true; el('empty').hidden = false; el('empty').textContent = 'Loading…'; }
   load(view);
@@ -260,7 +258,6 @@ function freshness() {
 setInterval(freshness, 5000);
 
 async function load(which, refresh = false) {
-  if (which === 'wizards') return showWizards(refresh);
   const g = ++gen; lastLoad = Date.now(); inflight++; freshness();
   try {
     const d = await api(`api/split?view=${which}${refresh ? '&refresh=1' : ''}`);
@@ -297,7 +294,7 @@ function reposOf(d, keepWho) {
   return [...n.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 function render(d) {
-  if (view === 'wizards' || d.view !== view) return;
+  if (d.view !== view) return;
   // 0.17: person and repo filters live in the Filter sheet (every list view); one small 'Filtered: …' line says what is set
   const whoSet = pickedWho[d.view], chosen = picked[d.view];
   const allPeople = new Set(authorsOf(d).map(([p]) => p.toLowerCase()));
@@ -365,7 +362,15 @@ function filteredLine(whoSet, chosen, people, repos) {
 el('filter-btn').onclick = () => { unpop(); if (cache[view]) render(cache[view]); WzSheet.open(el('filter')); };
 el('filter-done').onclick = () => WzSheet.close(el('filter'));
 el('filter-clear').onclick = () => { pickedWho[view].clear(); picked[view].clear(); saveFilter('who'); saveFilter('repo'); };
-el('stats-btn').onclick = () => { unpop(); if (cache[view]) render(cache[view]); el('stats-h').textContent = 'Stats · ' + cap(view); WzSheet.open(el('stats')); };
+// 0.17.1: Show stats / Hide stats expands the stats inline under the strip; collapsed by default, remembered on this device.
+function statsShown(on, animate) {
+  const s = el('stats'), b = el('stats-btn');
+  if (!animate) { s.classList.add('still'); requestAnimationFrame(() => requestAnimationFrame(() => s.classList.remove('still'))); }
+  s.classList.toggle('open', on); s.inert = !on;
+  b.setAttribute('aria-expanded', String(on)); b.textContent = on ? 'Hide stats' : 'Show stats';
+}
+statsShown(store.get('board.stats') === true, false);
+el('stats-btn').onclick = () => { const on = el('stats-btn').getAttribute('aria-expanded') !== 'true'; store.set('board.stats', on); statsShown(on, true); };
 el('sort-btn').onclick = () => {
   const b = el('sort-btn'), list = make('div', 'bd-menu'); list.setAttribute('role', 'menu');
   for (const [k, label] of SORTS) {
@@ -512,7 +517,7 @@ function flow(d, groups, done, st, hist) {
     b.append(make('span', 'bd-bin-n', count == null ? '—' : String(count)));
     if (x.key === 'done') b.title = st.error ? st.error : done == null ? 'Counting…' : `Closed ${sinceText(d.since).toLowerCase()} · tap for the latest`;
     li.append(b, make('span', 'bd-bin-w', x.word), binStat(x, ls, st, d.targets));
-    li.onclick = () => { setStage(g); WzSheet.close(el('stats')); };
+    li.onclick = () => setStage(g);
     out.push(li);
   });
   el('steps').replaceChildren(...out);
@@ -968,14 +973,14 @@ function statusLine(p, t) {
   return p;
 }
 function onboxLine(p, t) { return statusLine(p, t); }
-// An Update button for the fix an item needs (the same one the Wizards view uses), or an instruction where none can run.
+// An Update button for the fix an item needs: it opens the Update manager at that app (or WizardOS), or an instruction where none can run.
 function updateFor(v) {
   const fix = v.fix || '';
-  if (/^Update WizardOS/.test(fix)) return smallBtn('Update', b => updateWizardOS(b));
+  if (/^Update WizardOS/.test(fix)) return smallBtn('Update', () => openUM());
   const m = /^Update (.+)$/.exec(fix);
   if (m) {
     const id = (v.apps || [])[0] || (appsByName().get(m[1].toLowerCase()) || {}).id;
-    if (id) return smallBtn('Update', b => updateApp(id, b));
+    return smallBtn('Update', () => openUM(id));
   }
   if (fix === 'Needs the Mac app update') return smallBtn('How', b => pop(b, '', 'In the Mac app: Wizard menu › Check for Updates…'));
   if (/For testers/.test(fix)) return smallBtn('How', b => pop(b, '', 'Settings › Updates › For testers.'));
@@ -1275,7 +1280,7 @@ function drawItemFlow(f) {
   if (!staged && f.state === 'open') box.append(make('p', 'bd-meta bd-dflow-note', `Queued for ${dur(f.spent.queued)} · no build yet`));
 }
 
-// ---------- 0.17 Wizards: this box's WizardOS and every app, installed vs latest, Update and Update all ----------
+// ---------- 0.17 Update manager: this box's WizardOS and every app, installed vs latest, Update and Update all ----------
 // Sources (all the box's own App Manager routes the page already reaches on the shell's origin, owner-only):
 // store-install/_updates (WizardOS release, channel, last failure), store-data/wizard/v1/installed-apps (what runs),
 // store-data/wizard/v1/index/search (the Store's latest release per repo) and POST store-install/<id> with
@@ -1343,7 +1348,8 @@ async function updateApp(id, btn) {
   } finally {
     store.set('board.wizfail', wizFail);
     wizBusy.delete(id); catalog = null; onbox.clear();
-    if (view === 'wizards') showWizards(); else { await loadCatalog(true); if (cache[view]) render(cache[view]); }
+    if (id === 'wizardos-tracker' && !wizFail[id]) { toast('The Tracker updated: reloading…'); setTimeout(() => location.reload(), 1500); return; }
+    if (umOpen) showWizards(); else { await loadCatalog(true); if (cache[view]) render(cache[view]); }
   }
 }
 async function updateAll(btn) {
@@ -1360,15 +1366,43 @@ async function updateWizardOS(btn) {
     toast(r && r.started ? 'WizardOS is updating. Wizard restarts in a minute.' : (r && r.error) || 'Update asked.');
   } catch (e) { if (btn) pop(btn, '', e.status === 404 ? 'Update in Settings › Updates.' : e.message); }
 }
+// 0.17.1: the Update manager is its own view (not a tab): opened from the header button, Settings, or a card's Update.
+let umFocus = null;
+function openUM(focusId) {
+  unpop();
+  for (const d of ['detail', 'settings', 'filter']) if (el(d).open) WzSheet.close(el(d));
+  if (!umOpen) umBack = location.hash;
+  umOpen = true; umFocus = focusId || null;
+  document.body.classList.add('um-open'); el('wizards').hidden = false;
+  try { history.replaceState(null, '', '#updates'); } catch (_) {}
+  el('scroll').scrollTop = 0;
+  el('um-back').focus();
+  showWizards(true);
+}
+function closeUM() {
+  umOpen = false; umFocus = null;
+  document.body.classList.remove('um-open'); el('wizards').hidden = true;
+  try { history.replaceState(null, '', umBack && umBack !== '#updates' && umBack !== '#wizards' ? umBack : (view === 'goals' ? location.pathname + location.search : '#' + view)); } catch (_) {}
+  el('um-btn').focus();
+}
+el('um-btn').onclick = () => umOpen ? closeUM() : openUM();
+el('um-back').onclick = closeUM;
+el('settings-um').onclick = () => { WzSheet.close(el('settings')); openUM(); };
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && umOpen && !sheetOpen() && el('pop').hidden) closeUM(); });
+// The Tracker's own row shows the version that is actually running (the server answering this page), so it is right
+// straight after a self-update even if the App Manager's list is a moment behind.
+function runningSelf(a) {
+  const v = me.version, cmp = a.latest ? vcmp(a.latest, v) : 0;
+  return { ...a, version: v, update: a.update && cmp > 0, ahead: a.latest ? cmp < 0 : a.ahead };
+}
 async function showWizards(force) {
-  el('lists').hidden = true; el('wizards').hidden = false;
-  if (!catalog) el('wizards').replaceChildren(make('p', 'bd-empty', 'Loading…'));
+  if (!catalog) el('um-body').replaceChildren(make('p', 'bd-empty', 'Loading…'));
   await loadCatalog(force);
   paintWizards();
 }
 function paintWizards() {
-  if (view !== 'wizards' || !catalog) return;
-  const w = el('wizards'), u = updates || {};
+  if (!umOpen || !catalog) return;
+  const w = el('um-body'), u = updates || {};
   const host = /^[0-9.]+$|^localhost$/.test(location.hostname) ? 'This Wizard' : location.hostname.split('.')[0];
   const card = make('article', 'bd-card bd-wiz');
   const head = make('div', 'bd-card-top'); head.append(make('b', 'bd-title', host), make('span', 'bd-meta', 'this Wizard'));
@@ -1379,7 +1413,7 @@ function paintWizards() {
   if (u.update_available) os.append(smallBtn(u.installing ? 'Updating…' : 'Update', b => updateWizardOS(b)));
   card.append(os);
   if (u.failed || u.interrupted) card.append(make('p', 'bd-why', `Last WizardOS update failed${u.retry_target ? ' (' + u.retry_target + ')' : ''}: ${u.failure_reason || 'no reason given'}.`));
-  const apps = catalog.apps || [];
+  const apps = (catalog.apps || []).map(a => a.id === 'wizardos-tracker' && me && me.version ? runningSelf(a) : a);
   const n = apps.filter(a => a.update).length;
   const bar = make('div', 'bd-wiz-bar');
   bar.append(make('span', 'bd-meta', catalog.error || `${apps.length} apps · ${n ? n + ' to update' : 'all up to date'}`));
@@ -1389,7 +1423,8 @@ function paintWizards() {
   if (fails.length) { const [id, f] = fails[0]; card.append(make('p', 'bd-why', `Last failed update: ${f.name || id} → ${f.to || '?'} (${when(new Date(f.at).toISOString())}): ${f.reason}`)); }
   const list = make('div', 'bd-list rows bd-wiz-apps');
   for (const a of apps) {
-    const r = make('div', 'bd-rowx bd-wiz-app');
+    const r = make('div', 'bd-rowx bd-wiz-app' + (a.id === umFocus ? ' focus' : ''));
+    r.dataset.app = a.id;
     const t = make('div', 'bd-item'); t.append(make('b', 'bd-title', a.name));
     const busy = wizBusy.get(a.id);
     const where = a.pinned ? 'updates with WizardOS' : a.update ? `latest ${a.latest}` : a.ahead ? `newer than the Store (${a.latest})` : a.latest ? 'latest ✓' : a.source === 'owner-private' ? 'private build' : 'not in the Store';
@@ -1403,6 +1438,8 @@ function paintWizards() {
   card.append(list);
   card.append(make('p', 'bd-meta', 'Only this Wizard for now: the Tracker doesn’t know the team’s other Wizards yet.'));
   w.replaceChildren(card);
+  const f = umFocus && w.querySelector(`[data-app="${CSS.escape(umFocus)}"]`);
+  if (f) f.scrollIntoView({ block: 'center' });
 }
 
 // ---------- 0.17 Settings › Try changes: every switch in Human review, on/off, the same toggles as on the cards ----------
@@ -1431,12 +1468,13 @@ el('settings-btn').onclick = () => { unpop(); tryList(); WzSheet.open(el('settin
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.17.0' });
-  WizardApp.back.register({ canGoBack: () => false, back: () => false });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.17.1' });
+  if (umOpen) openUM();
+  WizardApp.back.register({ canGoBack: () => umOpen, back: () => { if (!umOpen) return false; closeUM(); return true; } });
 }
 for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));
 loadCatalog().catch(() => {});
-api('api/status').then(s => { show(s); if (s.connected) { load(view); loadSide(); setTimeout(() => { for (const other of ['goals', 'features', 'bugs']) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; }).catch(() => {}); }, 600); } })
+api('api/status').then(s => { show(s); if (umOpen) paintWizards(); if (s.connected) { load(view); loadSide(); setTimeout(() => { for (const other of ['goals', 'features', 'bugs']) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; }).catch(() => {}); }, 600); } })
   .catch(err => { el('loading').hidden = true; say(err.message, 'error'); });
 const quiet = () => me && me.connected && !document.hidden && !typing() && !sheetOpen() && !popFor;
 const tick = () => { if (quiet() && Date.now() - lastLoad > 20000) load(view, true); };

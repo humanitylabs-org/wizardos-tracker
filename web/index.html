@@ -18,7 +18,7 @@
   <div class="wz-app bd-app">
     <main class="wz-scroll bd-scroll" id="scroll">
       <!-- 0.12.2: tiny account control, top right -->
-      <p class="bd-acct" id="acct"><span class="bd-fresh" id="fresh" aria-live="polite"></span><button type="button" class="bd-reload" id="reload" aria-label="Refresh now" title="Refresh now" hidden><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"/></svg></button><span id="acct-name" hidden></span> <button type="button" class="bd-acct-act" id="acct-act">Sign in</button> <button type="button" class="bd-acct-act" id="settings-btn" aria-haspopup="dialog">Settings</button></p>
+      <p class="bd-acct" id="acct"><button type="button" class="bd-um-btn" id="um-btn" aria-label="Update manager" title="Update manager: WizardOS and every app, installed vs latest"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M5 19h14"/></svg><span>Update manager</span></button><span class="bd-fresh" id="fresh" aria-live="polite"></span><button type="button" class="bd-reload" id="reload" aria-label="Refresh now" title="Refresh now" hidden><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"/></svg></button><span id="acct-name" hidden></span> <button type="button" class="bd-acct-act" id="acct-act">Sign in</button> <button type="button" class="bd-acct-act" id="settings-btn" aria-haspopup="dialog">Settings</button></p>
       <!-- Not signed in: one card, one field. -->
       <section id="signin" class="wz-card bd-signin" hidden>
         <h1 class="bd-h1">Sign in with GitHub</h1>
@@ -55,7 +55,6 @@
             <button type="button" role="tab" data-view="goals" aria-selected="true">Goals</button>
             <button type="button" role="tab" data-view="features" aria-selected="false">Features</button>
             <button type="button" role="tab" data-view="bugs" aria-selected="false">Bugs</button>
-            <button type="button" role="tab" data-view="wizards" aria-selected="false">Wizards</button>
           </div>
           <button type="button" class="bd-toggle" id="builder" role="switch" aria-checked="false" aria-label="Builder" aria-describedby="builder-state">
             <span class="bd-ctl-name" aria-hidden="true">Builder</span>
@@ -68,10 +67,21 @@
              return arrows live in Stats. One Filter button (person, repo) and a small Sort menu. -->
         <div id="lists">
           <div class="bd-flow bd-strip" role="group" aria-label="How work moves"><ol class="bd-steps" id="strip"></ol></div>
+          <!-- 0.17.1: stats expand inline under the strip (collapsed by default, remembered per device) -->
+          <p class="bd-stats-tg"><button type="button" class="bd-tool bd-tool-link" id="stats-btn" aria-expanded="false" aria-controls="stats">Show stats</button></p>
+          <div class="bd-statsx" id="stats" role="region" aria-label="Stats" inert>
+            <div class="bd-statsx-in">
+              <div class="bd-flow" id="flow" role="group" aria-label="How work moves">
+                <ol class="bd-steps" id="steps"></ol>
+                <div class="bd-ctls" id="ctl" role="group" aria-label="Targets and who does each step"></div>
+                <p class="bd-loop bd-loops" id="loop"><i class="bd-loop2" aria-hidden="true"></i><button type="button" class="bd-kick bd-kick-ai" id="kick-ai" aria-label="AI review fail goes back to Building" hidden></button><button type="button" class="bd-kick bd-kick-h" id="kick" aria-label="Doesn't work goes back to Building" hidden></button></p>
+              </div>
+              <p class="bd-meta" id="stats-note"></p>
+            </div>
+          </div>
           <div class="bd-tools">
             <button type="button" class="bd-tool" id="filter-btn" aria-haspopup="dialog">Filter</button>
             <button type="button" class="bd-tool" id="sort-btn" aria-haspopup="menu">Sort: Oldest</button>
-            <button type="button" class="bd-tool bd-tool-link" id="stats-btn" aria-haspopup="dialog">Stats</button>
           </div>
           <p class="bd-filtered" id="filtered" hidden></p>
           <p class="bd-totals" id="totals" aria-live="polite"></p>
@@ -97,8 +107,11 @@
         </section>
         <p class="bd-empty" id="empty" hidden></p>
         </div>
-        <!-- 0.17 Wizards: each team Wizard the Tracker knows, its WizardOS, and every app with Update / Update all. -->
-        <section id="wizards" class="bd-wizards" hidden></section>
+        <!-- 0.17.1 Update manager (its own view, opened from the header or Settings): this Wizard's WizardOS and every app with Update / Update all. -->
+        <section id="wizards" class="bd-wizards" hidden aria-labelledby="um-h">
+          <div class="bd-um-top"><button type="button" class="wz-button secondary bd-um-back" id="um-back">‹ Back</button><h1 class="bd-um-h" id="um-h">Update manager</h1></div>
+          <div id="um-body"></div>
+        </section>
       </div>
       <p id="loading" class="bd-empty">Loading…</p>
     </main>
@@ -122,16 +135,6 @@
       <ol id="d-comments" class="bd-comments"></ol>
       <p class="bd-d-foot"><button type="button" class="wz-button secondary bd-d-close" id="d-close" hidden>Mark done</button> <a id="d-gh" class="bd-link" href="#" target="_blank" rel="noopener noreferrer">Open on GitHub ↗</a></p>
     </dialog>
-    <!-- 0.17: Stats (the old full line: timings, targets, return arrows), Filter, and the Tracker's settings. -->
-    <dialog id="stats" class="wz-sheet bd-stats" aria-labelledby="stats-h">
-      <h2 id="stats-h">Stats</h2>
-      <div class="bd-flow" id="flow" role="group" aria-label="How work moves">
-        <ol class="bd-steps" id="steps"></ol>
-        <div class="bd-ctls" id="ctl" role="group" aria-label="Targets and who does each step"></div>
-        <p class="bd-loop bd-loops" id="loop"><i class="bd-loop2" aria-hidden="true"></i><button type="button" class="bd-kick bd-kick-ai" id="kick-ai" aria-label="AI review fail goes back to Building" hidden></button><button type="button" class="bd-kick bd-kick-h" id="kick" aria-label="Doesn't work goes back to Building" hidden></button></p>
-      </div>
-      <p class="bd-meta" id="stats-note"></p>
-    </dialog>
     <dialog id="filter" class="wz-sheet bd-filter" aria-labelledby="filter-h">
       <h2 id="filter-h">Filter</h2>
       <h3 class="bd-sec-h">Person</h3>
@@ -142,6 +145,7 @@
     </dialog>
     <dialog id="settings" class="wz-sheet bd-settings" aria-labelledby="settings-h">
       <h2 id="settings-h">Tracker settings</h2>
+      <p class="bd-um-entry"><button type="button" class="wz-button secondary" id="settings-um">Update manager</button> <span class="bd-meta">WizardOS and every app: installed vs latest, Update</span></p>
       <h3 class="bd-sec-h">Try changes <span class="bd-n" id="try-n"></span></h3>
       <p class="bd-meta">Every switch for a change in Human review. The same switches sit on each card.</p>
       <div class="bd-list rows" id="try-list"></div>

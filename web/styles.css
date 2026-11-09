@@ -527,12 +527,11 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
 .bd-tickrow { display: flex; align-items: flex-start; gap: 6px; min-height: 28px; cursor: pointer; }
 .bd-tickrow input { margin-top: 3px; accent-color: var(--accent); }
 /* stats + filter + settings sheets */
-.bd-stats .bd-flow { margin-top: var(--wz-space-3); }
 .bd-filter .bd-chips { margin-bottom: var(--wz-space-2); }
 .bd-filter .bd-d-foot, .bd-settings .bd-d-foot { justify-content: flex-end; }
 .bd-try-row { display: flex; align-items: center; }
 .bd-try-row .bd-item { flex: 1; min-width: 0; display: grid; gap: 2px; }
-/* Wizards view */
+/* Update manager */
 .bd-wizards { display: grid; gap: var(--wz-space-3); }
 .bd-wiz { gap: 8px; }
 .bd-wiz-bar { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 4px; }
@@ -540,8 +539,38 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
 .bd-wiz-app { display: flex; align-items: center; gap: 8px; padding-right: 12px; }
 .bd-wiz-app .bd-item { flex: 1; min-width: 0; display: grid; gap: 2px; cursor: default; }
 .bd-askrow { display: flex; justify-content: flex-end; gap: 6px; margin-top: 8px; }
-.bd-stats:not([open]), .bd-filter:not([open]), .bd-settings:not([open]) { display: none; }
-/* 0.17: Goals | Features | Bugs | Wizards, four across */
-.bd-switch { grid-template-columns: repeat(4, auto); }
-.bd-head .bd-switch { width: 420px; }
-@media (max-width: 640px) { .bd-head .bd-switch { max-width: none; } .bd-switch button { padding: 0 2px; font-size: .8rem; } }
+.bd-filter:not([open]), .bd-settings:not([open]) { display: none; }
+
+/* 0.17.1 Update manager: a small header button (top left), and its own view with a Back */
+.bd-um-btn { margin-right: auto; display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--fill); color: var(--ink-2); font: inherit; font-weight: 600; cursor: pointer; align-self: center; }
+.bd-um-btn svg { color: var(--accent); }
+@media (hover: hover) { .bd-um-btn:hover { background: var(--fill-2); color: var(--ink); } }
+.bd-um-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.um-open .bd-um-btn { border-color: var(--accent); color: var(--accent); }
+.um-open #board { display: block !important; }
+.um-open #signin, .um-open #refused, .um-open .bd-board > :not(#wizards) { display: none !important; }
+.bd-um-top { display: flex; align-items: center; gap: 12px; margin: 0 0 var(--wz-space-3); }
+.bd-um-h { margin: 0; font-size: 1.25rem; font-weight: 700; color: var(--ink); }
+.bd-um-back { min-height: 36px; }
+.bd-um-entry { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 0 var(--wz-space-4); }
+.bd-wiz-app.focus { background: color-mix(in srgb, var(--accent) 10%, transparent); }
+
+/* 0.17.1 inline stats: a small toggle right under the strip; the panel slides open (grid rows 0fr -> 1fr), nothing else moves */
+.bd-stats-tg { display: flex; justify-content: center; margin: -6px 0 var(--wz-space-2); }
+.bd-stats-tg .bd-tool-link { margin: 0; }
+.bd-statsx { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows .26s ease, opacity .2s ease, margin .26s ease; margin: 0; }
+.bd-statsx.open { grid-template-rows: 1fr; opacity: 1; margin: 0 0 var(--wz-space-3); }
+.bd-statsx.still { transition: none; }
+.bd-statsx-in { min-height: 0; overflow: hidden; }
+.bd-statsx .bd-flow { margin: 0; padding: var(--wz-space-3); border: 1px solid var(--line-2); border-radius: var(--r-tile); background: var(--fill); }
+.bd-statsx #stats-note { margin: 6px 2px 0; text-align: center; }
+@media (prefers-reduced-motion: reduce) { .bd-statsx { transition: none; } }
+/* stats panel: timings, targets, sparklines and loops only; the counts already sit in the strip above */
+.bd-statsx .bd-bin-n { display: none; }
+.bd-statsx .bd-binx, .bd-statsx .bd-binx.sel, .bd-statsx .bd-bin { border-color: transparent; background: none; box-shadow: none; }
+.bd-statsx .bd-binx.dim { opacity: 1; }
+.bd-statsx .bd-bin-w { color: var(--ink-2); }
+@media (max-width: 640px) {
+  .bd-um-btn { padding: 0; width: 36px; justify-content: center; }
+  .bd-um-btn span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+}
