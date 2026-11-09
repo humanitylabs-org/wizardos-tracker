@@ -108,15 +108,35 @@ class OnBox(unittest.TestCase):
         self.assertEqual((v['state'], v['text'], v['fix']), ('no', 'Not on your Wizard yet', 'Not released yet'))
 
     def test_mac_app(self):
-        self.assertEqual(self.v(MAC, {'apps': {}})['fix'], 'Needs a Mac app build')
+        # 0.17: a Mac change needs the Mac app update unless the viewer's Mac app is known to contain it
+        self.assertEqual(self.v(MAC, {'apps': {}})['fix'], 'Needs the Mac app update')
         self.fake.mac_tag = 'v-new'
         S._timed.clear()
-        self.assertEqual(self.v(MAC, {'apps': {}})['state'], 'unknown')   # only a Mac change: nothing on the box to check
+        self.assertEqual(self.v(MAC, {'apps': {}})['fix'], 'Needs the Mac app update')   # released, but this viewer's Mac app is unknown
+        self.assertEqual(self.v(MAC, {'apps': {}, 'mac': 'old'})['state'], 'no')
+        self.assertEqual(self.v(MAC, {'apps': {}, 'mac': '-new'})['state'], 'no')      # mac-mvp--new is behind: not in your Mac app
+        real = S.contains
+        try:
+            S.contains = lambda tok, repo, sha, b: True if b == 'mac-mvp-0.8.0' else False if b == 'mac-mvp-0.7.0' else None
+            self.assertEqual(self.v(MAC, {'apps': {}, 'mac': '0.8.0'})['state'], 'yes')      # release tags are mac-mvp-<version>
+            self.assertEqual(self.v(MAC, {'apps': {}, 'mac': '0.7.0'})['fix'], 'Needs the Mac app update')
+        finally:
+            S.contains = real
+
+    def test_mac_pr_without_merge_commit_still_counts(self):
+        # try-wizard#19: the GitHub App token sees try-wizard PRs with mergeCommit null; they must not vanish
+        node = {'timelineItems': {'nodes': [
+            {'source': {'__typename': 'PullRequest', 'number': 712, 'merged': True, 'mergeCommit': {'oid': A}, 'repository': {'nameWithOwner': UX}}},
+            {'source': {'__typename': 'PullRequest', 'number': 78, 'merged': True, 'mergeCommit': None, 'repository': {'nameWithOwner': MAC}}}]}}
+        ds, _ = S.delivered(node)
+        self.assertEqual([(d['repo'], d['sha']) for d in ds], [(UX, A), (MAC, '')])
+        v = S.verdict('t', ds, 0, {'release': '0.3.2', 'channel': 'latest', 'apps': {}})
+        self.assertEqual((v['state'], v['fix']), ('no', 'Needs the Mac app update'))
 
     def test_mixed_item_takes_the_blocking_fix(self):
         box = {'release': '0.3.2', 'channel': 'latest', 'apps': {}}
         v = S.verdict('t', [{'repo': UX, 'number': 1, 'sha': A}, {'repo': MAC, 'number': 2, 'sha': A}], 0, box)
-        self.assertEqual((v['state'], v['fix']), ('no', 'Needs a Mac app build'))
+        self.assertEqual((v['state'], v['fix']), ('no', 'Needs the Mac app update'))
         self.assertEqual([p['state'] for p in v['parts']], ['yes', 'no'])
 
     def test_docs_only_and_open_pr(self):
@@ -139,7 +159,7 @@ class OnBox(unittest.TestCase):
                                   'items': [{'id': 'a#1', 'delivers': [{'repo': UX, 'number': 1, 'sha': A}, {'repo': 'x', 'sha': 'zz'}]}, 'junk']})
         finally:
             S.account_for = real
-        self.assertEqual(out['box'], {'release': None, 'channel': None, 'apps': {'messenger': '1.1'}})
+        self.assertEqual(out['box'], {'release': None, 'channel': None, 'apps': {'messenger': '1.1'}, 'mac': None})
         self.assertEqual(list(out['items']), ['a#1'])
         self.assertEqual(out['items']['a#1']['state'], 'unknown')   # no release: can't tell
 
@@ -180,7 +200,7 @@ class Rules(unittest.TestCase):
         self.assertEqual(S.human_rule('bug', 'mistermizel', [], 'mistermizel'), (False, 'You filed this, so someone else tests it.'))
         ok, rule = S.human_rule('goal', 'jdefleur', ['JanMesaric'], 'mistermizel')
         self.assertFalse(ok)
-        self.assertTrue(rule.endswith('test this goal.'), rule)
+        self.assertTrue(rule.endswith('review this goal.'), rule)
 
 
 if __name__ == '__main__':

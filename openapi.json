@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "WizardOS Tracker",
-    "version": "0.16.3",
+    "version": "0.17.0",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged. 0.13: two-step review (Queued → Building → AI review [label ai-review] → Human review [label ready-to-test] → Done; AI review is agents-only via MCP ai_review_pass / ai_review_fail; policy human_reviews 1|2) and Sign in with GitHub via the OAuth device flow (no client secret).",
     "contact": {
       "name": "WizardOS Tracker",
@@ -469,7 +469,7 @@
     },
     "/api/issue/close": {
       "post": {
-        "summary": "Close an issue",
+        "summary": "Close an issue 0.17: a goal is closed or reopened only by James (403 not_goal_closer); closing needs every done-list item ticked or {anyway: true} (409 not_all_done).",
         "responses": {
           "200": {
             "description": "OK",
@@ -749,7 +749,7 @@
     },
     "/api/test/works": {
       "post": {
-        "summary": "Comment 'Tested: works — @login', remove ready-to-test, add approved. Does not close. 0.13 Human review: bugs = anyone but the opener; goals = goal owners (assignees) or James. Works counts toward policy human_reviews (1|2): returns reviews {done, need} and final; with 2, approved is added only after a second, different person (409 already_reviewed if you said Works already). Doesn't work goes back to Building (adds building). 409 reason ai_review while still in AI review.",
+        "summary": "Comment 'Tested: works — @login', remove ready-to-test, add approved. Does not close. 0.13 Human review: bugs = anyone but the opener; goals = goal owners (assignees) or James. Works counts toward policy human_reviews (1|2): returns reviews {done, need} and final; with 2, approved is added only after a second, different person (409 already_reviewed if you said Works already). Doesn't work goes back to Building (adds building). 409 reason ai_review while still in AI review. 0.17: goals never take Works / Doesn't work (409 reason goal): use /api/goal/step.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1390,6 +1390,65 @@
         "responses": {
           "200": {
             "description": "{items, box}"
+          }
+        }
+      }
+    },
+    "/api/goal/step": {
+      "post": {
+        "summary": "Goal slice human step (0.17): the goal's owners or James. Keep going or Change direction (note required), both back to Building; ticks the named done-list items.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repo",
+                  "number",
+                  "decision"
+                ],
+                "properties": {
+                  "repo": {
+                    "type": "string"
+                  },
+                  "number": {
+                    "type": "integer"
+                  },
+                  "decision": {
+                    "type": "string",
+                    "enum": [
+                      "keep",
+                      "redirect"
+                    ]
+                  },
+                  "note": {
+                    "type": "string",
+                    "maxLength": 4000
+                  },
+                  "done": {
+                    "type": "array",
+                    "items": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved; the goal is back in Building"
+          },
+          "400": {
+            "description": "Bad decision or a missing note"
+          },
+          "403": {
+            "description": "Only the goal owners or James"
+          },
+          "409": {
+            "description": "Not a goal, or no slice waiting"
           }
         }
       }

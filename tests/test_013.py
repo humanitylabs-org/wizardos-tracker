@@ -177,7 +177,7 @@ class Rules(unittest.TestCase):
         self.assertTrue(S.human_rule('bug', 'jdefleur', [], 'mistermizel')[0])
         ok, rule = S.human_rule('goal', 'jdefleur', ['JanMesaric'], 'mistermizel')
         self.assertFalse(ok)
-        self.assertEqual(rule, 'Only Jan or James test this goal.')
+        self.assertEqual(rule, 'Only Jan or James review this goal.')
         self.assertTrue(S.human_rule('goal', 'jdefleur', ['JanMesaric'], 'JanMesaric')[0])
         self.assertTrue(S.human_rule('goal', 'jdefleur', [], 'jdefleur')[0])  # James reviews goals
 

@@ -1,4 +1,9 @@
 'use strict';
+// WizardOS Tracker 0.17: a calmer list (stage strip with count and name only; Stats, Filter and Sort behind small
+// buttons; Works / Doesn't work in the detail), switches you can find (a real toggle, or the exact place with a button,
+// on the card, in the detail and in Settings › Try changes), goals steered with Keep going / Change direction, and a
+// Wizards view (WizardOS and every app: installed vs latest, Update, Update all). Everyone sees the same UI: anything a
+// viewer can't do is greyed out with the reason in place.
 // WizardOS Tracker 0.14: Try it is the change's real feature switch on this Wizard (builder line `Switch: <author>/<id>`,
 // shell route /wizard-os-home/store-install/_feature-switches, same state as Settings › Try new features).
 // WizardOS Tracker 0.13: two-step review. The line is Queued → Building → AI review → Human review → Done, with
@@ -17,7 +22,7 @@ const EMPTY = { goals: 'No open goals.', features: 'No open features.', bugs: 'N
 const GROUPS = ['test', 'airev', 'building', 'queued'];
 const stage = { goals: null, features: null, bugs: null };   // tap a bin: show only that stage (not remembered)
 const doneCache = {};   // view -> { at, items } recently closed, loaded when the Done bin is tapped
-let me = null, view = ({ '#bugs': 'bugs', '#features': 'features' })[location.hash] || 'goals', gen = 0, held = null, lastLoad = 0, who = '';
+let me = null, view = ({ '#bugs': 'bugs', '#features': 'features', '#wizards': 'wizards' })[location.hash] || 'goals', gen = 0, held = null, lastLoad = 0, who = '';
 const NO_DATA = 'starts once the builder runs';
 const BINS = [
   { key: 'open', group: 'queued', word: 'Queued' },
@@ -30,13 +35,13 @@ const POP = {
   build: ['WizardOS Builder', 'Writes the code, then hands it to Review.'],
   ai: ['The opener’s agent', 'Checks the build matches the issue: on to Human review, or back to Building. A goal’s owner’s agent checks goals; anyone outside the team gets any team agent.'],
   review: ['The team, not whoever opened it', 'Someone else tries it: Works, or back to Building.'],
-  done: ['Closed', 'The opener closes it once it works.'],
+  done: ['Closed', 'The opener closes it once it works. Only James closes a goal, once its done-list is ticked.'],
 };
 const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (_) { return null; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} } };
 // Chip filters live on Bugs only (0.9: Goals has none); picks are remembered on the device.
-const picked = { bugs: new Set(store.get('board.repos.bugs') || []), features: new Set(store.get('board.repos.features') || []) };
-const pickedWho = { bugs: new Set(store.get('board.who.bugs') || []), features: new Set(store.get('board.who.features') || []) };
+const picked = { goals: new Set(store.get('board.repos.goals') || []), bugs: new Set(store.get('board.repos.bugs') || []), features: new Set(store.get('board.repos.features') || []) };
+const pickedWho = { goals: new Set(store.get('board.who.goals') || []), bugs: new Set(store.get('board.who.bugs') || []), features: new Set(store.get('board.who.features') || []) };
 let repoMore = false;   // the Repo row's '+N more' is open (not remembered)
 const SORTS = [['oldest', 'Oldest'], ['newest', 'Newest'], ['discussed', 'Most discussed'], ['active', 'Recently active']];
 const savedSort = v => SORTS.some(([k]) => k === store.get('board.sort.' + v)) ? store.get('board.sort.' + v) : 'oldest';
@@ -79,7 +84,7 @@ const repoName = r => (r || '').split('/').pop();
 // 0.10: GitHub login -> the name people know, from the policy roster (served as `names`).
 const nameOf = login => { const n = ((cache[view] || {}).names || {})[(login || '').toLowerCase()]; return n || login || ''; };
 const typing = () => !!document.querySelector('.bd-fail');
-const sheetOpen = () => el('detail').open;
+const sheetOpen = () => ['detail', 'stats', 'filter', 'settings'].some(x => el(x).open);
 
 // ---------- one small anchored popover (bins, Builder, Try it); tap outside or Esc closes it ----------
 let popFor = null;
@@ -230,10 +235,13 @@ sw.addEventListener('click', e => {
   for (const k of Object.keys(stage)) stage[k] = null;   // 0.15: a new tab always starts unfiltered (all stages)
   for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x === b));
   hold(false);
-  if (cache[view]) render(cache[view]);
-  else { for (const g of [...GROUPS, 'done']) el('sec-' + g).hidden = true; el('totals').textContent = ''; el('steps').replaceChildren(); el('kick').hidden = true; el('filters').hidden = true; el('sort').hidden = true; el('empty').hidden = false; el('empty').textContent = 'Loading…'; }
+  try { history.replaceState(null, '', view === 'goals' ? location.pathname + location.search : '#' + view); } catch (_) {}
   unpop(); repoMore = false;
   el('scroll').scrollTop = 0;
+  if (view === 'wizards') return showWizards();
+  el('lists').hidden = false; el('wizards').hidden = true;
+  if (cache[view]) render(cache[view]);
+  else { for (const g of [...GROUPS, 'done']) el('sec-' + g).hidden = true; el('totals').textContent = ''; el('strip').replaceChildren(); el('filtered').hidden = true; el('empty').hidden = false; el('empty').textContent = 'Loading…'; }
   load(view);
 });
 
@@ -252,12 +260,14 @@ function freshness() {
 setInterval(freshness, 5000);
 
 async function load(which, refresh = false) {
+  if (which === 'wizards') return showWizards(refresh);
   const g = ++gen; lastLoad = Date.now(); inflight++; freshness();
   try {
     const d = await api(`api/split?view=${which}${refresh ? '&refresh=1' : ''}`);
     if (d.stats && d.stats.pending && cache[which] && cache[which].stats && !cache[which].stats.pending) d.stats = cache[which].stats;
     cache[which] = d;
     if (which === view && g === gen && !typing()) render(d);
+    if (el('settings').open) tryList();
     say('');
     if (d.stats && d.stats.pending) loadStats(which);
     if (which === view) freshAt = Date.now();
@@ -287,9 +297,9 @@ function reposOf(d, keepWho) {
   return [...n.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 function render(d) {
-  // Bugs only: Who and Repo chips (multi-select, remembered); picks no longer present drop out. Goals: no filters.
-  const bugs = d.view !== 'goals';   // Features work like Bugs
-  const whoSet = bugs ? pickedWho[d.view] : new Set(), chosen = bugs ? picked[d.view] : new Set();
+  if (view === 'wizards' || d.view !== view) return;
+  // 0.17: person and repo filters live in the Filter sheet (every list view); one small 'Filtered: …' line says what is set
+  const whoSet = pickedWho[d.view], chosen = picked[d.view];
   const allPeople = new Set(authorsOf(d).map(([p]) => p.toLowerCase()));
   for (const p of [...whoSet]) if (!allPeople.has(p)) whoSet.delete(p);
   const known = new Map((d.repos || []).map(r => [r.toLowerCase(), r]));
@@ -297,37 +307,32 @@ function render(d) {
   for (const r of [...chosen]) if (!known.has(r)) chosen.delete(r);
   const byWho = i => !whoSet.size || whoSet.has((i.author || '').toLowerCase());
   const byRepo = i => !chosen.size || chosen.has(repoKey(i));
-  el('filters').hidden = !bugs; el('sort').hidden = stage[d.view] === 'done';   // Done lists newest closed first
-  if (bugs) {
-    // 0.10: each row's ORDER comes from the unfiltered totals (then name) and never changes with the other
-    // row's picks; only the numbers do (zero dims). The collapsed Repo row's top few use the same totals.
-    const allWho = authorsOf(d), allRepo = new Map(reposOf(d, () => true).map(([r, n]) => [r.toLowerCase(), n]));
-    const whoN = new Map(authorsOf({ groups: Object.fromEntries(GROUPS.map(g => [g, d.groups[g].filter(byRepo)])) }).map(([p, n]) => [p.toLowerCase(), n]));
-    const repoN = new Map(reposOf(d, byWho).map(([r, n]) => [r.toLowerCase(), n]));
-    const label = p => { const n = nameOf(p); return p === d.login ? `${n} (you)` : n; };
-    const people = allWho.map(([p, t]) => [p.toLowerCase(), label(p), whoN.get(p.toLowerCase()) || 0, t])
-      .sort((a, b) => b[3] - a[3] || a[1].localeCompare(b[1]));
-    const repos = [...known].map(([k, r]) => [k, repoName(r), repoN.get(k) || 0, allRepo.get(k) || 0])
-      .sort((a, b) => b[3] - a[3] || a[1].localeCompare(b[1]));
-    chipRow('who', whoSet, people);
-    chipRow('repo', chosen, repos);
-  }
-  sortControl();
+  const allWho = authorsOf(d), allRepo = new Map(reposOf(d, () => true).map(([r, n]) => [r.toLowerCase(), n]));
+  const whoN = new Map(authorsOf({ groups: Object.fromEntries(GROUPS.map(g => [g, d.groups[g].filter(byRepo)])) }).map(([p, n]) => [p.toLowerCase(), n]));
+  const repoN = new Map(reposOf(d, byWho).map(([r, n]) => [r.toLowerCase(), n]));
+  const label = p => { const n = nameOf(p); return p === d.login ? `${n} (you)` : n; };
+  const people = allWho.map(([p, t]) => [p.toLowerCase(), label(p), whoN.get(p.toLowerCase()) || 0, t]).sort((a, b) => b[3] - a[3] || a[1].localeCompare(b[1]));
+  const repos = [...known].map(([k, r]) => [k, repoName(r), repoN.get(k) || 0, allRepo.get(k) || 0]).sort((a, b) => b[3] - a[3] || a[1].localeCompare(b[1]));
+  chipRow('who', whoSet, people);
+  chipRow('repo', chosen, repos);
+  filteredLine(whoSet, chosen, people, repos);
+  el('sort-btn').textContent = 'Sort: ' + (SORTS.find(([k]) => k === sortBy[d.view]) || SORTS[0])[1];
+  el('sort-btn').hidden = stage[d.view] === 'done';   // Done lists newest closed first
   const keep = i => byWho(i) && byRepo(i);
   const order = SORT_FN[sortBy[d.view]];
   const groups = Object.fromEntries(GROUPS.map(g => { const l = d.groups[g].filter(keep); return [g, order ? l.sort(order) : l]; }));
   const st = d.stats || {}, hist = (st.items || []).filter(keep);
-  flow(d, groups, st.pending || st.error ? null : hist.filter(i => i.state === 'closed').length, st, hist);
+  const done = st.pending || st.error ? null : hist.filter(i => i.state === 'closed').length;
+  strip(d, groups, done, st);
+  flow(d, groups, done, st, hist);
   const only = stage[d.view];
-  const sp = el('f-stage'); sp.hidden = !only;
-  if (only) { sp.querySelector('button').textContent = (BINS.find(b => (b.group || 'done') === only) || {}).word + ' ✕'; }
   el('totals').textContent = d.more && !only ? `showing ${d.shown} of ${d.total}` : '';
   for (const g of GROUPS) {
     const list = only && only !== g ? [] : groups[g];
     el('sec-' + g).hidden = !list.length;
     el('n-' + g).textContent = list.length || '';
-    if (g === 'test') {  // others' work first (Works / Doesn't work); what you or your agent opened says someone else reviews it
-      el('list-test').replaceChildren(...list.filter(i => !i.mine).map(i => testCard(i, d.view)), ...list.filter(i => i.mine).map(i => testCard(i, d.view)));
+    if (g === 'test') {  // 0.17: one order for everyone (no 'yours last')
+      el('list-test').replaceChildren(...list.map(i => testCard(i, d.view)));
       if (list.length) setTimeout(() => checkOnBox(d.groups.test || []), 0);   // 0.16: in the background, cached
     } else el('list-' + g).replaceChildren(...list.map(i => row(i, d.view)));
   }
@@ -343,9 +348,35 @@ function render(d) {
     if (!list) { el('empty').hidden = false; el('empty').textContent = dc && dc.error ? dc.error : 'Loading…'; return; }
   }
   el('empty').hidden = !none;
-  el('empty').textContent = only ? `Nothing ${only === 'done' ? 'closed' : 'in ' + ((BINS.find(b => b.group === only) || {}).word || '')} here${whoSet.size || chosen.size ? ' with these filters' : ''}.`
-    : whoSet.size || chosen.size ? 'Nothing here with these filters.' : EMPTY[d.view];
+  el('empty').textContent = only ? `Nothing ${only === 'done' ? 'closed' : 'in ' + ((BINS.find(b => b.group === only) || {}).word || '')} here${whoSet.size || chosen.size ? ' with this filter' : ''}.`
+    : whoSet.size || chosen.size ? 'Nothing here with this filter.' : EMPTY[d.view];
 }
+// 0.17: 'Filtered: Jan · wizard-ux ×' only when a filter is set; × clears it.
+function filteredLine(whoSet, chosen, people, repos) {
+  const p = el('filtered');
+  const names = [...people.filter(([k]) => whoSet.has(k)).map(x => x[1].replace(' (you)', '')), ...repos.filter(([k]) => chosen.has(k)).map(x => x[1])];
+  p.hidden = !names.length;
+  el('filter-btn').classList.toggle('on', !!names.length);
+  if (!names.length) return p.replaceChildren();
+  const x = make('button', 'bd-x', '×'); x.type = 'button'; x.setAttribute('aria-label', 'Clear the filter');
+  x.onclick = () => { whoSet.clear(); chosen.clear(); saveFilter('who'); saveFilter('repo'); };
+  p.replaceChildren(document.createTextNode('Filtered: ' + names.join(' · ') + ' '), x);
+}
+el('filter-btn').onclick = () => { unpop(); if (cache[view]) render(cache[view]); WzSheet.open(el('filter')); };
+el('filter-done').onclick = () => WzSheet.close(el('filter'));
+el('filter-clear').onclick = () => { pickedWho[view].clear(); picked[view].clear(); saveFilter('who'); saveFilter('repo'); };
+el('stats-btn').onclick = () => { unpop(); if (cache[view]) render(cache[view]); el('stats-h').textContent = 'Stats · ' + cap(view); WzSheet.open(el('stats')); };
+el('sort-btn').onclick = () => {
+  const b = el('sort-btn'), list = make('div', 'bd-menu'); list.setAttribute('role', 'menu');
+  for (const [k, label] of SORTS) {
+    const it = make('button', 'bd-menu-i', label); it.type = 'button'; it.setAttribute('role', 'menuitemradio');
+    it.setAttribute('aria-checked', String(sortBy[view] === k));
+    it.onclick = () => { sortBy[view] = k; store.set('board.sort.' + view, k); unpop(); if (cache[view]) render(cache[view]); };
+    list.append(it);
+  }
+  pop(b, '', [list]);
+  const first = list.querySelector('[aria-checked="true"]'); if (first) first.focus();
+};
 
 // Tap a bin: show only that stage; tap it again (or the pill) for everything. Done loads recently closed.
 function setStage(g) {
@@ -363,7 +394,6 @@ async function loadDone(which, force) {
   } catch (err) { doneCache[which] = { at: Date.now(), items: null, error: err.message }; }
   if (which === view && cache[which] && !typing()) render(cache[which]);
 }
-el('f-stage').querySelector('button').onclick = () => { stage[view] = null; if (cache[view]) render(cache[view]); };
 
 // ---------- Bugs filters: chip rows (tap to add/remove, All resets) and a tiny sort control ----------
 const repoTop = () => innerWidth < 640 ? 5 : 10;   // collapsed Repo row: the top few with bugs (fewer on phones)
@@ -380,31 +410,14 @@ function chipRow(kind, set, options) {
   const box = el('c-' + kind), total = options.reduce((a, o) => a + o[2], 0), most = options.reduce((a, o) => a + o[3], 0);
   const toggle = k => () => { if (set.has(k)) set.delete(k); else set.add(k); saveFilter(kind); };
   const out = [chip(kind === 'who' ? 'Everyone' : 'All repos', total, !set.size, () => { set.clear(); saveFilter(kind); }, 'all', most)];
-  let shown = options;
-  if (kind === 'repo' && !repoMore) {  // the top few repos by unfiltered bugs, plus any picked; the rest behind '+N more'
-    const top = options.filter(o => o[3] > 0).slice(0, repoTop());
-    shown = options.filter(o => top.includes(o) || set.has(o[0]));
-  }
-  out.push(...shown.map(([k, label, n, t]) => chip(label, n, set.has(k), toggle(k), n ? '' : 'zero', t)));
-  if (kind === 'repo' && options.length > shown.length) out.push(chip(`+${options.length - shown.length} more`, null, false, () => { repoMore = true; render(cache[view]); }, 'more'));
-  else if (kind === 'repo' && repoMore && options.length > repoTop()) out.push(chip('Less', null, false, () => { repoMore = false; render(cache[view]); }, 'more'));
+  // 0.17: the Filter sheet lists every person and repo (no '+N more')
+  out.push(...options.map(([k, label, n, t]) => chip(label, n, set.has(k), toggle(k), n ? '' : 'zero', t)));
   box.replaceChildren(...out);
-  box.hidden = options.length < (kind === 'who' ? 2 : 1) && !set.size;
 }
 function saveFilter(kind) {
   store.set((kind === 'who' ? 'board.who.' : 'board.repos.') + view, [...(kind === 'who' ? pickedWho : picked)[view]]);
   if (cache[view]) render(cache[view]);
 }
-function sortControl() {
-  const box = el('sort');
-  box.replaceChildren(...SORTS.map(([k, label]) => {
-    const b = make('button', 'bd-sort-b', label); b.type = 'button'; b.setAttribute('role', 'radio');
-    b.setAttribute('aria-checked', String(sortBy[view] === k));
-    b.onclick = () => { sortBy[view] = k; store.set('board.sort.' + view, k); if (cache[view]) render(cache[view]); };
-    return b;
-  }));
-}
-
 // The assembly line: four bins (big number, word + ⓘ, a tiny avg and box-and-whisker), arrows between,
 // and the return arrow under Review → Building labelled with the kick-back rate.
 let steps = null;
@@ -499,10 +512,11 @@ function flow(d, groups, done, st, hist) {
     b.append(make('span', 'bd-bin-n', count == null ? '—' : String(count)));
     if (x.key === 'done') b.title = st.error ? st.error : done == null ? 'Counting…' : `Closed ${sinceText(d.since).toLowerCase()} · tap for the latest`;
     li.append(b, make('span', 'bd-bin-w', x.word), binStat(x, ls, st, d.targets));
-    li.onclick = () => setStage(g);
+    li.onclick = () => { setStage(g); WzSheet.close(el('stats')); };
     out.push(li);
   });
   el('steps').replaceChildren(...out);
+  el('stats-note').textContent = sinceText(d.since) + ' · typical time per step, the target (✎ same for everyone), and how often work comes back.';
   // 0.10: the controls live in a thin row under the bins, one cell per bin column, never inside a bin.
   const target = k => (d.targets || {})[STAT_KEY[k]] || null;
   el('ctl').replaceChildren(...BINS.map(x => {
@@ -520,6 +534,27 @@ function flow(d, groups, done, st, hist) {
     return c;
   }));
   kickLabel(ls, st);
+}
+
+// 0.17: the calm strip: five stages, count and name only. Tap one to show just that stage; tap it again for all.
+function strip(d, groups, done, st) {
+  const only = stage[d.view], out = [];
+  BINS.forEach((x, n) => {
+    if (n) out.push(arrow());
+    const g = x.group || 'done';
+    const count = x.group ? groups[x.group].length : done;
+    const li = make('li', 'bd-stepli bd-binx' + (count ? ' on' : '') + (only === g ? ' sel' : '') + (only && only !== g ? ' dim' : ''));
+    li.dataset.step = x.key;
+    const b = make('button', 'bd-bin' + (count ? ' on' : '')); b.type = 'button'; b.dataset.step = x.key;
+    b.setAttribute('aria-pressed', String(only === g));
+    b.setAttribute('aria-label', `${x.word}: ${count == null ? 'counting' : count}. ${only === g ? 'Show everything' : 'Show only ' + x.word}`);
+    b.append(make('span', 'bd-bin-n', count == null ? '—' : String(count)));
+    if (x.key === 'done') b.title = st.error ? st.error : done == null ? 'Counting…' : `Closed ${sinceText(d.since).toLowerCase()} · tap for the latest`;
+    li.append(b, make('span', 'bd-bin-w', x.word));
+    li.onclick = () => setStage(g);
+    out.push(li);
+  });
+  el('strip').replaceChildren(...out);
 }
 
 // ---------- 0.10: edit a step's target (shared, the same for everyone; permissions later) ----------
@@ -586,7 +621,7 @@ function openStep(x, anchor, kind, extra = []) {
   let [who, text] = POP[x.key];
   if (x.key === 'review') {
     const n = (cache[kind] || {}).human_reviews || 1;
-    if (kind === 'goals') { who = s ? s.role : 'Goal owner or James'; text = 'The goal’s owner, or James, tries it: Works, or back to Building.'; }
+    if (kind === 'goals') { who = s ? s.role : 'Goal owners or James'; text = 'The goal’s owners, or James, look at each slice: Keep going or Change direction, and tick the done-list items that are now done. No Works / Doesn’t work on goals.'; }
     if (n > 1) text += ` ${n} different people say Works before it’s done.`;
   }
   pop(anchor, (x.key === 'build' || x.key === 'ai') && s ? s.role : who, [text, ...extra]);
@@ -645,20 +680,68 @@ async function switchApi(data) {
   if (!r.ok || !body) { const e = new Error((body && body.error) || ''); e.status = r.status; e.json = !!body; throw e; }
   return body;
 }
+let switchTry = 0;
 function loadSwitches() {
+  switchTry++;
   return switchApi().then(takeSwitches).catch(e => {
     // 404 from the box: its App Manager predates feature switches. Anything else (no JSON, network): not inside a Wizard.
-    box = { ok: false, update: e.status === 404 };
-  }).then(() => { if (cache[view] && !typing()) render(cache[view]); });
+    box = { ok: false, update: e.status === 404, status: e.status || 0 };
+  }).then(() => { if (cache[view] && !typing()) render(cache[view]); if (el('settings').open) tryList(); });
 }
 const UPDATE_NOTE = 'Update to try this';
 function tryWhy(i) {
   if (!i.switch) return LIVE_NOTE;
   if (!box) return 'Checking this Wizard…';
+  if (!box.ok && switchTry < 3) setTimeout(loadSwitches, 4000 * switchTry);   // 0.17: a slow first answer no longer greys it for good
   if (!box.ok) return box.update ? UPDATE_NOTE : 'Open the Tracker inside your Wizard to try this.';
   if (box.locked) return 'Switch to For testers in Settings to try this';
-  if (!box.switches[i.switch]) return UPDATE_NOTE;   // not in this box's catalog yet
+  if (!box.switches[i.switch]) return 'Your Wizard doesn’t have this switch yet: update WizardOS';   // not in this box's catalog yet
   return '';
+}
+// 0.17: the switch, said in words on the status line (and why it's greyed out, in place, not only on tap)
+function switchWords(i) {
+  if (!i.switch) return null;
+  const why = tryWhy(i);
+  if (why) return make('span', 'bd-sw-why', why);
+  const sw = box.switches[i.switch];
+  return make('span', 'bd-sw-name', `${sw.name || i.switch}: ${sw.on && !box.locked ? 'on' : 'off'}`);
+}
+// 0.17: a switch the Tracker can't flip: the exact place, with a button that opens it when there is one.
+function placeBits(i) {
+  const pl = i.switch_place;
+  if (!pl) return [];
+  const out = [];
+  if (pl.kind === 'mac') {
+    out.push(make('span', 'bd-sw-why', 'Mac app switch: ' + ((pl.cmd || '').split(' ')[3] || i.switch_how)));
+    if (pl.cmd) out.push(smallBtn('Copy command', async b => {
+      let ok = false; try { await navigator.clipboard.writeText(pl.cmd); ok = true; } catch (_) {}
+      pop(b, ok ? 'Copied' : 'Run this in Terminal', [pl.cmd, 'Then quit and reopen Wizard on your Mac.']);
+    }));
+  } else if (pl.kind === 'app') {
+    const app = appForRepo(pl.repo);
+    out.push(make('span', 'bd-sw-why', `${app ? app.name : repoName(pl.repo)}: ${pl.text}`));
+    out.push(smallBtn(app ? `Open ${app.name}` : 'Open', b => app ? openApp(app.id) : pop(b, '', `Open ${repoName(pl.repo)} on your Wizard, then ${pl.text}.`)));
+  } else out.push(make('span', 'bd-sw-why', 'Turn on: ' + pl.text));
+  return out;
+}
+// 0.17: ask first, in place (a small popover with Cancel focused), never window.confirm
+function askPop(anchor, text, yesText, fn) {
+  const row = make('div', 'bd-askrow');
+  const no = make('button', 'bd-mini', 'Cancel'); no.type = 'button'; no.onclick = () => unpop();
+  const yes = make('button', 'bd-mini bd-mini-go', yesText); yes.type = 'button'; yes.onclick = () => { unpop(); fn(); };
+  row.append(no, yes);
+  pop(anchor, '', [text, row]);
+  no.focus();
+}
+function smallBtn(text, fn) {
+  const b = make('button', 'bd-mini', text); b.type = 'button';
+  b.addEventListener('pointerdown', e => e.stopPropagation());
+  b.onclick = e => { e.preventDefault(); e.stopPropagation(); fn(b); };
+  return b;
+}
+function openApp(id) {
+  try { if (parent !== window && typeof parent.WizOpenApp === 'function' && parent.WizOpenApp(id) !== false) return; } catch (_) {}
+  window.open('/' + encodeURIComponent(id) + '/', '_blank', 'noopener');
 }
 // 0.15: bug fixes ship live, not behind a switch; a Switch line that isn't a shell tweak (a device setting, an env knob)
 // can't be flipped from here, so both get a plain line saying how to try it instead of a dead switch.
@@ -668,7 +751,7 @@ function trySwitch(i) {
   const sw = live && box && box.ok && i.switch ? box.switches[i.switch] : null;
   const on = !!(sw && sw.on && !box.locked);
   const b = make('button', 'bd-try'); b.type = 'button'; b.setAttribute('role', 'switch');
-  b.setAttribute('aria-checked', String(on)); b.setAttribute('aria-label', 'Try it');
+  b.setAttribute('aria-checked', String(on)); b.setAttribute('aria-label', 'Try it: ' + (i.switch || '') + (live && tryWhy(i) ? ' (' + tryWhy(i) + ')' : ''));
   if (i.switch) b.dataset.switch = i.switch;
   if (!live || tryWhy(i)) b.setAttribute('aria-disabled', 'true');
   b.append(make('i'));
@@ -685,6 +768,8 @@ function trySwitch(i) {
       takeSwitches(await switchApi({ id: i.switch, on: next }));
       if (next) pop(b, '', 'On in this Wizard. It shows within a few seconds; switch it off here or in Settings.'); else unpop();
       if (cache[view] && !typing()) render(cache[view]);
+      if (el('settings').open) tryList();
+      if (openId === i.id) detailSwitch(i);
     } catch (err) {
       b.setAttribute('aria-checked', String(!next));
       if (err.status === 409) { box.locked = true; return pop(b, '', 'Switch to For testers in Settings to try this'); }
@@ -763,15 +848,29 @@ function loadSide() {
 // GitHub whether the build contains the merged PR(s). Painted from a local cache first, checked in the background. ----
 const UPDATES_API = '/wizard-os-home/store-install/_updates';
 const ONBOX_SECONDS = 300;
-const facts = { release: null, channel: null, apps: {} };
+const facts = { release: null, channel: null, apps: {}, mac: null };
 const appsTried = new Set();
 let factsReady = null;
 const onbox = new Map(Object.entries(store.get('board.onbox') || {}));   // id -> { at, key, v }
-const factsKey = () => JSON.stringify([facts.release, facts.channel, facts.apps]);
+const factsKey = () => JSON.stringify([facts.release, facts.channel, facts.apps, facts.mac]);
+// 0.17: inside the Mac app, its version (the shell's native bridge app.info), so a Mac change is only 'On your Wizard'
+// when this Mac app contains it. Anywhere else facts.mac stays null: a Mac change then needs the Mac app update.
+function macVersion() {
+  try {
+    const top = parent !== window ? parent : window;
+    if (top.document.documentElement.dataset.nativeChrome !== 'mac') return Promise.resolve(null);
+    const call = top.WizCore && top.WizCore.bridge && top.WizCore.bridge.call;
+    if (typeof call !== 'function') return Promise.resolve(null);
+    return Promise.race([call('app.info', {}), new Promise(r => setTimeout(() => r(null), 3000))])
+      .then(x => x && typeof x.version === 'string' && /^[0-9][0-9A-Za-z.+_-]{0,40}$/.test(x.version) ? x.version : null).catch(() => null);
+  } catch (_) { return Promise.resolve(null); }
+}
 function loadFacts() {
-  if (!factsReady) factsReady = fetch(UPDATES_API, { credentials: 'same-origin', cache: 'no-store' })
-    .then(r => r.ok ? r.json() : null).then(b => { if (b && b.installed) { facts.release = String(b.installed); facts.channel = b.channel || null; } })
-    .catch(() => {});
+  if (!factsReady) factsReady = Promise.all([
+    fetch(UPDATES_API, { credentials: 'same-origin', cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null).then(b => { if (b && b.installed) { facts.release = String(b.installed); facts.channel = b.channel || null; } updates = b || updates; })
+      .catch(() => {}),
+    macVersion().then(v => { facts.mac = v; })]);
   return factsReady;
 }
 async function appVersion(id) {
@@ -820,93 +919,67 @@ async function checkOnBox(items) {
   } finally { onboxBusy = false; }
 }
 const ONBOX_TEXT = { yes: 'On your Wizard ✓', no: 'Not on your Wizard yet', unknown: 'Can’t tell if this is on your Wizard' };
-function onboxLine(p, t) {
-  const v = onboxOf(t);
-  p.className = (p.id ? 'bd-d-onbox ' : 'bd-onbox ') + (v ? v.state : 'wait');
-  p.replaceChildren(document.createTextNode(v ? ONBOX_TEXT[v.state] || ONBOX_TEXT.unknown : 'Checking your Wizard…'));
-  if (v && v.state === 'no' && v.fix) p.append(document.createTextNode(' · '), make('b', '', v.fix));
-  p.hidden = false;
-  return p;
-}
 const cap = x => x ? x[0].toUpperCase() + x.slice(1) : x;
 
+// 0.17 card: title; one status line (on your Wizard? · Update, and the switch); one meta line. Test steps, the
+// switch in full and Works / Doesn't work (or a goal's Keep going / Change direction) live in the detail.
 function testCard(t, kind) {
-  const c = make('article', 'bd-card');
+  const c = make('article', 'bd-card bd-card-calm');
   const top = make('div', 'bd-card-top');
   const h = tapTarget('bd-title', () => openDetail(t)); h.textContent = t.title;
   top.append(h, ...(kind === 'goals' ? [ownerChips(t)] : []), ...(t.switch ? [trySwitch(t)] : [])); c.append(top);
   if (kind === 'goals' && (t.assignees || []).length > 1) top.classList.add('multi');
-  // 0.16: one line that says what to do to test it (the AI review note's test steps), then the buttons
-  const guide = t.steps ? 'To test: ' + cap(t.steps) : t.check;
-  if (guide) { const g = make('p', 'bd-check one bd-guide', guide); g.title = guide; c.append(g); }
-  c.append(onboxLine(make('p'), t));
-  if (!t.switch && t.switch_how) c.append(make('p', 'bd-how', `Turn on: ${t.switch_how}.`));
-  c.append(make('p', 'bd-hint', [repoName(t.repo), t.mine ? 'you' : nameOf(t.author) || t.opener || '', kind !== 'goals' ? age(t.created_at) : '', `${t.comments || 0} comments`].filter(Boolean).join(' · ')));
-  const rv = t.reviews || { done: 0, need: 1, by: [] };
-  if (rv.need > 1) {  // 0.13: a second, different human reviews it too
-    const pr = make('p', 'bd-revs'); pr.append(make('b', '', `${rv.done} of ${rv.need} reviews`));
-    if (rv.by && rv.by.length) pr.append(document.createTextNode(' · Works from ' + rv.by.join(', ')));
-    c.append(pr);
-  }
-  const btns = make('div', 'bd-btns');
-  const ok = make('button', 'wz-button', 'Works'); ok.type = 'button';
-  const no = make('button', 'wz-button secondary', 'Doesn’t work'); no.type = 'button';
-  btns.append(ok, no); c.append(btns);
-  // 0.16: who may not review it, or a build this Wizard doesn't run yet, greys the buttons out with the reason in place
-  const rule = t.can_review === false ? (t.review_rule || 'You filed this, so someone else tests it.') : t.can_review == null && t.mine ? 'You filed this, so someone else tests it.' : '';
-  const ob = onboxOf(t);
-  const why = rule || (ob && ob.state === 'no' ? `Test it once it’s on your Wizard: ${ob.fix || 'Not released yet'}.` : '');
-  if (why) {
-    for (const b of [ok, no]) { b.setAttribute('aria-disabled', 'true'); b.onclick = e => { e.preventDefault(); pop(e.currentTarget, '', why); }; }
-    if (rule) c.append(make('p', 'bd-why', rule));   // the on-your-Wizard line above already says why otherwise
-    return c;
-  }
-  const status = make('p', 'wz-status'); c.append(status);
-  const busy = on => c.querySelectorAll('button, textarea').forEach(x => { x.disabled = on; });
-  const done = msg => {
-    hold(false);
-    const d = cache[view]; if (d) { d.groups.test = d.groups.test.filter(x => x.id !== t.id); render(d); }
-    details.delete(t.id); onbox.delete(t.id);
-    toast(msg); setTimeout(() => load(view, true), 1500);
-  };
-  // 0.16: both buttons ask first; Cancel is the default
-  const askFirst = (title, text, yesText, withNote, act) => {
-    const f = make('form', 'bd-fail bd-confirm'); f.autocomplete = 'off';
-    const q = make('p', 'bd-ask'); q.append(make('b', '', title)); if (text) q.append(document.createTextNode(' ' + text));
-    f.append(q);
-    let ta = null;
-    if (withNote) {
-      ta = make('textarea', 'wz-input bd-area'); ta.rows = 2; ta.maxLength = 4000;
-      ta.placeholder = 'What went wrong? (optional)'; ta.setAttribute('aria-label', 'What went wrong (optional)');
-      ta.oninput = () => hold(!!ta.value.trim());
-      f.append(ta);
-    }
-    const r = make('div', 'bd-btns');
-    const cancel = make('button', 'wz-button secondary', 'Cancel'); cancel.type = 'button';
-    const yes = make('button', 'wz-button', yesText); yes.type = 'submit';
-    r.append(cancel, yes); f.append(r);
-    btns.hidden = true; btns.after(f); cancel.focus();
-    const close = () => { f.remove(); btns.hidden = false; hold(false); status.textContent = ''; };
-    cancel.onclick = close;
-    f.onkeydown = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
-    f.onsubmit = async e => { e.preventDefault(); busy(true); status.textContent = ''; await act(ta ? ta.value.trim() : '', close); };
-  };
-  ok.onclick = () => {
-    if (t.reviewed_by_me) return pop(ok, '', `You already said Works. A second, different person reviews it too (${rv.done} of ${rv.need}).`);
-    const last = rv.need <= 1 || rv.done + 1 >= rv.need;
-    askFirst('Mark as works?', last ? 'This moves it to Done.' : `This counts as review ${rv.done + 1} of ${rv.need}.`, 'Mark as works', false, async (_, close) => {
-      try {
-        const r = await api('api/test/works', { repo: t.repo, number: t.number });
-        if (r.final === false) { close(); busy(false); t.reviewed_by_me = true; toast(`Thanks — ${r.reviews.done} of ${r.reviews.need} reviews.`); setTimeout(() => load(view, true), 1500); return; }
-        done('Thanks — marked as working.');
-      } catch (err) { busy(false); if (err.status === 403 || err.status === 409) { close(); pop(ok, '', err.message); } else status.textContent = err.message; }
-    });
-  };
-  no.onclick = () => askFirst('Send back to Build?', 'The builder picks it up again.', 'Send back', true, async note => {
-    try { await api('api/test/fails', { repo: t.repo, number: t.number, note }); done('Sent back to the builder.'); }
-    catch (err) { status.textContent = err.message; busy(false); }
-  });
+  c.append(statusLine(make('p'), t));
+  if (kind === 'goals' && t.slice) { const s = make('p', 'bd-check one', 'Latest slice: ' + t.slice); s.title = t.slice; c.append(s); }
+  const meta = [repoName(t.repo), nameOf(t.author) || t.opener || '', kind !== 'goals' ? age(t.created_at) : '', `${t.comments || 0} comments`];
+  if (kind === 'goals') meta.splice(1, 0, t.progress && t.progress.total ? `${t.progress.done} of ${t.progress.total} done` : 'no done-list yet');
+  const rv = t.reviews || { done: 0, need: 1 };
+  if (rv.need > 1) meta.push(`${rv.done} of ${rv.need} reviews`);
+  c.append(make('p', 'bd-hint', meta.filter(Boolean).join(' · ')));
+  const act = make('p', 'bd-cta');
+  const b = make('button', 'bd-mini bd-mini-go', kind === 'goals' ? 'Review slice' : 'Test it'); b.type = 'button';
+  b.onclick = () => openDetail(t, true);
+  const why = reviewWhy(t, kind);
+  act.append(b); if (why) { b.setAttribute('aria-disabled', 'true'); act.append(make('span', 'bd-why-s', why)); }
+  c.append(act);
   return c;
+}
+// Why this viewer can't do the human step here (shown in place, greyed), or ''.
+function reviewWhy(t, kind) {
+  if (kind === 'goals') return t.can_steer === false ? (t.steer_rule || 'Only the goal’s owners or James review this goal.') : '';
+  if (t.can_review === false) return t.review_rule || 'You filed this, so someone else tests it.';
+  const ob = onboxOf(t);
+  return ob && ob.state === 'no' ? `Test it once it’s on your Wizard: ${ob.fix || 'Not released yet'}.` : '';
+}
+// The status line: 'On your Wizard ✓' or 'Not on your Wizard yet · <fix> [Update]', then the switch in words.
+function statusLine(p, t) {
+  const v = onboxOf(t);
+  p.className = (p.id ? 'bd-d-onbox ' : 'bd-onbox ') + (v ? v.state : 'wait');
+  p.replaceChildren(document.createTextNode(v ? ONBOX_TEXT[v.state] || ONBOX_TEXT.unknown : 'Checking your Wizard…'));
+  if (v && v.state === 'no' && v.fix) {
+    p.append(document.createTextNode(' · '), make('b', '', v.fix));
+    const u = updateFor(v);
+    if (u) p.append(document.createTextNode(' '), u);
+  }
+  const sw = t.switch ? switchWords(t) : null;
+  const pl = !t.switch ? placeBits(t) : [];
+  if (sw || pl.length) { p.append(make('span', 'bd-dot', ' · ')); if (sw) p.append(sw); for (const x of pl) p.append(document.createTextNode(' '), x); }
+  p.hidden = false;
+  return p;
+}
+function onboxLine(p, t) { return statusLine(p, t); }
+// An Update button for the fix an item needs (the same one the Wizards view uses), or an instruction where none can run.
+function updateFor(v) {
+  const fix = v.fix || '';
+  if (/^Update WizardOS/.test(fix)) return smallBtn('Update', b => updateWizardOS(b));
+  const m = /^Update (.+)$/.exec(fix);
+  if (m) {
+    const id = (v.apps || [])[0] || (appsByName().get(m[1].toLowerCase()) || {}).id;
+    if (id) return smallBtn('Update', b => updateApp(id, b));
+  }
+  if (fix === 'Needs the Mac app update') return smallBtn('How', b => pop(b, '', 'In the Mac app: Wizard menu › Check for Updates…'));
+  if (/For testers/.test(fix)) return smallBtn('How', b => pop(b, '', 'Settings › Updates › For testers.'));
+  return null;
 }
 
 // ---------- detail: the whole issue and its comments, fetched on tap only ----------
@@ -933,16 +1006,16 @@ function prose(html, empty) {
   return box;
 }
 
-let openId = null;
+let openId = null, openItem = null;
 function roles(i) {
   const r = el('d-roles'), who = i.opener || i.author;
   r.hidden = !who;
   const goal = i.kind === 'goal' || (i.labels || []).some(l => String(l).toLowerCase() === 'goal') || view === 'goals';
   r.textContent = who ? `Opened by ${who} · AI review by their agent · ` + (goal ? 'human review by the goal’s owner or James' : 'human review by anyone else on the team') : '';
 }
-function openDetail(i) {
+function openDetail(i, toAct) {
   const dlg = el('detail');
-  openId = i.id;
+  openId = i.id; openItem = i;
   el('d-title').textContent = i.title;
   el('d-meta').textContent = [`${i.repo}#${i.number}`, i.author].filter(Boolean).join(' · ');
   el('d-gh').href = i.url;
@@ -951,14 +1024,18 @@ function openDetail(i) {
   const inReview = !!(cache[view] && (cache[view].groups.test || []).some(x => x.id === i.id));   // 0.16
   el('d-onbox').hidden = !inReview;
   if (inReview) onboxLine(el('d-onbox'), i);
-  el('d-steps').hidden = !(inReview && i.steps);
-  if (inReview && i.steps) el('d-steps').textContent = 'To test: ' + cap(i.steps);
+  el('d-steps').hidden = !(inReview && (i.steps || i.check));
+  if (inReview) el('d-steps').textContent = i.steps ? 'To test: ' + cap(i.steps) : i.check || '';
+  detailSwitch(i);
+  detailGoal(i, null);
+  detailAct(inReview ? i : null);
   el('d-body').replaceChildren(make('p', 'bd-empty', 'Loading…'));
   closeCtl(null);
   el('d-comments').replaceChildren(); el('d-comments-h').hidden = true;
   itemFlow(i);
   WzSheet.open(dlg);
   dlg.scrollTop = 0;
+  if (toAct) setTimeout(() => { const a = el('d-act'); if (!a.hidden) { a.scrollIntoView({ block: 'center' }); const f = a.querySelector('button:not([aria-disabled="true"])'); if (f) f.focus(); } }, 60);
   const hit = details.get(i.id);
   if (hit && Date.now() - hit.at < DETAIL_SECONDS * 1000) return fill(hit.data);
   api(`api/detail?repo=${encodeURIComponent(i.repo)}&number=${i.number}`)
@@ -971,16 +1048,26 @@ function closeCtl(d) {
   const b = el('d-close');
   detailNow = d;
   b.hidden = !d || !d.state;
-  if (d && d.state) b.textContent = d.state === 'closed' ? 'Reopen' : 'Mark done';
+  if (d && d.state) b.textContent = d.state === 'closed' ? 'Reopen' : d.kind === 'goal' ? 'Close goal' : 'Mark done';
+  // 0.17: everyone sees it; it is greyed out (with the reason on tap) for anyone who may not use it
+  if (d) b.setAttribute('aria-disabled', String(!d.can_close));
+  if (d) b.title = d.can_close ? '' : d.close_rule;
 }
 el('d-close').onclick = async () => {
   const d = detailNow, b = el('d-close');
   if (!d) return;
   const closing = d.state !== 'closed';
-  if (!d.can_close) return pop(b, '', closing ? d.close_rule : d.close_rule.replace(' close ', ' reopen '));
+  if (!d.can_close) return pop(b, '', closing ? d.close_rule : d.close_rule.replace(' close', ' reopen').replace(' closes', ' reopens'));
+  let anyway = false;
+  if (closing && d.kind === 'goal' && !d.all_done && !b.dataset.anyway) {
+    const left = (d.tasks || []).filter(t => !t.done).length;
+    return askPop(b, (d.tasks || []).length ? `${left} done-list item${left === 1 ? '' : 's'} not ticked yet. Close the goal anyway?` : 'This goal has no done-list. Close it anyway?',
+      'Close anyway', () => { b.dataset.anyway = '1'; b.click(); });
+  }
+  anyway = !!b.dataset.anyway; delete b.dataset.anyway;
   b.disabled = true;
   try {
-    await api(closing ? 'api/issue/close' : 'api/issue/reopen', { repo: d.repo, number: d.number });
+    await api(closing ? 'api/issue/close' : 'api/issue/reopen', { repo: d.repo, number: d.number, ...(anyway ? { anyway: true } : {}) });
     details.delete(d.id); toast(closing ? 'Marked done.' : 'Reopened.');
     WzSheet.close ? WzSheet.close(el('detail')) : el('detail').close();
     setTimeout(() => load(view, true), 800);
@@ -989,6 +1076,7 @@ el('d-close').onclick = async () => {
 };
 function fill(d) {
   closeCtl(d);
+  if (d.kind === 'goal') detailGoal(openItem || d, d);
   el('d-title').textContent = d.title;
   el('d-meta').textContent = [`${d.repo}#${d.number}`, d.author && `opened by ${d.author}`, when(d.created_at)].filter(Boolean).join(' · ');
   el('d-labels').textContent = (d.labels || []).join(', ');
@@ -1006,7 +1094,142 @@ function fill(d) {
     return li;
   }));
 }
-el('detail').addEventListener('close', () => { openId = null; unpop(); });
+el('detail').addEventListener('close', () => { openId = null; openItem = null; unpop(); hold(false); });
+
+// 0.17: the switch in the detail: a real toggle with its name and state, or the exact place to flip it.
+function detailSwitch(i) {
+  const box_ = el('d-switch');
+  const inReview = !!(cache[view] && (cache[view].groups.test || []).some(x => x.id === i.id));
+  if (!inReview || (!i.switch && !i.switch_place)) { box_.hidden = true; return box_.replaceChildren(); }
+  box_.hidden = false;
+  const row_ = make('div', 'bd-d-swrow');
+  if (i.switch) {
+    const sw = box && box.ok && box.switches[i.switch];
+    const txt = make('div', 'bd-d-swtxt');
+    txt.append(make('b', '', (sw && sw.name) || i.switch), make('span', 'bd-meta', sw && sw.description ? sw.description : 'Feature switch ' + i.switch));
+    const why = tryWhy(i);
+    if (why) txt.append(make('span', 'bd-why-s', why));
+    row_.append(txt, trySwitch(i));
+  } else {
+    const pl = i.switch_place, txt = make('div', 'bd-d-swtxt');
+    txt.append(make('b', '', 'Switch: ' + i.switch_how), make('span', 'bd-meta', pl.kind === 'mac' ? 'A Mac app setting. Run this in Terminal, then quit and reopen Wizard.' : pl.kind === 'app' ? 'A setting inside the app: ' + pl.text : pl.kind === 'box' ? pl.text : 'Turn on: ' + pl.text));
+    if (pl.cmd) { const code = make('code', 'bd-cmd', pl.cmd); txt.append(code); }
+    row_.append(txt);
+    const bits = placeBits(i).filter(x => x.tagName === 'BUTTON');
+    if (bits.length) row_.append(...bits);
+  }
+  box_.replaceChildren(make('h3', 'bd-sec-h bd-d-h', 'Switch'), row_);
+}
+
+// 0.17 goals: done-list (n of m, ticked items), owners, the latest builder slice and what it delivered.
+function detailGoal(i, d) {
+  const g = el('d-goal');
+  const goal = i.kind === 'goal' || view === 'goals' || (d && d.kind === 'goal');
+  if (!goal) { g.hidden = true; return g.replaceChildren(); }
+  const tasks = (d && d.tasks) || i.tasks || [];
+  const done = tasks.filter(t => t.done).length;
+  g.hidden = false;
+  const out = [make('h3', 'bd-sec-h bd-d-h', `Done-list ${tasks.length ? done + ' of ' + tasks.length : ''}`)];
+  if (tasks.length) {
+    const ul = make('ul', 'bd-tasks');
+    for (const t of tasks) { const li = make('li', t.done ? 'done' : ''); li.append(make('span', 'bd-tick', t.done ? '✓' : '○'), document.createTextNode(' ' + t.text)); ul.append(li); }
+    out.push(ul);
+  } else out.push(make('p', 'bd-meta', 'No done-list in this goal yet (- [ ] items in the description).'));
+  const owners = (i.assignees || []).map(nameOf).join(', ');
+  out.push(make('p', 'bd-meta', `Owners: ${owners || 'none yet'} · James opens and closes goals`));
+  if (i.slice) out.push(make('h3', 'bd-sec-h bd-d-h', 'Latest slice' + (i.slice_at ? ' · ' + when(i.slice_at) : '')), make('p', 'bd-d-slice', i.slice));
+  g.replaceChildren(...out);
+}
+
+// 0.17: the human step lives here. Bugs and features: Works / Doesn't work (each asks first). Goals: Keep going /
+// Change direction (a note is required), with the done-list items that are now done ticked in the same step.
+function detailAct(i) {
+  const a = el('d-act');
+  if (!i) { a.hidden = true; return a.replaceChildren(); }
+  a.hidden = false;
+  const goal = view === 'goals';
+  const why = reviewWhy(i, goal ? 'goals' : view);
+  const status = make('p', 'wz-status');
+  const btns = make('div', 'bd-btns');
+  const yes = make('button', 'wz-button', goal ? 'Keep going' : 'Works'); yes.type = 'button';
+  const no = make('button', 'wz-button secondary', goal ? 'Change direction' : 'Doesn’t work'); no.type = 'button';
+  btns.append(yes, no);
+  const head = make('h3', 'bd-sec-h bd-d-h', goal ? 'Your step' : 'Did it work?');
+  a.replaceChildren(head, btns);
+  const rv = i.reviews || { done: 0, need: 1, by: [] };
+  if (!goal && rv.need > 1) a.append(make('p', 'bd-meta', `${rv.done} of ${rv.need} reviews` + (rv.by && rv.by.length ? ' · Works from ' + rv.by.join(', ') : '')));
+  if (why) {
+    for (const b of [yes, no]) { b.setAttribute('aria-disabled', 'true'); b.onclick = e => pop(e.currentTarget, '', why); }
+    a.append(make('p', 'bd-why', why));
+    return;
+  }
+  a.append(status);
+  const busy = on => a.querySelectorAll('button, textarea, input').forEach(x => { x.disabled = on; });
+  const finish = msg => {
+    hold(false);
+    const d = cache[view]; if (d) { d.groups.test = d.groups.test.filter(x => x.id !== i.id); render(d); }
+    details.delete(i.id); onbox.delete(i.id);
+    WzSheet.close(el('detail'));
+    toast(msg); setTimeout(() => load(view, true), 1500);
+  };
+  const ask = (title, text, yesText, note, act, ticks) => {
+    const f = make('form', 'bd-fail bd-confirm'); f.autocomplete = 'off';
+    const q = make('p', 'bd-ask'); q.append(make('b', '', title)); if (text) q.append(document.createTextNode(' ' + text));
+    f.append(q);
+    const picks = [];
+    if (ticks && ticks.length) {
+      const ul = make('div', 'bd-ticks'); ul.append(make('p', 'bd-meta', 'Tick what this slice finished:'));
+      ticks.forEach((t, n) => {
+        if (t.done) return;
+        const lab = make('label', 'bd-tickrow'); const cb = make('input'); cb.type = 'checkbox'; cb.value = String(n);
+        lab.append(cb, document.createTextNode(' ' + t.text)); ul.append(lab); picks.push(cb);
+      });
+      if (picks.length) f.append(ul);
+    }
+    let ta = null;
+    if (note) {
+      ta = make('textarea', 'wz-input bd-area'); ta.rows = 2; ta.maxLength = 4000;
+      ta.placeholder = note; ta.setAttribute('aria-label', note);
+      ta.oninput = () => hold(!!ta.value.trim());
+      f.append(ta);
+    }
+    const r = make('div', 'bd-btns');
+    const cancel = make('button', 'wz-button secondary', 'Cancel'); cancel.type = 'button';
+    const go = make('button', 'wz-button', yesText); go.type = 'submit';
+    r.append(cancel, go); f.append(r);
+    btns.hidden = true; btns.after(f); cancel.focus();
+    const close = () => { f.remove(); btns.hidden = false; hold(false); status.textContent = ''; };
+    cancel.onclick = close;
+    f.onkeydown = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+    f.onsubmit = async e => { e.preventDefault(); busy(true); status.textContent = ''; await act(ta ? ta.value.trim() : '', picks.filter(x => x.checked).map(x => +x.value), close); };
+  };
+  if (goal) {
+    const tasks = () => ((details.get(i.id) || {}).data || {}).tasks || i.tasks || [];
+    const step = (decision, msg) => async (note, done, close) => {
+      if (decision === 'redirect' && note.length < 3) { busy(false); status.textContent = 'Say which direction to take.'; return; }
+      try { await api('api/goal/step', { repo: i.repo, number: i.number, decision, note, done }); finish(msg); }
+      catch (err) { busy(false); if (err.status === 403 || err.status === 409) { close(); pop(yes, '', err.message); } else status.textContent = err.message; }
+    };
+    yes.onclick = () => ask('Keep going?', 'The slice is fine: the builder takes the next done-list item.', 'Keep going', 'Anything for the next slice? (optional)', step('keep', 'The builder keeps going.'), tasks());
+    no.onclick = () => ask('Change direction?', 'Back to Building with your note.', 'Send', 'Which direction? (required)', step('redirect', 'Sent back with a new direction.'), tasks());
+    return;
+  }
+  yes.onclick = () => {
+    if (i.reviewed_by_me) return pop(yes, '', `You already said Works. A second, different person reviews it too (${rv.done} of ${rv.need}).`);
+    const last = rv.need <= 1 || rv.done + 1 >= rv.need;
+    ask('Mark as works?', last ? 'This moves it to Done.' : `This counts as review ${rv.done + 1} of ${rv.need}.`, 'Mark as works', '', async (_, __, close) => {
+      try {
+        const r = await api('api/test/works', { repo: i.repo, number: i.number });
+        if (r.final === false) { close(); busy(false); i.reviewed_by_me = true; toast(`Thanks — ${r.reviews.done} of ${r.reviews.need} reviews.`); setTimeout(() => load(view, true), 1500); return; }
+        finish('Thanks — marked as working.');
+      } catch (err) { busy(false); if (err.status === 403 || err.status === 409) { close(); pop(yes, '', err.message); } else status.textContent = err.message; }
+    });
+  };
+  no.onclick = () => ask('Send back to Build?', 'The builder picks it up again.', 'Send back', 'What went wrong? (optional)', async note => {
+    try { await api('api/test/fails', { repo: i.repo, number: i.number, note }); finish('Sent back to the builder.'); }
+    catch (err) { status.textContent = err.message; busy(false); }
+  });
+}
 
 // ---------- one item's own assembly line (its label timeline, fetched on tap, cached briefly) ----------
 const flows = new Map();
@@ -1052,14 +1275,167 @@ function drawItemFlow(f) {
   if (!staged && f.state === 'open') box.append(make('p', 'bd-meta bd-dflow-note', `Queued for ${dur(f.spent.queued)} · no build yet`));
 }
 
+// ---------- 0.17 Wizards: this box's WizardOS and every app, installed vs latest, Update and Update all ----------
+// Sources (all the box's own App Manager routes the page already reaches on the shell's origin, owner-only):
+// store-install/_updates (WizardOS release, channel, last failure), store-data/wizard/v1/installed-apps (what runs),
+// store-data/wizard/v1/index/search (the Store's latest release per repo) and POST store-install/<id> with
+// {source, repo, commit, operation: 'update'} (the Store's own exact-release update). No other team box is known to the
+// Tracker yet (no list of team Wizards exists), so it shows this Wizard only.
+const STORE_DATA = '/wizard-os-home/store-data/', STORE_INSTALL = '/wizard-os-home/store-install/';
+let updates = null, catalog = null, catalogAt = 0, wizBusy = new Map(), wizFail = store.get('board.wizfail') || {};
+const getJSON = (u, init) => fetch(u, { credentials: 'same-origin', cache: 'no-store', ...(init || {}) }).then(async r => { const b = await r.json().catch(() => null); if (!r.ok) { const e = new Error((b && b.error) || `HTTP ${r.status}`); e.status = r.status; throw e; } return b; });
+async function loadCatalog(force) {
+  if (catalog && !force && Date.now() - catalogAt < 120000) return catalog;
+  const [inst, idx, up] = await Promise.allSettled([getJSON(STORE_DATA + 'wizard/v1/installed-apps'), getJSON(STORE_DATA + 'wizard/v1/index/search?limit=100' + (force ? '&refresh=1' : '')), getJSON(UPDATES_API)]);
+  if (up.status === 'fulfilled') updates = up.value;
+  if (inst.status !== 'fulfilled') { catalog = { error: inst.reason && inst.reason.status === 404 ? 'This Wizard’s App Manager can’t list its apps yet: update WizardOS.' : 'Open the Tracker inside your Wizard to see its apps.', apps: [] }; return catalog; }
+  const rel = new Map();   // repo (lower) -> newest Store release for that exact repository
+  for (const a of (idx.status === 'fulfilled' && idx.value.apps) || []) for (const r of [a, ...(a.releases || [])]) {
+    if (!r || !r.repo || !/^[a-f0-9]{40}$/i.test(r.commit || '')) continue;
+    const k = r.source + ':' + r.repo.toLowerCase() + ':' + r.id;
+    if (!rel.has(k)) rel.set(k, r);
+  }
+  const apps = (inst.value.wam || []).map(w => {
+    const r = rel.get(w.source + ':' + String(w.repo || '').toLowerCase() + ':' + w.id) || (w.source === 'owner-private' ? null : rel.get('standard:' + String(w.repo || '').toLowerCase() + ':' + w.id));
+    const latest = r ? r.version : null;
+    const pinned = WITH_OS.has(w.id);   // shipped and pinned by the WizardOS release, not updated one by one
+    const cmp = latest ? vcmp(latest, w.version || '') : 0;
+    return { id: w.id, name: w.name || w.id, version: w.version || '', commit: w.commit || '', repo: w.repo, source: w.source, status: w.status, system: !!w.system,
+             latest, latestCommit: r ? r.commit : null, release: r, pinned, ahead: cmp < 0,
+             update: !pinned && !!(r && r.commit && r.commit !== w.commit) && cmp > 0 };
+  }).sort((a, b) => (b.update - a.update) || a.name.localeCompare(b.name));
+  catalog = { apps, architecture: inst.value.architecture, complete: inst.value.complete, indexError: idx.status !== 'fulfilled' };
+  catalogAt = Date.now();
+  return catalog;
+}
+const WITH_OS = new Set(['wizard-ux', 'wizard-agent-service', 'wizard-app-manager']);
+// Compare two release versions (numbers numerically, a pre-release below its release): >0 when a is newer.
+function vcmp(a, b) {
+  const sp = v => String(v).split(/[-+]/)[0].split('.').map(x => parseInt(x, 10) || 0), pre = v => String(v).includes('-');
+  const x = sp(a), y = sp(b);
+  for (let n = 0; n < Math.max(x.length, y.length); n++) if ((x[n] || 0) !== (y[n] || 0)) return (x[n] || 0) - (y[n] || 0);
+  if (pre(a) !== pre(b)) return pre(a) ? -1 : 1;
+  return String(a).localeCompare(String(b), undefined, { numeric: true });
+}
+const appsByName = () => new Map(((catalog && catalog.apps) || []).map(a => [a.name.toLowerCase(), a]));
+function appForRepo(repo) {
+  const r = String(repo || '').toLowerCase();
+  return ((catalog && catalog.apps) || []).find(a => String(a.repo || '').toLowerCase() === r) || null;
+}
+async function updateApp(id, btn) {
+  await loadCatalog();
+  const a = ((catalog && catalog.apps) || []).find(x => x.id === id);
+  if (!a || !a.release) return btn && pop(btn, '', 'The Store has no newer release of this app for this Wizard. Update in Settings › Apps.');
+  if (!a.update) return btn && pop(btn, '', a.pinned ? `${a.name} updates with WizardOS.` : `${a.name} is already the latest (${a.version}).`);
+  if (wizBusy.has(id)) return;
+  const sel = { source: a.release.source, repo: a.release.repo, commit: a.release.commit, operation: 'update' };
+  wizBusy.set(id, 'Updating…'); paintWizards();
+  if (btn) { btn.disabled = true; btn.textContent = 'Updating…'; }
+  try {
+    const url = STORE_INSTALL + encodeURIComponent(id);
+    let j = await getJSON(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Wizard-Store': '1' }, body: JSON.stringify(sel) });
+    for (let n = 0; j && j.state === 'installing' && n < 240; n++) { await new Promise(r => setTimeout(r, 2500)); j = await getJSON(url).catch(() => ({ state: 'installing' })); }
+    if (!j || j.state !== 'installed') throw new Error((j && j.error) || 'The App Manager didn’t finish. Refresh to check.');
+    delete wizFail[id]; toast(`${a.name} updated to ${a.latest}.`);
+  } catch (e) {
+    wizFail[id] = { at: Date.now(), name: a.name, to: a.latest, reason: e.status === 404 ? 'This Wizard’s App Manager can’t update apps from here yet. Update in Settings › Apps.' : e.message };
+    toast(`${a.name}: ${wizFail[id].reason}`);
+  } finally {
+    store.set('board.wizfail', wizFail);
+    wizBusy.delete(id); catalog = null; onbox.clear();
+    if (view === 'wizards') showWizards(); else { await loadCatalog(true); if (cache[view]) render(cache[view]); }
+  }
+}
+async function updateAll(btn) {
+  const list = ((catalog && catalog.apps) || []).filter(a => a.update && !wizBusy.has(a.id));
+  if (!list.length) return pop(btn, '', 'Every app is up to date.');
+  askPop(btn, `Update ${list.length} app${list.length === 1 ? '' : 's'}? Each one restarts for a moment.`, 'Update all', async () => { for (const a of list) await updateApp(a.id); });
+}
+async function updateWizardOS(btn) {
+  try {
+    const u = updates || await getJSON(UPDATES_API);
+    if (!u || !u.update_available) return btn && pop(btn, '', `WizardOS ${u && u.installed ? u.installed : ''} is the latest on ${u && u.channel === 'latest' ? 'For testers' : 'Stable'}.`);
+    if (btn && !btn.dataset.sure) return askPop(btn, `Update WizardOS ${u.installed} → ${u.latest_for_channel || (u.channel === 'latest' ? u.latest : u.stable)}? Wizard restarts for a moment.`, 'Update', () => { btn.dataset.sure = '1'; updateWizardOS(btn).finally(() => { delete btn.dataset.sure; }); });
+    const r = await getJSON(UPDATES_API, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Wizard-Store': '1' }, body: JSON.stringify({ action: 'apply' }) });
+    toast(r && r.started ? 'WizardOS is updating. Wizard restarts in a minute.' : (r && r.error) || 'Update asked.');
+  } catch (e) { if (btn) pop(btn, '', e.status === 404 ? 'Update in Settings › Updates.' : e.message); }
+}
+async function showWizards(force) {
+  el('lists').hidden = true; el('wizards').hidden = false;
+  if (!catalog) el('wizards').replaceChildren(make('p', 'bd-empty', 'Loading…'));
+  await loadCatalog(force);
+  paintWizards();
+}
+function paintWizards() {
+  if (view !== 'wizards' || !catalog) return;
+  const w = el('wizards'), u = updates || {};
+  const host = /^[0-9.]+$|^localhost$/.test(location.hostname) ? 'This Wizard' : location.hostname.split('.')[0];
+  const card = make('article', 'bd-card bd-wiz');
+  const head = make('div', 'bd-card-top'); head.append(make('b', 'bd-title', host), make('span', 'bd-meta', 'this Wizard'));
+  card.append(head);
+  const os = make('p', 'bd-onbox ' + (u.update_available ? 'no' : 'yes'));
+  const ch = u.channel === 'latest' ? 'For testers' : u.channel === 'stable' ? 'Stable' : '—';
+  os.append(make('b', '', 'WizardOS ' + (u.installed || '?')), document.createTextNode(` · ${ch}` + (u.update_available ? ` · ${u.latest_for_channel || (u.channel === 'latest' ? u.latest : u.stable)} available ` : ' · latest ✓')));
+  if (u.update_available) os.append(smallBtn(u.installing ? 'Updating…' : 'Update', b => updateWizardOS(b)));
+  card.append(os);
+  if (u.failed || u.interrupted) card.append(make('p', 'bd-why', `Last WizardOS update failed${u.retry_target ? ' (' + u.retry_target + ')' : ''}: ${u.failure_reason || 'no reason given'}.`));
+  const apps = catalog.apps || [];
+  const n = apps.filter(a => a.update).length;
+  const bar = make('div', 'bd-wiz-bar');
+  bar.append(make('span', 'bd-meta', catalog.error || `${apps.length} apps · ${n ? n + ' to update' : 'all up to date'}`));
+  const all = smallBtn('Update all', b => updateAll(b)); if (!n) all.setAttribute('aria-disabled', 'true'); bar.append(all);
+  card.append(bar);
+  const fails = Object.entries(wizFail).sort((a, b) => b[1].at - a[1].at);
+  if (fails.length) { const [id, f] = fails[0]; card.append(make('p', 'bd-why', `Last failed update: ${f.name || id} → ${f.to || '?'} (${when(new Date(f.at).toISOString())}): ${f.reason}`)); }
+  const list = make('div', 'bd-list rows bd-wiz-apps');
+  for (const a of apps) {
+    const r = make('div', 'bd-rowx bd-wiz-app');
+    const t = make('div', 'bd-item'); t.append(make('b', 'bd-title', a.name));
+    const busy = wizBusy.get(a.id);
+    const where = a.pinned ? 'updates with WizardOS' : a.update ? `latest ${a.latest}` : a.ahead ? `newer than the Store (${a.latest})` : a.latest ? 'latest ✓' : a.source === 'owner-private' ? 'private build' : 'not in the Store';
+    t.append(make('span', 'bd-meta', [a.version || '?', where, a.status && a.status !== 'running' ? a.status : ''].filter(Boolean).join(' · ')));
+    r.append(t);
+    const b = smallBtn(busy || 'Update', x => a.update ? updateApp(a.id, x) : pop(x, '', b.title));
+    if (!a.update || busy) { b.setAttribute('aria-disabled', 'true'); b.title = busy || (a.pinned ? 'Updates with WizardOS (above).' : a.ahead ? 'This Wizard runs a newer build than the Store lists.' : a.latest ? 'Already the latest.' : 'Nothing in the Store to update to.'); }
+    r.append(b);
+    list.append(r);
+  }
+  card.append(list);
+  card.append(make('p', 'bd-meta', 'Only this Wizard for now: the Tracker doesn’t know the team’s other Wizards yet.'));
+  w.replaceChildren(card);
+}
+
+// ---------- 0.17 Settings › Try changes: every switch in Human review, on/off, the same toggles as on the cards ----------
+function tryList() {
+  const rows = [], seen = new Set();
+  for (const v of ['goals', 'features', 'bugs']) for (const i of ((cache[v] || {}).groups || {}).test || []) {
+    if ((!i.switch && !i.switch_place) || seen.has(i.id)) continue;
+    seen.add(i.id);
+    const r = make('div', 'bd-rowx bd-try-row');
+    const t = tapTarget('bd-item', () => { WzSheet.close(el('settings')); openDetail(i); });
+    t.append(make('b', 'bd-title', i.title));
+    const s = make('span', 'bd-meta');
+    if (i.switch) { const sw = box && box.ok && box.switches[i.switch]; s.textContent = `${(sw && sw.name) || i.switch} · ${repoName(i.repo)}`; const why = tryWhy(i); if (why) t.append(s, make('span', 'bd-why-s', why)); else t.append(s); }
+    else { s.textContent = `${repoName(i.repo)} · `; t.append(s); for (const x of placeBits(i)) s.append(x, document.createTextNode(' ')); }
+    r.append(t);
+    if (i.switch) r.append(trySwitch(i));
+    rows.push(r);
+  }
+  el('try-n').textContent = rows.length || '';
+  el('try-list').replaceChildren(...(rows.length ? rows : [make('p', 'bd-empty', 'No change in Human review has a switch right now.')]));
+  el('settings-ver').textContent = `WizardOS Tracker ${(me && me.version) || ''}`;
+}
+el('settings-btn').onclick = () => { unpop(); tryList(); WzSheet.open(el('settings')); if (!box || !box.ok) loadSwitches(); };
+
 // ---------- start: refresh quietly on focus and every minute ----------
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.16.3' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.17.0' });
   WizardApp.back.register({ canGoBack: () => false, back: () => false });
 }
 for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));
+loadCatalog().catch(() => {});
 api('api/status').then(s => { show(s); if (s.connected) { load(view); loadSide(); setTimeout(() => { for (const other of ['goals', 'features', 'bugs']) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; }).catch(() => {}); }, 600); } })
   .catch(err => { el('loading').hidden = true; say(err.message, 'error'); });
 const quiet = () => me && me.connected && !document.hidden && !typing() && !sheetOpen() && !popFor;
