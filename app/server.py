@@ -28,7 +28,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.17.1'
+VERSION = '0.18.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -789,6 +789,8 @@ def shape(node):
     return {'id': f"{node['repository']['nameWithOwner']}#{node['number']}", 'repo': node['repository']['nameWithOwner'],
             'number': node['number'], 'title': node.get('title'), 'url': node.get('url'),
             'type': 'goal' if 'goal' in low else 'feature' if 'feature' in low else 'bug' if 'bug' in low else 'other',
+            'category': category(node['repository']['nameWithOwner'], low),   # 0.18: goal | core | app | bug (core vs app from the repo)
+            'stage': item_group(node['repository']['nameWithOwner'], low, (node.get('state') or '').lower()) if 'goal' not in low else None,
             'state': (node.get('state') or '').lower(), 'state_reason': (node.get('stateReason') or '').lower() or None,
             'labels': labels, 'author': (node.get('author') or {}).get('login'),
             'created_at': node.get('createdAt'), 'updated_at': node.get('updatedAt'), 'closed_at': node.get('closedAt'),
@@ -1361,6 +1363,7 @@ APP_ID_RE = re.compile(r'^[a-z0-9][a-z0-9-]{0,60}$')
 VERSION_RE = re.compile(r'^[0-9A-Za-z][0-9A-Za-z.+_-]{0,60}$')
 RELEASES_REPO = os.environ.get('WIZARD_RELEASES_REPO', 'humanitylabs-org/wizard-app-manager')
 STORE_INDEX = os.environ.get('WIZARD_STORE_INDEX', 'https://apps.aiwizards.com').rstrip('/')
+CORE_REPOS = ('wizard-os', 'wizard-ux', 'wizard-app-manager', 'wizard-agent-service', 'try-wizard')
 MAC_REPOS = {'try-wizard'}                                   # the Mac app: ships as a Mac build, not on the box
 OFF_BOX = {'wizard-os', 'wizard-app-index', 'wizard-issue-media', '.github'}   # specs, tools, websites: never on a box
 MAC_FIX = 'Needs the Mac app update'
@@ -1615,6 +1618,103 @@ def verdict(token, delivers, open_prs, box):
     return {'state': 'unknown', 'text': UNKNOWN_TEXT, 'fix': None, 'parts': shown, 'apps': apps}
 
 
+# ---------- 0.18 Shipping -> Done: is the approved change in a release that reaches everyone? ----------
+# After human approval an item is Shipping until every merged PR that delivered it is in a released build; then Done.
+# Core box components (pinned in a WizardOS release manifest): merged -> 'Waiting for release' -> 'In For testers <v>'
+# (in the `latest` release) -> Done 'Shipped in <v>' (in the `stable` release, For everyone). The Mac app (try-wizard):
+# 'Waiting for Mac app build' until a published Mac release contains it. Apps: 'Waiting for <App> release' until the
+# Store's latest release contains it. Specs and tools (wizard-os, ...) ship on merge. The first version seen is kept
+# (DATA_DIR/private/shipped.json), so 'Shipped in 0.3.134' does not move when a later release comes out.
+SHIP_SECONDS = 600
+_ship = {}   # (item id, delivers key) -> (time, verdict)
+SHIP_RANK = {'waiting': 0, 'mac': 1, 'app': 1, 'testers': 2, 'unknown': 3, 'done': 4}
+
+
+def _vtag(tag):
+    return re.sub(r'^(mac-mvp-|v)', '', tag or '')
+
+
+def ship_one(token, d, base=None):
+    """One merged PR: (wait key, text, version or None)."""
+    repo, sha = d['repo'], d.get('sha') or ''
+    name = repo.split('/')[-1].lower()
+    if name in OFF_BOX:
+        return 'done', 'Shipped on merge (no release needed)', None
+    if name in MAC_REPOS:
+        tag = mac_release(token, repo)
+        if tag and sha:
+            try:
+                have = contains(token, repo, sha, tag)
+            except Problem:
+                have = None
+            if have:
+                return 'done', f'Shipped in Mac app {_vtag(tag)}', 'mac ' + _vtag(tag)
+        return 'mac', 'Waiting for Mac app build', None
+    stable, latest = release_pointer(token, 'stable'), release_pointer(token, 'latest')
+    pins = {v: release_commit(release_manifest(token, v), repo) for v in (stable, latest) if v}
+    if any(pins.values()) or name in ('wizard-ux', 'wizard-agent-service', 'wizard-app-manager'):
+        if not sha:
+            return 'unknown', 'Merged; can\u2019t tell if it\u2019s released', None
+        if stable and pins.get(stable) and contains(token, repo, sha, pins[stable]):
+            return 'done', f'Shipped in {stable}', stable
+        if latest and pins.get(latest) and contains(token, repo, sha, pins[latest]):
+            return 'testers', f'In For testers {latest}', latest
+        return 'waiting', 'Waiting for release', None
+    app = store_listing(repo)
+    if not app or not app.get('commit'):
+        return 'done', 'Done (merged; no Store release to track)', None
+    if not sha:
+        return 'unknown', 'Merged; can\u2019t tell if it\u2019s released', None
+    have = contains(token, repo, sha, code_commit(token, repo, app['commit']))
+    if have:
+        return 'done', f"Shipped in {app['name']} {app['version']}", f"{app['name']} {app['version']}"
+    if have is None:
+        return 'unknown', 'Merged; can\u2019t tell if it\u2019s released', None
+    return 'app', f"Waiting for {app['name']} release", None
+
+
+def ship_status(token, iid, delivers, open_prs, state, state_reason, labels, base=None):
+    """{state shipping|done, wait, text, version}. Open items are always Shipping (approved, not closed yet)."""
+    low = {str(l).lower() for l in labels or []}
+    if state == 'open' and DEFAULT_LABEL in low:
+        return {'state': 'shipping', 'wait': 'default', 'text': 'Waiting for the builder to turn it on for everyone', 'version': None}
+    if state == 'closed' and state_reason == 'not_planned':
+        return {'state': 'done', 'wait': None, 'text': 'Closed: not planned', 'version': None}
+    kept = (_read('shipped.json', {}) or {}).get(iid) if state == 'closed' else None
+    if isinstance(kept, dict) and kept.get('text'):
+        return {'state': 'done', 'wait': None, 'text': kept['text'], 'version': kept.get('version')}
+    if not delivers:
+        if open_prs:
+            return {'state': 'shipping', 'wait': 'waiting', 'text': 'Waiting for the change to merge', 'version': None}
+        return {'state': 'done' if state == 'closed' else 'shipping', 'wait': None,
+                'text': 'Done' if state == 'closed' else 'Approved', 'version': None}
+    key = (iid, json.dumps(delivers, sort_keys=True), state)
+    with LOCK:
+        hit = _ship.get(key)
+    if hit and time.time() - hit[0] < SHIP_SECONDS:
+        return hit[1]
+    parts = [ship_one(token, d, base) for d in delivers]
+    worst = min(parts, key=lambda p: SHIP_RANK[p[0]])
+    done = worst[0] == 'done' and state == 'closed'
+    if done:   # the newest 'Shipped in' among the parts is when all of it reached everyone
+        shipped = [p for p in parts if p[2]]
+        text = shipped[-1][1] if shipped else worst[1]
+        out = {'state': 'done', 'wait': None, 'text': text, 'version': shipped[-1][2] if shipped else None}
+        with LOCK:
+            kept = _read('shipped.json', {})
+            kept = kept if isinstance(kept, dict) else {}
+            kept[iid] = {'text': out['text'], 'version': out['version'], 'at': int(time.time())}
+            _write('shipped.json', dict(list(kept.items())[-3000:]))
+    else:
+        out = {'state': 'shipping', 'wait': worst[0], 'text': worst[1], 'version': worst[2]}
+    with LOCK:
+        _ship[key] = (time.time(), out)
+        if len(_ship) > 1500:
+            for k in sorted(_ship, key=lambda k: _ship[k][0])[:300]:
+                _ship.pop(k, None)
+    return out
+
+
 def _box_facts(raw):
     raw = raw if isinstance(raw, dict) else {}
     rel = raw.get('release') if isinstance(raw.get('release'), str) and VERSION_RE.match(raw.get('release')) else None
@@ -1727,104 +1827,187 @@ def _repo_list(arg):
     return [n.split('/')[-1] for n in names if NAME.match(n.split('/')[-1])]
 
 
-VIEWS = ('goals', 'features', 'bugs')
-VIEW_Q = {'goals': 'label:goal', 'features': 'label:feature -label:goal', 'bugs': '-label:goal -label:feature'}
-VIEW_KIND = {'goals': 'goal', 'features': 'feature', 'bugs': 'bug'}
+# 0.18: four tabs. Core features and App features are both label `feature`; which one is derived from the repo
+# (policy `core_repos`, defaults CORE_REPOS). 'features' (both) stays for scripts and older views.
+VIEWS = ('goals', 'core', 'apps', 'bugs', 'features')
+VIEW_Q = {'goals': 'label:goal', 'features': 'label:feature -label:goal', 'core': 'label:feature -label:goal',
+          'apps': 'label:feature -label:goal', 'bugs': '-label:goal -label:feature'}
+VIEW_KIND = {'goals': 'goal', 'features': 'feature', 'core': 'feature', 'apps': 'feature', 'bugs': 'bug'}
+STATS_VIEW = {'goals': 'goals', 'features': 'features', 'core': 'features', 'apps': 'features', 'bugs': 'bugs'}
 
 
 def _view(args):
     view = args.get('view') or 'goals'
     if view not in VIEWS:
-        raise Problem(400, 'view must be goals, features or bugs.')
+        raise Problem(400, 'view must be goals, core, apps, bugs or features.')
     return view
 
 
+def view_keeps(view, repo, base=None):
+    """Does an item of `repo` belong in `view`? Only core/apps split by repo."""
+    if view not in ('core', 'apps'):
+        return True
+    return is_core(repo, base) == (view == 'core')
+
+
+GOAL_FIELDS = (' number title url body createdAt updatedAt author { login } assignees(first: 10) { nodes { login } }'
+               ' repository { nameWithOwner } labels(first: 20) { nodes { name } }'
+               ' comments(last: 50) { totalCount nodes { author { login } body createdAt } }'
+               ' timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 100) { nodes { ... on CrossReferencedEvent { source { __typename'
+               '  ... on Issue { number title url state stateReason repository { nameWithOwner } labels(first: 15) { nodes { name } } } } } } }')
+GOAL_PAGE = 'query($q: String!, $after: String) { ' + _PAGE % (30, GOAL_FIELDS) + ' }'
+OPEN_GROUPS = ('test', 'show', 'james', 'airev', 'building', 'queued', 'shipping')
+
+
+def item_group(repo, labels, state='open', base=None):
+    """0.18: the stage of one bug or feature from its labels (open items; closed ones are Shipping or Done)."""
+    low = {str(l).lower() for l in labels or []}
+    if state == 'closed':
+        return 'closed'
+    if HUMAN_LABEL in low:
+        return 'test'
+    if AI_LABEL in low:
+        return 'airev'
+    if SHOW_LABEL in low:
+        return 'show'
+    if APPROVED_LABEL in low or DEFAULT_LABEL in low:
+        return 'shipping'
+    if 'building' in low:
+        return 'building'
+    if category(repo, low, base) == 'core' and JAMES_LABEL not in low:
+        return 'james'
+    return 'queued'
+
+
+def linked_items(node, base=None):
+    """Bugs and features that mention this goal (the builder tags an item to a goal with a 'Goal: owner/repo#N' line)."""
+    kept = _read('shipped.json', {}) or {}
+    out, seen = [], set()
+    for t in (node.get('timelineItems') or {}).get('nodes') or []:
+        x = (t or {}).get('source') or {}
+        if x.get('__typename') != 'Issue' or not x.get('url') or x['url'] == node.get('url') or x['url'] in seen:
+            continue
+        seen.add(x['url'])
+        repo = (x.get('repository') or {}).get('nameWithOwner') or ''
+        labels = [l['name'] for l in (x.get('labels') or {}).get('nodes') or [] if l]
+        cat = category(repo, labels, base)
+        if cat == 'goal':
+            continue
+        state = (x.get('state') or '').lower()
+        iid = f"{repo}#{x.get('number')}"
+        g = item_group(repo, labels, state, base)
+        if g == 'closed':
+            g = 'shipping' if APPROVED_LABEL in {l.lower() for l in labels} and iid not in kept and (x.get('stateReason') or '').upper() != 'NOT_PLANNED' else 'done'
+        out.append({'id': iid, 'repo': repo, 'number': x.get('number'), 'title': x.get('title'), 'url': x['url'],
+                    'kind': 'bug' if cat == 'bug' else 'feature', 'category': cat, 'stage': g})
+    return out
+
+
+def goal_card(n, login, base):
+    card = _card(n, 'goals')
+    assignees = card['assignees']
+    author = (n.get('author') or {}).get('login') or ''
+    rows = [(((c.get('author') or {}).get('login') or ''), c.get('body') or '', c.get('createdAt')) for c in (n.get('comments') or {}).get('nodes') or []]
+    tasks = tasks_of(n.get('body'))
+    linked = linked_items(n, base)
+    counts = {}
+    for it in linked:
+        counts[it['stage']] = counts.get(it['stage'], 0) + 1
+    can = can_update_goal(login, assignees, base)
+    card.update(group='goals', category='goal', opener=person_of(author, base), created_at=n.get('createdAt'),
+                labels=[l['name'] for l in (n.get('labels') or {}).get('nodes') or []], tasks=tasks,
+                progress={'done': sum(t['done'] for t in tasks), 'total': len(tasks), 'of': 'done-list items'},
+                status=latest_status(rows, base), linked=linked, linked_counts=counts,
+                can_status=can, status_rule='' if can else goal_updaters_rule(assignees, base),
+                can_close=goal_closer(login, base), close_rule=f'Only {goal_closers_text(base)} closes a goal.',
+                all_done=bool(tasks) and all(t['done'] for t in tasks), mine=same_person(author, login, base))
+    return card
+
+
 def board_split(person, args):
-    """0.6 screen: Goals or Bugs in status groups: Waiting for review (label ready-to-test, key `test`),
-    Building (label building), Queued (every other open one), plus all-time bottleneck stats for that kind."""
+    """0.18 screen. Goals: one card per open goal (status, owners, linked bugs/features by stage). Core features, App
+    features, Bugs: open items in stage groups (test = Human review, show = James show-and-tell, james = waiting for
+    James, airev, building, queued = Filed / Approved, shipping = approved, not closed yet). Closed items (Shipping until
+    released, then Done) come from GET /api/done."""
     _, acct = account_for(person)
     view = _view(args)
     org = settings()['org']
     login = (acct.get('login') or '').strip()
-    kind = VIEW_Q[view]
-    q = f"org:{org} is:issue is:open {kind} sort:updated-desc"
+    base = policy_base()
+    q = f"org:{org} is:issue is:open {VIEW_Q[view]} sort:updated-desc"
     if args.get('refresh'):
         _forget(acct['token'])
-    nodes, total = _view_nodes(acct['token'], q, heavy=view == 'goals')
-    if view != 'goals':  # the few in AI or Human review get the heavy fields (what to check, review comments)
-        full, _ = _view_nodes(acct['token'], q.replace(' sort:', ' label:ready-to-test,ai-review sort:'), heavy=True, limit=80)
-        by = {(n['repository']['nameWithOwner'], n['number']): n for n in full}
-        nodes = [by.get((n['repository']['nameWithOwner'], n['number']), n) for n in nodes]
-    t, now = _tid(acct['token']), time.time()
+    sview = STATS_VIEW[view]
+    common = {'view': view, 'org': org, 'login': login, 'me_person': person_of(login, base), 'names': display_names(base),
+              'since': base['since'], 'targets': base['targets'][sview], 'core_repos': base['core_repos'],
+              'james': is_james(login, base)}
+    if view == 'goals':
+        nodes, total = _view_nodes(acct['token'], q, query=GOAL_PAGE, limit=60)
+        goals = [goal_card(n, login, base) for n in nodes]
+        return {**common, 'groups': {'goals': goals}, 'counts': {'goals': len(goals)}, 'total': total, 'shown': len(goals),
+                'more': total > len(nodes), 'repos': [], 'stats': {'pending': True, 'items': []}, 'steps': steps_for('goals', base),
+                'test': [], 'doing': goals}
+    nodes, total = _view_nodes(acct['token'], q, heavy=False)
+    if view in ('core', 'apps'):
+        kept = [n for n in nodes if view_keeps(view, n['repository']['nameWithOwner'], base)]
+        total = len(kept) if total <= len(nodes) else total
+        nodes = kept
+    full, _ = _view_nodes(acct['token'], q.replace(' sort:', ' label:ready-to-test,ai-review,show-and-tell,approved sort:'), heavy=True, limit=80)
+    by = {(n['repository']['nameWithOwner'], n['number']): n for n in full}
+    nodes = [by.get((n['repository']['nameWithOwner'], n['number']), n) for n in nodes]
+    now = time.time()
     with LOCK:
-        # 0.17: a just-filed or just-tested item shows the same way to everyone while search catches up
         hidden = {i for (k, i), v in _tested.items() if now - v <= RECENT_SECONDS}
-        made = [v for (k, _), v in _made.items() if now - v[0] <= RECENT_SECONDS and v[1] == ('goals' if view == 'goals' else 'issues')]
-    # 0.13: test = Human review (label ready-to-test, as before), airev = AI review (label ai-review)
-    groups = {'test': [], 'airev': [], 'building': [], 'queued': []}
-    base = policy_base()
+        made = [v for (k, _), v in _made.items() if now - v[0] <= RECENT_SECONDS and v[1] == 'issues']
+    groups = {g: [] for g in OPEN_GROUPS}
+    james = is_james(login, base)
     for n in nodes:
-        names = {l['name'].lower() for l in (n.get('labels') or {}).get('nodes') or []}
+        repo = n['repository']['nameWithOwner']
+        names = [l['name'] for l in (n.get('labels') or {}).get('nodes') or []]
         author = (n.get('author') or {}).get('login') or ''
-        mine = same_person(author, login, base)  # a person and their own agent count as one: they never review it
-        iid = f"{n['repository']['nameWithOwner']}#{n['number']}"
-        assignees = [a.get('login') for a in (n.get('assignees') or {}).get('nodes') or [] if a and a.get('login')]
-        kind = 'goal' if view == 'goals' else 'bug'  # features follow the bug rules
+        iid = f"{repo}#{n['number']}"
+        group = item_group(repo, names, 'open', base)
+        if group == 'test' and iid in hidden:
+            continue
+        card = _card(n, 'test' if group in ('test', 'airev', 'show', 'shipping') else 'issues')
+        cat = category(repo, names, base)
         extra = {}
-        if HUMAN_LABEL in names and iid not in hidden:
-            group, card = 'test', _card(n, 'test')
-            if view == 'goals':
-                card['owner'] = _card(n, 'goals')['owner']
-            ok, rule = human_rule(kind, author, assignees, login, base)
-            prog = review_progress(list(((n.get('comments') or {}).get('nodes') or [])), base)
-            extra = {'can_review': ok, 'review_rule': rule, 'reviews': prog,
-                     'reviewed_by_me': person_of(login, base).lower() in {b.lower() for b in prog['by']}}
-        elif AI_LABEL in names:
-            group, card = 'airev', _card(n, 'test')
-            if view == 'goals':
-                card['owner'] = _card(n, 'goals')['owner']
-            extra = {'ai_reviewer': ai_reviewers(kind, author, assignees, base)[1]}
-        else:
-            group = 'building' if 'building' in names else 'queued'
-            card = _card(n, 'goals' if view == 'goals' else 'issues')
-        if view == 'goals':   # 0.17: done-list, who steers, who closes, the latest builder slice
-            gf = goal_flags(n.get('body'), assignees, author, login, base)
-            said = [c for c in (n.get('comments') or {}).get('nodes') or [] if ((c.get('author') or {}).get('login') or '').lower() == BUILDER]
-            gf['slice'] = _plain(said[-1]['body'], 280) if said else ''
-            gf['slice_at'] = said[-1].get('createdAt') if said else None
-            if gf['tasks']:
-                gf['progress'] = {'done': sum(t['done'] for t in gf['tasks']), 'total': len(gf['tasks']), 'of': 'done-list items'}
-            extra = {**extra, **gf, 'can_review': False if group == 'test' else extra.get('can_review'),
-                     'review_rule': '' if group != 'test' else gf['steer_rule']}
-            if group == 'test':
-                extra.pop('reviews', None)
-        card.update(group=group, mine=mine, can_close=(extra.get('can_close_goal') if view == 'goals' else mine), opener=person_of(author, base), created_at=n.get('createdAt'),
-                    labels=[l['name'] for l in (n.get('labels') or {}).get('nodes') or []], **extra)
+        if group == 'test':
+            ok, rule = human_rule('bug', author, [], login, base)
+            extra = {'can_review': ok, 'review_rule': rule, 'turn': ok and same_person(author, login, base)}
+        elif group == 'airev':
+            extra = {'ai_reviewer': ai_reviewers('bug', author, [], base)[1]}
+        elif group in ('james', 'show'):
+            extra = {'can_james': james, 'james_rule': '' if james else JAMES_RULE['approve' if group == 'james' else 'show'], 'turn': james}
+        elif group == 'shipping':
+            extra = {'delivers_ship': True}
+        card.update(group=group, category=cat, kind='bug' if cat == 'bug' else 'feature', mine=same_person(author, login, base),
+                    can_close=same_person(author, login, base), opener=person_of(author, base), created_at=n.get('createdAt'),
+                    labels=names, blocked=any(str(l).lower().startswith('builder:blocked') for l in names), **extra)
         groups[group].append(card)
     have = {i['id'] for g in groups.values() for i in g}
     for _, _, it in made:
-        if it['id'] not in have:
-            own = same_person(it.get('author') or '', login, base)
-            if it['repo'].lower().startswith(org.lower() + '/'):
-                groups['queued'].insert(0, {**it, 'group': 'queued', 'mine': own, 'can_close': own})
-    # Stats ride along when cached; otherwise the view asks GET /api/stats right after (keeps the list fast).
+        if it['id'] not in have and it['repo'].lower().startswith(org.lower() + '/') and view_keeps(view, it['repo'], base):
+            cat = category(it['repo'], it.get('labels') or [], base)
+            if (view == 'bugs') == (cat == 'bug'):
+                own = same_person(it.get('author') or '', login, base)
+                g = 'james' if cat == 'core' else 'queued'
+                groups[g].insert(0, {**it, 'group': g, 'category': cat, 'mine': own, 'can_close': own, 'can_james': james,
+                                     'james_rule': '' if james else JAMES_RULE['approve'], 'opener': person_of(it.get('author') or '', base)})
     stats = view_stats(acct['token'], org, view, cached_only=not args.get('with_stats')) or {'pending': True, 'items': [], 'done': None}
     repos_wanted = _repo_list(args.get('repos'))
-    if repos_wanted:  # optional server-side repo filter (the view filters itself, scripts may use this)
+    if repos_wanted:
         keep = lambda i: i['repo'].split('/')[-1].lower() in repos_wanted
         groups = {k: [i for i in v if keep(i)] for k, v in groups.items()}
         stats = _filter_stats(stats, keep)
     shown = sum(len(g) for g in groups.values())
-    return {'view': view, 'org': org, 'login': login, 'me_person': person_of(login, base), 'steps': steps_for(view, base), 'groups': groups,
-            'targets': base['targets'][view], 'names': display_names(base), 'since': base['since'], 'human_reviews': base['human_reviews'],
-            # 0.9: Bugs shows a Repo chip for every non-archived org repo (owner/name), even with 0 open bugs
-            'repos': org_repos(acct['token'], org) if view != 'goals' else [],
+    return {**common, 'steps': steps_for(sview, base), 'groups': groups, 'human_reviews': 1,
+            'repos': org_repos(acct['token'], org),
             'counts': {k: len(v) for k, v in groups.items()}, 'done': stats.get('done', 0),
             'stats': {**stats, 'summary': None if stats.get('pending') else summarize(stats.get('items', []))},
             'total': total, 'shown': shown, 'more': total > len(nodes),
             # 0.3 shape, kept for older views and scripts
-            # 0.17: the same lists for everyone ('test' no longer drops the viewer's own items)
-            'test': groups['test'], 'doing': groups['airev'] + groups['building'] + groups['queued']}
+            'test': groups['test'], 'doing': [i for g in ('show', 'james', 'airev', 'building', 'queued') for i in groups[g]]}
 
 
 # ---------- bottleneck stats (label history, cached 5 min per token/org/view) ----------
@@ -1858,8 +2041,8 @@ def history_of(ev, opened, closed_at, state, now=None):
     kick_times, ai_kick_times = [], []
     for t, k, l in ev:
         if k == 'UnlabeledEvent' and l == 'ready-to-test':
-            soon = [x for x in ev if t <= x[0] <= t + 600]
-            if not any(x[1] == 'ClosedEvent' or (x[1] == 'LabeledEvent' and x[2] == 'approved') for x in soon):
+            soon = [x for x in ev if t - 600 <= x[0] <= t + 600]   # 0.18: Works adds approved / show-and-tell first
+            if not any(x[1] == 'ClosedEvent' or (x[1] == 'LabeledEvent' and x[2] in ('approved', 'show-and-tell')) for x in soon):
                 kick_times.append(t)
         elif k == 'UnlabeledEvent' and l == 'ai-review':
             near = [x for x in ev if t - 600 <= x[0] <= t + 600]
@@ -2028,36 +2211,60 @@ def item_flow(person, args, agent=False):
     return out
 
 
-DONE_FIELDS = LIGHT_FIELDS + ' closedAt stateReason'
-DONE_PAGE = 'query($q: String!, $after: String) { ' + _PAGE % (50, DONE_FIELDS) + ' }'
+DONE_FIELDS = HEAVY_FIELDS + ' closedAt stateReason'
+DONE_PAGE = 'query($q: String!, $after: String) { ' + _PAGE % (40, DONE_FIELDS) + ' }'
 
 
 def done_list(person, args):
-    """GET /api/done?view=goals|bugs: the most recently closed items of that view (up to 50, newest first)."""
+    """GET /api/done?view=core|apps|bugs|goals: 0.18 Shipping and Done. Closed items since the reset date (newest first,
+    up to 80), each with `ship` {state shipping|done, wait, text, version}, plus `open_ship` for open approved items
+    (id -> ship). Release checks run in parallel and are cached (immutable answers for good)."""
     _, acct = account_for(person)
     view = _view(args)
     org = settings()['org']
-    kind = VIEW_Q[view]
     if args.get('refresh'):
         _forget(acct['token'])
-    nodes, total = _view_nodes(acct['token'], f'org:{org} is:issue is:closed {kind} sort:updated-desc', limit=50, query=DONE_PAGE)
     base = policy_base()
+    nodes, total = _view_nodes(acct['token'], f'org:{org} is:issue is:closed {VIEW_Q[view]} sort:updated-desc', limit=80, query=DONE_PAGE)
     ts = since_ts(base)
+    nodes = [n for n in nodes if counts_since('closed', n.get('closedAt'), ts) and view_keeps(view, n['repository']['nameWithOwner'], base)]
+    opened = []
+    if view != 'goals':
+        opened, _ = _view_nodes(acct['token'], f'org:{org} is:issue is:open {VIEW_Q[view]} label:approved,switch-default sort:updated-desc', heavy=True, limit=60)
+        opened = [n for n in opened if view_keeps(view, n['repository']['nameWithOwner'], base)]
+    token, login = acct['token'], acct.get('login') or ''
+
+    def one(n):
+        repo = n['repository']['nameWithOwner']
+        iid = f"{repo}#{n['number']}"
+        labels = [l['name'] for l in (n.get('labels') or {}).get('nodes') or []]
+        ds, open_prs = delivered(n)
+        st = 'closed' if n.get('closedAt') else 'open'
+        if view == 'goals':
+            return iid, {'state': 'done', 'wait': None, 'text': 'Closed', 'version': None}
+        return iid, ship_status(token, iid, ds, open_prs, st, (n.get('stateReason') or '').lower() or None, labels, base)
+    with ThreadPoolExecutor(max_workers=6) as ex:
+        ships = dict(ex.map(one, nodes + opened))
     items = []
     for n in nodes:
-        if not counts_since('closed', n.get('closedAt'), ts):  # 0.11: only closed since the reset date
-            continue
-        card = _card(n, 'goals' if view == 'goals' else 'issues')
+        card = _card(n, 'goals' if view == 'goals' else 'test')
         author = (n.get('author') or {}).get('login') or ''
-        card.update(group='done', mine=same_person(author, acct.get('login') or '', base), opener=person_of(author, base),
-                    created_at=n.get('createdAt'), closed_at=n.get('closedAt'), state_reason=(n.get('stateReason') or '').lower() or None,
-                    labels=[l['name'] for l in (n.get('labels') or {}).get('nodes') or []])
+        labels = [l['name'] for l in (n.get('labels') or {}).get('nodes') or []]
+        cat = category(n['repository']['nameWithOwner'], labels, base)
+        sh = ships.get(card['id'])
+        card.update(group='done' if sh['state'] == 'done' else 'shipping', category=cat, kind='goal' if cat == 'goal' else 'bug' if cat == 'bug' else 'feature',
+                    mine=same_person(author, login, base), opener=person_of(author, base), ship=sh,
+                    created_at=n.get('createdAt'), closed_at=n.get('closedAt'), state='closed',
+                    state_reason=(n.get('stateReason') or '').lower() or None, labels=labels)
         items.append(card)
     items.sort(key=lambda i: i.get('closed_at') or '', reverse=True)
     repos_wanted = _repo_list(args.get('repos'))
     if repos_wanted:
         items = [i for i in items if i['repo'].split('/')[-1].lower() in repos_wanted]
-    return {'view': view, 'org': org, 'items': items, 'count': len(items), 'total': total, 'since': base['since']}
+    open_ship = {f"{n['repository']['nameWithOwner']}#{n['number']}": ships.get(f"{n['repository']['nameWithOwner']}#{n['number']}") for n in opened}
+    return {'view': view, 'org': org, 'items': items, 'count': len(items), 'total': total, 'since': base['since'],
+            'shipping': [i for i in items if i['group'] == 'shipping'], 'done': [i for i in items if i['group'] == 'done'],
+            'open_ship': open_ship}
 
 
 def _filter_stats(stats, keep):
@@ -2090,7 +2297,8 @@ def view_stats(token, org, view, cached_only=False):
     kind = VIEW_Q[view]
     nodes, total = _view_nodes(token, f'org:{org} is:issue {kind} sort:created-desc', limit=STATS_MAX, query=STATS_PAGE)
     now = time.time()
-    items = [item_history(n, now) for n in nodes if n.get('repository')]
+    base = policy_base()
+    items = [item_history(n, now) for n in nodes if n.get('repository') and view_keeps(view, n['repository']['nameWithOwner'], base)]
     out = {'items': items, 'done': sum(1 for i in items if i['state'] == 'closed'), 'counted': len(items),
            'total': total, 'computed_at': int(now), 'cache_seconds': STATS_SECONDS}
     with LOCK:
@@ -2132,6 +2340,8 @@ POLICY_DEFAULT = {
     # 0.11: reset date. Done, the Done list and every line stat count only items closed on or after it
     # (open items always count). DATA_DIR/policy.json `since` overrides (ISO date/time, UTC if no zone).
     'since': '2026-11-07T14:45:00Z',
+    # 0.18: core repos (everything else is an app). A feature in a core repo waits for James before the builder starts.
+    'core_repos': list(CORE_REPOS),
 }
 TARGET_KEYS = {'queued': 'queued', 'open': 'queued', 'building': 'building', 'build': 'building', 'ai': 'ai', 'ai-review': 'ai',
                'ai_review': 'ai', 'review': 'review', 'human': 'review', 'human-review': 'review', 'human_review': 'review',
@@ -2167,8 +2377,8 @@ STEP_TEXT = {
              'bugs': 'Anyone on the team, or their own agent, opens a bug and closes it once it works.'},
     'build': 'The WizardOS Builder writes the code, then labels it ai-review and says what to check.',
     'ai': "The opener's agent (a goal's owner's) checks the build matches the issue (for a goal: that the slice moves its next done-list item forward): pass to Human review, or back to Building.",
-    'review': {'bugs': "Someone on the team, not whoever opened it, tries it and says Works or Doesn't work.",
-               'features': "Someone on the team, not whoever opened it, tries it and says Works or Doesn't work.",
+    'review': {'bugs': "Whoever filed it tries it and says Works or Doesn't work.",
+               'features': "Whoever filed it tries it (with its switch) and says Works or Doesn't work.",
                'goals': "The goal's owners, or {who}, look at the slice: Keep going (the builder takes the next done-list item) or Change direction (with a note), and tick the done-list items that are now done."},
 }
 
@@ -2217,9 +2427,25 @@ def policy_base():
     if isinstance(over.get('open'), dict):
         opn.update({k: v for k, v in over['open'].items() if k in VIEWS and (v == 'team' or isinstance(v, list))})
     hr = over.get('human_reviews')
-    return {'team': team, 'builder': builder, 'open': opn, 'targets': _targets(over.get('targets')),
+    core = over.get('core_repos')
+    core = [str(x).split('/')[-1].lower() for x in core if isinstance(x, str) and NAME.match(str(x).split('/')[-1])] if isinstance(core, list) else list(CORE_REPOS)
+    return {'team': team, 'builder': builder, 'open': opn, 'targets': _targets(over.get('targets')), 'core_repos': core,
             'since': _since(over.get('since'))[0],
             'human_reviews': hr if isinstance(hr, int) and not isinstance(hr, bool) and hr in (1, 2) else POLICY_DEFAULT['human_reviews']}
+
+
+def is_core(repo, base=None):
+    return (repo or '').split('/')[-1].lower() in set((base or policy_base())['core_repos'])
+
+
+def category(repo, labels, base=None):
+    """0.18: goal | core | app | bug, from labels and the repo (core vs app is never a label)."""
+    low = {str(l).lower() for l in labels or []}
+    if 'goal' in low:
+        return 'goal'
+    if 'feature' in low:
+        return 'core' if is_core(repo, base) else 'app'
+    return 'bug'
 
 
 def display_names(base=None):
@@ -2247,7 +2473,8 @@ def targets_set(person, args, agent=False):
     """POST /api/targets {view, step, seconds}: one step's target for everyone (DATA_DIR/policy.json).
     0.10: any signed-in person may change it (permissions later); agents only with the human's words."""
     view = args.get('view')
-    if view not in VIEWS:
+    view = STATS_VIEW.get(view, view)
+    if view not in ('goals', 'features', 'bugs'):
         raise Problem(400, 'view must be goals, features or bugs.')
     step = TARGET_KEYS.get(str(args.get('step') or '').lower())
     if not step:
@@ -2328,24 +2555,23 @@ def steps_for(view, base=None):
          'except': 'outside the roster, or no agent listed: any team agent',
          'about': STEP_TEXT['ai'], 'next': 'Pass: Human review (label ready-to-test). Fail: back to Building.'},
         {'key': 'review', 'n': 4, 'name': 'Human review', 'group': 'test', 'label': 'ready-to-test', 'count_label': 'Human review',
-         'role': 'Team, not the opener' if view != 'goals' else f'Goal owner or {goal_names}',
+         'role': 'The filer' if view != 'goals' else f'Goal owner or {goal_names}',
          'who': [_who(t) for t in team] if view != 'goals' else [_who(t) for t in openers],
-         'except': 'whoever opened it (a person and their own agent count as one)' if view != 'goals' else '',
+         'except': '' ,
          'about': STEP_TEXT['review'][view].format(who=goal_names), 'reviews': base['human_reviews'],
          'next': (f"Keep going or Change direction: back to Build for the next slice. {goal_names} closes the goal once every done-list item is ticked." if view == 'goals'
-                  else "Works: the opener closes it (Done). Doesn't work: back to Build." if base['human_reviews'] == 1
-                  else f"Works from {base['human_reviews']} different people: the opener closes it (Done). Doesn't work: back to Build.")},
+                  else "Works: Shipping until it is in a release for everyone (core features: James's show-and-tell first), then Done. Doesn't work: back to Build.")},
     ]
 
 
 def policy(person=None):
     base = policy_base()
     org = settings()['org']
-    views = {v: steps_for(v, base) for v in VIEWS}
+    views = {v: steps_for(v, base) for v in ('goals', 'features', 'bugs')}
     lines = [f"Goals: opened and closed by {views['goals'][0]['role']}",
              f"Features: opened and closed by {views['features'][0]['role'].lower()}",
              f"Bugs: opened and closed by {views['bugs'][0]['role'].lower()}",
-             f"Build: {base['builder']['name']} only · Review: the team, not the opener"]
+             f"Build: {base['builder']['name']} only · Human review: the filer · Core features: James approves first and after the show-and-tell"]
     login = None
     try:
         _, acct = account_for(person)
@@ -2355,7 +2581,10 @@ def policy(person=None):
     return {'version': 2, **base, 'names': display_names(base), 'org': org, 'steps': views, 'me': {'login': login, 'person': person_of(login, base) if login else None},
             # 0.5 shape, kept for scripts
             'goals': {'authors': [x['login'] for w in views['goals'][0]['who'] for x in w['logins']]},
-            'builds': {'builders': base['builder']['logins']}, 'lines': lines, 'editable_file': 'DATA_DIR/policy.json'}
+            'builds': {'builders': base['builder']['logins']}, 'lines': lines,
+            # 0.18: what the builder must honour
+            'builder_rules': {'never_build': ['goal'], 'core_repos': base['core_repos'], 'core_feature_needs_label': JAMES_LABEL,
+                              'switch_default_label': DEFAULT_LABEL, 'goal_tag_line': 'Goal: <owner/repo#N> (only on a clear match)'}, 'editable_file': 'DATA_DIR/policy.json'}
 
 
 # ---------- 0.13: two-step review (AI review, then Human review; optional second human) ----------
@@ -2384,9 +2613,14 @@ def human_rule(kind, opener, assignees, me, base=None):
         names = list(dict.fromkeys(owners + others)) or ['James']
         rule = ('Only ' + (' or '.join(names) if len(names) < 3 else ', '.join(names[:-1]) + ' or ' + names[-1]) + ' review this goal.')
         return mine in allowed, rule
+    # 0.18 (James, 9 Nov): the FILER tests bugs and features (a person and their own agent are one person). Items filed
+    # by someone outside the roster (or the builder) can be tested by anyone on the team.
     if same_person(opener, me, base):
-        return False, 'You filed this, so someone else tests it.'
-    return True, ''
+        return True, ''
+    who = person_of(opener, base)
+    if not any(t['name'].lower() == who.lower() for t in base['team']):
+        return True, ''
+    return False, f'Only {who} tests this: they filed it.'
 
 
 def goal_closer(me, base=None):
@@ -2411,80 +2645,6 @@ def goal_flags(body, assignees, opener, login, base=None):
     all_done = bool(tasks) and all(t['done'] for t in tasks)
     return {'tasks': tasks, 'all_done': all_done, 'can_steer': steer, 'steer_rule': rule, 'can_close_goal': closer,
             'close_rule': f'Only {goal_closers_text(base)} closes a goal.'}
-
-
-GOAL_STEP = {'keep': 'Goal step: keep going', 'redirect': 'Goal step: change direction'}
-
-
-def goal_step(person, args):
-    """POST /api/goal/step {repo, number, decision keep|redirect, note, done: [done-list indexes now done]}.
-    0.17: the human step for a goal slice (label ready-to-test on a goal). The goal's owners or James only. Keep going:
-    the slice is fine, back to Building for the next done-list item. Change direction: a note is required, back to
-    Building. Ticks the named done-list items in the issue body first. Goals never use Works / Doesn't work."""
-    _, acct = account_for(person)
-    full, number = _target(args)
-    login = acct.get('login') or 'someone'
-    base = policy_base()
-    decision = args.get('decision')
-    if decision not in GOAL_STEP:
-        raise Problem(400, 'decision must be keep or redirect.')
-    note = args.get('note') if isinstance(args.get('note'), str) else ''
-    note = note.strip()
-    if len(note) > 4000:
-        raise Problem(400, 'The note is too long (4000 characters max).')
-    if decision == 'redirect' and len(note) < 3:
-        raise Problem(400, 'Say which direction to take (a short note).', 'note_required')
-    done = args.get('done') if isinstance(args.get('done'), list) else []
-    if not all(isinstance(i, int) and not isinstance(i, bool) and 0 <= i < 200 for i in done):
-        raise Problem(400, 'done must be a list of done-list indexes.')
-    cur = _current(acct, full, number)
-    names = [l.get('name', '').lower() for l in cur.get('labels') or []]
-    if 'goal' not in names:
-        raise Problem(409, 'This is not a goal. Bugs and features use Works / Doesn\u2019t work.', 'not_goal')
-    if HUMAN_LABEL not in names:
-        raise Problem(409, 'This goal has no slice waiting for you. Refresh to see the latest.')
-    opener = ((cur.get('user') or {}).get('login') or '')
-    assignees = [a.get('login') for a in cur.get('assignees') or [] if isinstance(a, dict)]
-    ok, rule = human_rule('goal', opener, assignees, login, base)
-    if not ok:
-        raise Problem(403, rule, 'not_reviewer')
-    ticked = []
-    if done:
-        lines = (cur.get('body') or '').split('\n')
-        found = [i for i, l in enumerate(lines) if TASK.match(l.rstrip('\r'))]
-        changed = False
-        for idx in sorted(set(done)):
-            if idx >= len(found):
-                raise Problem(409, 'The done-list changed on GitHub. Refresh and try again.')
-            i = found[idx]
-            cr = '\r' if lines[i].endswith('\r') else ''
-            m = TASK.match(lines[i].rstrip('\r'))
-            ticked.append(m.group(4).strip())
-            if m.group(2) not in 'xX':
-                lines[i] = m.group(1) + 'x' + m.group(3) + m.group(4) + cr
-                changed = True
-        if changed:
-            gh(acct['token'], 'PATCH', f'/repos/{full}/issues/{number}', {'body': '\n'.join(lines)})
-    body = f'{GOAL_STEP[decision]} \u2014 @{login}'
-    if ticked:
-        body += '\n\nNow done: ' + '; '.join(ticked)
-    if note:
-        body += '\n\n' + note
-    gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
-    _drop_label(acct, full, number, HUMAN_LABEL)
-    try:
-        gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/labels', {'labels': ['building']})
-    except Problem:
-        pass
-    after = _current(acct, full, number)
-    now = [l.get('name', '').lower() for l in after.get('labels') or []]
-    if HUMAN_LABEL in now:
-        raise Problem(403, 'Your note is saved, but GitHub did not change the labels (write access to this repo is needed).')
-    with LOCK:
-        _tested[(_tid(acct['token']), f'{full}#{number}')] = time.time()
-    tasks = tasks_of(after.get('body'))
-    return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'decision': decision, 'labels': now, 'saved': True,
-            'tasks': tasks, 'all_done': bool(tasks) and all(t['done'] for t in tasks)}
 
 
 def _comment_rows(rows):
@@ -2790,7 +2950,13 @@ def issue_detail(person, args):
     if goal and isinstance(raw, dict):   # the HTML read has no markdown body; the done-list comes from the raw one
         goal.update({k: v for k, v in goal_flags(raw.get('body') or '', [a.get('login') for a in raw.get('assignees') or [] if isinstance(a, dict)],
                                                  who(it), acct.get('login') or '').items()})
-    return {'kind': kind, **goal,
+    if kind == 'goal':   # 0.18: status history (comments whose first line is 'Status: green|yellow|red')
+        raw_rows = _issue_comments(acct, full, number, count)
+        goal['status_history'] = status_of([(((c.get('user') or {}).get('login') or ''), c.get('body') or '', c.get('created_at')) for c in raw_rows if isinstance(c, dict)])
+        goal['can_status'] = can_update_goal(acct.get('login') or '', [a.get('login') for a in it.get('assignees') or [] if isinstance(a, dict)])
+        goal['status_rule'] = '' if goal['can_status'] else goal_updaters_rule([])
+    labels_low = [str(l.get('name', '')).lower() for l in it.get('labels') or [] if isinstance(l, dict)]
+    return {'kind': kind, **goal, 'category': category(full, labels_low),
             'can_close': goal['can_close_goal'] if kind == 'goal' else same_person(who(it), acct.get('login') or ''),
             'close_rule': goal['close_rule'] if kind == 'goal' else f'Only {person_of(who(it)) or "whoever opened it"} can close this {kind}.',
             'id': f'{full}#{number}', 'repo': full, 'number': number, 'title': it.get('title'), 'url': it.get('html_url'),
@@ -2812,59 +2978,237 @@ def _drop_label(acct, full, number, label):
             raise
 
 
+JAMES_LABEL, SHOW_LABEL, APPROVED_LABEL, DEFAULT_LABEL = 'james-approved', 'show-and-tell', 'approved', 'switch-default'
+
+
+def _labels(cur):
+    return [l.get('name', '').lower() for l in cur.get('labels') or [] if isinstance(l, dict)]
+
+
+def _add_label(acct, full, number, label):
+    gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/labels', {'labels': [label]})
+
+
+def _close(acct, full, number, reason='completed'):
+    gh(acct['token'], 'PATCH', f'/repos/{full}/issues/{number}', {'state': 'closed', 'state_reason': reason})
+
+
 def tested(person, args, works):
-    """Human review. Works: comment; once `human_reviews` different people said Works (default 1) drop
-    ready-to-test and add approved (the opener then closes it). Doesn't work: comment, drop ready-to-test,
-    back to Building. Bugs: anyone but the opener; goals: the goal's owners or James."""
+    """Human review, by the filer (0.18). Works: a core feature goes on to James's show-and-tell (label show-and-tell);
+    a bug or app feature is approved and closed (label approved): it then shows as Shipping until its merged change is
+    in a release that reaches everyone, then Done. Doesn't work: back to Building (a kick-back, counted in stats)."""
     _, acct = account_for(person)
     full, number = _target(args)
     login = acct.get('login') or 'someone'
     base = policy_base()
     cur = _current(acct, full, number)
-    names = [l.get('name', '').lower() for l in cur.get('labels') or []]
+    names = _labels(cur)
     if HUMAN_LABEL not in names:
         if AI_LABEL in names:
             raise Problem(409, 'This is still in AI review: the agent checks it first, then it comes to you.', 'ai_review')
         raise Problem(409, 'This is not waiting for a test any more. Refresh to see the latest.')
     opener = ((cur.get('user') or {}).get('login') or '')
-    kind = 'goal' if 'goal' in names else 'bug'
-    if kind == 'goal':  # 0.17: goals are long-running; their human step is Keep going / Change direction
-        raise Problem(409, 'Goals don\u2019t use Works / Doesn\u2019t work: say Keep going or Change direction.', 'goal')
-    assignees = [a.get('login') for a in cur.get('assignees') or [] if isinstance(a, dict)]
-    ok, rule = human_rule(kind, opener, assignees, login, base)
+    cat = category(full, names, base)
+    if cat == 'goal':
+        raise Problem(409, 'Goals are human-led: they get status updates, not Works / Doesn\u2019t work.', 'goal')
+    ok, rule = human_rule('bug', opener, [], login, base)
     if not ok:
-        raise Problem(403, rule, 'own_item')
-    need = base['human_reviews']
-    prog = review_progress(_issue_comments(acct, full, number, cur.get('comments') or 0), base) if need > 1 else {'done': 0, 'by': []}
-    me = person_of(login, base)
-    if works and me.lower() in {b.lower() for b in prog['by']}:
-        raise Problem(409, f'You already said Works. A second, different person reviews it too ({prog["done"]} of {need}).', 'already_reviewed')
-    final = not works or prog['done'] + 1 >= need
+        raise Problem(403, rule, 'not_filer')
     if works:
-        body = f'Tested: works — @{login}' + (f' ({prog["done"] + 1} of {need} reviews)' if need > 1 else '')
+        body = f'Tested: works \u2014 @{login}'
     else:
         note = (args.get('note') or '').strip() if isinstance(args.get('note') or '', str) else ''
         if len(note) > 4000:
             raise Problem(400, 'What went wrong is too long (4000 characters max).')
-        body = f"Tested: doesn't work — @{login}" + (f'\n\n{note}' if note else '')  # 0.16: the note is optional
+        body = f"Tested: doesn't work \u2014 @{login}" + (f'\n\n{note}' if note else '')
     gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
-    if final:
+    nxt = 'building'
+    if works:   # add the next label first, then drop ready-to-test, so the timeline never reads as a kick-back
+        nxt = SHOW_LABEL if cat == 'core' else APPROVED_LABEL
+        _add_label(acct, full, number, nxt)
         _drop_label(acct, full, number, HUMAN_LABEL)
-        if works:
-            gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/labels', {'labels': ['approved']})
-        else:
-            try:  # 0.13: back to Building (the builder picks it up again)
-                gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/labels', {'labels': ['building']})
-            except Problem:
-                pass
-    now = [l.get('name', '').lower() for l in _current(acct, full, number).get('labels') or []]
-    if final and (HUMAN_LABEL in now or (works and 'approved' not in now)):
+        if nxt == APPROVED_LABEL:
+            _close(acct, full, number)
+    else:
+        _drop_label(acct, full, number, HUMAN_LABEL)
+        try:
+            _add_label(acct, full, number, 'building')
+        except Problem:
+            pass
+    after = _current(acct, full, number)
+    now = _labels(after)
+    if HUMAN_LABEL in now or (works and nxt not in now):
         raise Problem(403, 'Your comment is saved, but GitHub did not change the labels (write access to this repo is needed).')
-    if final:
-        with LOCK:
-            _tested[(_tid(acct['token']), f'{full}#{number}')] = time.time()
+    with LOCK:
+        _tested[(_tid(acct['token']), f'{full}#{number}')] = time.time()
+        _ship.clear()
     return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'works': works, 'labels': now, 'saved': True,
-            'reviews': {'done': prog['done'] + (1 if works else 0), 'need': need}, 'final': final}
+            'stage': ('show' if nxt == SHOW_LABEL else 'shipping') if works else 'building', 'state': after.get('state'),
+            'reviews': {'done': 1 if works else 0, 'need': 1}, 'final': True}
+
+
+def james_people(base=None):
+    """Who approves core features and show-and-tell, and closes goals: policy open.goals (James)."""
+    base = base or policy_base()
+    return _goal_people(base)
+
+
+def is_james(login, base=None):
+    return bool(login) and person_of(login, base).lower() in james_people(base)
+
+
+JAMES_RULE = {'approve': 'Only James can approve core features.', 'show': 'Only James approves show-and-tell.'}
+
+
+def james_decide(person, args):
+    """POST /api/james {repo, number, decision approve|decline, note}: a core feature waiting for James. Approve adds
+    label james-approved (the builder may start); Decline comments and closes it as not planned."""
+    _, acct = account_for(person)
+    full, number = _target(args)
+    login = acct.get('login') or ''
+    base = policy_base()
+    decision = args.get('decision')
+    if decision not in ('approve', 'decline'):
+        raise Problem(400, 'decision must be approve or decline.')
+    if not is_james(login, base):
+        raise Problem(403, JAMES_RULE['approve'], 'not_james')
+    cur = _current(acct, full, number)
+    names = _labels(cur)
+    if category(full, names, base) != 'core':
+        raise Problem(409, 'Only core features wait for James.', 'not_core')
+    if JAMES_LABEL in names or cur.get('state') == 'closed':
+        raise Problem(409, 'This is not waiting for James any more. Refresh to see the latest.')
+    note = args.get('note') if isinstance(args.get('note'), str) else ''
+    note = note.strip()[:4000]
+    body = f"James: {'approved' if decision == 'approve' else 'declined'} \u2014 @{login}" + (f'\n\n{note}' if note else '')
+    gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
+    if decision == 'approve':
+        _add_label(acct, full, number, JAMES_LABEL)
+    else:
+        _close(acct, full, number, 'not_planned')
+    after = _current(acct, full, number)
+    if decision == 'approve' and JAMES_LABEL not in _labels(after):
+        raise Problem(403, 'Your comment is saved, but GitHub did not add the label (write access to this repo is needed).')
+    with LOCK:
+        _stats.clear()
+    return {'id': f'{full}#{number}', 'decision': decision, 'labels': _labels(after), 'state': after.get('state'), 'saved': True}
+
+
+def show_and_tell(person, args):
+    """POST /api/show {repo, number}: James approves a core feature after its show-and-tell. Without a switch it is
+    closed (approved: Shipping until released). With one it stays open with label switch-default: the builder removes
+    the switch / turns it on by default, merges, and closes it."""
+    _, acct = account_for(person)
+    full, number = _target(args)
+    login = acct.get('login') or ''
+    base = policy_base()
+    if not is_james(login, base):
+        raise Problem(403, JAMES_RULE['show'], 'not_james')
+    cur = _current(acct, full, number)
+    names = _labels(cur)
+    if SHOW_LABEL not in names:
+        raise Problem(409, 'This is not waiting for show-and-tell. Refresh to see the latest.')
+    rows = _issue_comments(acct, full, number, cur.get('comments') or 0)
+    said = [b for w, b in _comment_rows(rows) if w.lower() == BUILDER]
+    sw, how = switch_info(said, cur.get('body'))
+    switched = bool(sw or how)
+    body = f'Show-and-tell: approved \u2014 @{login}' + ('\n\nBuilder: remove the switch (on for everyone by default), merge, then close this issue.' if switched else '')
+    gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
+    _add_label(acct, full, number, APPROVED_LABEL)
+    if switched:
+        _add_label(acct, full, number, DEFAULT_LABEL)
+    _drop_label(acct, full, number, SHOW_LABEL)
+    if not switched:
+        _close(acct, full, number)
+    after = _current(acct, full, number)
+    with LOCK:
+        _ship.clear()
+    return {'id': f'{full}#{number}', 'labels': _labels(after), 'state': after.get('state'), 'switch_default': switched, 'saved': True}
+
+
+# ---------- 0.18 goal status: a GitHub comment whose first line is 'Status: green|yellow|red', then the text ----------
+STATUS_LINE = re.compile(r'^[ \t>*_]*status[*_]*\s*:\s*[*_]*(green|yellow|red)\b[*_]*[ \t.]*(?:\n|$)', re.I)
+STATUS_WORDS = {'green': 'On track', 'yellow': 'At risk', 'red': 'Blocked'}
+STATUS_STALE = 7 * 86400
+
+
+def status_of(rows, base=None):
+    """[(login, body, created_at)] oldest first -> status history, newest first: {color, word, text, by, by_person, at}."""
+    base = base or policy_base()
+    names = display_names(base)
+    out = []
+    for who, body, at in rows or []:
+        m = STATUS_LINE.match(body or '')
+        if not m:
+            continue
+        color = m.group(1).lower()
+        text = (body or '')[m.end():].strip()
+        out.append({'color': color, 'word': STATUS_WORDS[color], 'text': _plain(text, 600), 'by': who,
+                    'by_name': names.get((who or '').lower(), who), 'by_person': person_of(who, base), 'at': at})
+    out.reverse()
+    return out
+
+
+def latest_status(rows, base=None, now=None):
+    h = status_of(rows, base)
+    if not h:
+        return None
+    s = dict(h[0])
+    t = _ts(s.get('at')) if isinstance(s.get('at'), str) else None
+    s['stale'] = bool(t) and (now or time.time()) - t > STATUS_STALE
+    return s
+
+
+def goal_updaters_rule(assignees, base=None):
+    base = base or policy_base()
+    return 'Only the goal\u2019s owners or James update this.'
+
+
+def can_update_goal(login, assignees, base=None):
+    base = base or policy_base()
+    me = person_of(login, base).lower()
+    return bool(login) and (me in {person_of(a, base).lower() for a in assignees or []} or me in james_people(base))
+
+
+def goal_status_set(person, args, agent=False):
+    """POST /api/goal/status {repo, number, color green|yellow|red, text}; MCP goal_status_set. The goal's owners or
+    James (an agent posts for its own person, who must be one of them)."""
+    _, acct = account_for(person, agent)
+    full, number = _target(args)
+    login = acct.get('login') or ''
+    base = policy_base()
+    color = str(args.get('color') or '').strip().lower()
+    if color not in STATUS_WORDS:
+        raise Problem(400, 'color must be green, yellow or red.')
+    text = _text(args.get('text'), 'Status text', 3, 600)
+    cur = _current(acct, full, number)
+    if 'goal' not in _labels(cur):
+        raise Problem(409, 'Only goals have a status.', 'not_goal')
+    assignees = [a.get('login') for a in cur.get('assignees') or [] if isinstance(a, dict)]
+    if not can_update_goal(login, assignees, base):
+        raise Problem(403, goal_updaters_rule(assignees, base), 'not_goal_owner')
+    gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': f'Status: {color}\n\n{text}'})
+    _forget(acct['token'])
+    return {'id': f'{full}#{number}', 'saved': True, 'status': {'color': color, 'word': STATUS_WORDS[color], 'text': text,
+            'by': login, 'by_person': person_of(login, base), 'at': datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'), 'stale': False}}
+
+
+def goal_status_get(person, args, agent=False):
+    """GET /api/goal/status?repo=&number=; MCP goal_status_get: the latest status and the whole history (newest first)."""
+    _, acct = account_for(person, agent)
+    full, number = _target(args)
+    cur = _current(acct, full, number)
+    if 'goal' not in _labels(cur):
+        raise Problem(409, 'Only goals have a status.', 'not_goal')
+    rows = []
+    count = cur.get('comments') or 0
+    for page in range(1, max(1, -(-int(count) // 100)) + 1) if count else []:
+        got = gh(acct['token'], 'GET', f'/repos/{full}/issues/{number}/comments?per_page=100&page={page}', cache=False)
+        rows += got if isinstance(got, list) else []
+    hist = status_of([(((c.get('user') or {}).get('login') or ''), c.get('body') or '', c.get('created_at')) for c in rows if isinstance(c, dict)])
+    latest = latest_status([(((c.get('user') or {}).get('login') or ''), c.get('body') or '', c.get('created_at')) for c in rows if isinstance(c, dict)])
+    assignees = [a.get('login') for a in cur.get('assignees') or [] if isinstance(a, dict)]
+    return {'id': f'{full}#{number}', 'title': cur.get('title'), 'owners': [person_of(a) for a in assignees], 'latest': latest, 'history': hist}
 
 
 def new_item(person, args):
@@ -2914,8 +3258,10 @@ TOOLS = [
     {'name': 'try_set', 'description': "Switch 'Try it' on or off for one item (repo owner/name + number) only when a human asked; pass their words as owner_request. Mock-up.", 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'number': {'type': 'integer'}, 'on': {'type': 'boolean'}, **ASKED}, 'required': ['repo', 'number', 'on', 'owner_request']}},
     {'name': 'board_flow', 'description': "One item's own assembly line from its GitHub label timeline: seconds spent in Queued, Building and Review, closed time, kick-backs (ready-to-test removed without a close), current stage.", 'inputSchema': {'type': 'object', 'properties': ISSUE}},
     {'name': 'targets_set', 'description': "Change one step's target time for everyone (view goals|bugs, step queued|building|ai|review|done (ai = AI review, review = Human review), seconds or '4h'/'3d') only when a human asked; pass their words as owner_request. Current targets: GET /api/policy.", 'inputSchema': {'type': 'object', 'properties': {'view': {'type': 'string', 'enum': ['goals', 'features', 'bugs']}, 'step': {'type': 'string', 'enum': ['queued', 'building', 'ai', 'review', 'done']}, 'seconds': {'description': 'Seconds (60 to 31536000) or a string like 30m, 4h, 3d, 2w.', 'type': ['integer', 'string']}, **ASKED}, 'required': ['view', 'step', 'seconds', 'owner_request']}},
-    {'name': 'ai_review_pass', 'description': "AI REVIEW (agents only). The builder hands work over with label ai-review. If you are the opener's agent (a goal's owner's agent; for openers outside the roster any team agent), check the build matches the issue's scope (for a goal: that this slice moves its next done-list item forward), then pass it on to Human review (ai-review -> ready-to-test) with a short note saying what you checked and what a human should try (write the steps after 'Human test:'). Bugs and features then get Works / Doesn't work from someone other than the opener; a goal slice gets Keep going / Change direction from the goal's owners or James, who also tick finished done-list items. Only James closes a goal.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What you checked, and what the human reviewer should try.'}}, 'required': ['note']}},
+    {'name': 'ai_review_pass', 'description': "AI REVIEW (agents only). The builder hands work over with label ai-review. If you are the opener's agent (a goal's owner's agent; for openers outside the roster any team agent), check the build matches the issue's scope (for a goal: that this slice moves its next done-list item forward), then pass it on to Human review (ai-review -> ready-to-test) with a short note saying what you checked and what a human should try (write the steps after 'Human test:'). Bugs and features then get Works / Doesn't work from whoever filed them; core features then go to James's show-and-tell. Goals are human-led and never built.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What you checked, and what the human reviewer should try.'}}, 'required': ['note']}},
     {'name': 'ai_review_fail', 'description': "AI REVIEW (agents only). The build does not match the issue's scope (for a goal: the slice does not move a done-list item forward): send it back to Building (removes ai-review, adds building) with a short note saying what is missing or wrong; the builder picks it up again. Counted on the AI review -> Building return arrow.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What is missing or wrong, for the builder.'}}, 'required': ['note']}},
+    {'name': 'goal_status_set', 'description': "Post a goal's status for its owner (the goal's owners or James; an agent posts for its own person, who must be one of them). color green = On track, yellow = At risk, red = Blocked; text: one or two sentences. Saved as a GitHub comment whose first line is 'Status: <color>'.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'color': {'type': 'string', 'enum': ['green', 'yellow', 'red']}, 'text': {'type': 'string', 'minLength': 3, 'maxLength': 600}}, 'required': ['color', 'text']}},
+    {'name': 'goal_status_get', 'description': "A goal's latest status (color, words, text, who, when, stale after 7 days) and its whole status history, newest first.", 'inputSchema': {'type': 'object', 'properties': ISSUE}},
     {'name': 'board_reopen', 'description': 'Reopen a Bug when a human asked you to (pass their words). Goals are refused: only humans reopen goals.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, **ASKED}, 'required': ['owner_request']}},
 ]
 CALLS = {
@@ -2935,6 +3281,8 @@ CALLS = {
     'targets_set': lambda a: targets_set(None, a, agent=True),
     'ai_review_pass': lambda a: ai_review(a, True),
     'ai_review_fail': lambda a: ai_review(a, False),
+    'goal_status_set': lambda a: goal_status_set(None, a, agent=True),
+    'goal_status_get': lambda a: goal_status_get(None, a, agent=True),
 }
 
 
@@ -2949,7 +3297,8 @@ def rpc(msg):
             r = {'protocolVersion': '2025-06-18', 'capabilities': {'tools': {}}, 'serverInfo': {'name': APP_ID, 'version': VERSION},
                  'instructions': 'Tracker rules: agents may list, read, report bugs and comment. Never open, close or reopen goals on your own. A filed bug is ready to work. '
                                  'Line: Queued -> Building -> AI review (label ai-review) -> Human review (label ready-to-test) -> Done. '
-                                 "Bugs and features: Works / Doesn't work by someone other than the opener. Goals are long-running: each slice gets Keep going or Change direction from the goal's owners or James, and only James closes a goal once its done-list is ticked. "
+                                 "Bugs and features: Works / Doesn't work by whoever filed them. Core features (repos in /api/policy core_repos) wait for James (label james-approved) before building, and James approves them again after a show-and-tell. "
+                                 "After Works an item is Shipping until its merged change is in a release for everyone, then Done. Goals are human-led and never built: owners post status with goal_status_set; only James closes a goal. "
                                  "The builder hands over with ai-review; the opener's (or goal owner's) agent then calls ai_review_pass or ai_review_fail with a short note."}
         elif m == 'tools/list':
             r = {'tools': TOOLS}
@@ -3045,6 +3394,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, builder_status(seen=q.get('from') == 'builder'))
             if path == '/api/try':
                 return self.send(200, try_status(self.person()))
+            if path == '/api/goal/status':
+                return self.send(200, goal_status_get(self.person(), q))
             if path == '/api/policy':
                 return self.send(200, policy(self.person()))
             if path == '/api/device':
@@ -3110,7 +3461,9 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/new': lambda: new_item(who, body),
                 '/api/test/works': lambda: tested(who, body, True),
                 '/api/test/fails': lambda: tested(who, body, False),
-                '/api/goal/step': lambda: goal_step(who, body),
+                '/api/goal/status': lambda: goal_status_set(who, body),
+                '/api/james': lambda: james_decide(who, body),
+                '/api/show': lambda: show_and_tell(who, body),
                 '/api/onbox': lambda: on_box(who, body),
                 '/api/builder': lambda: builder_set(who, body),
                 '/api/try': lambda: try_set(who, body),

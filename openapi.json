@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "WizardOS Tracker",
-    "version": "0.17.1",
-    "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged. 0.13: two-step review (Queued → Building → AI review [label ai-review] → Human review [label ready-to-test] → Done; AI review is agents-only via MCP ai_review_pass / ai_review_fail; policy human_reviews 1|2) and Sign in with GitHub via the OAuth device flow (no client secret).",
+    "version": "0.18.0",
+    "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged. 0.13: two-step review (Queued \u2192 Building \u2192 AI review [label ai-review] \u2192 Human review [label ready-to-test] \u2192 Done; AI review is agents-only via MCP ai_review_pass / ai_review_fail; policy human_reviews 1|2) and Sign in with GitHub via the OAuth device flow (no client secret).",
     "contact": {
       "name": "WizardOS Tracker",
       "url": "https://github.com/humanitylabs-org/wizardos-tracker"
@@ -749,7 +749,7 @@
     },
     "/api/test/works": {
       "post": {
-        "summary": "Comment 'Tested: works — @login', remove ready-to-test, add approved. Does not close. 0.13 Human review: bugs = anyone but the opener; goals = goal owners (assignees) or James. Works counts toward policy human_reviews (1|2): returns reviews {done, need} and final; with 2, approved is added only after a second, different person (409 already_reviewed if you said Works already). Doesn't work goes back to Building (adds building). 409 reason ai_review while still in AI review. 0.17: goals never take Works / Doesn't work (409 reason goal): use /api/goal/step.",
+        "summary": "Comment 'Tested: works \u2014 @login', remove ready-to-test, add approved. Does not close. 0.13 Human review: bugs = anyone but the opener; goals = goal owners (assignees) or James. Works counts toward policy human_reviews (1|2): returns reviews {done, need} and final; with 2, approved is added only after a second, different person (409 already_reviewed if you said Works already). Doesn't work goes back to Building (adds building). 409 reason ai_review while still in AI review. 0.17: goals never take Works / Doesn't work (409 reason goal): use /api/goal/step.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -907,7 +907,7 @@
         ],
         "responses": {
           "200": {
-            "description": "items [{id, repo, author, state, wait (s opened→first building), build (s first building→first ready-to-test), review_rounds ([s] each ready-to-test stint that ended in a close or kick-back), total (s opened→closed), tries (times labelled ready-to-test), kicks (ready-to-test removed without close/approved within 10 min), kick_to_done (s first kick-back→closed), waiting_for (s since ready-to-test, open items only), stage (queued|building|review|done), staged, opened_at, closed_at}], done, counted, total, computed_at, summary {wait_before_build, build_time, waiting_for_human, waiting_longest, tries_per_item, kicked_back, done, items, line {queued|building|review|done: {n, avg, box [min,p25,median,p75,max] or null under 3 points}, kick {reviewed, kicked, rate, per_item, to_done}}}. Null means no data yet. The view re-aggregates items after its author/repo filters with the same maths. 0.9: summary.line.<stage> also carries median, p25, p75 (p25/p75 from 3 data points)."
+            "description": "items [{id, repo, author, state, wait (s opened\u2192first building), build (s first building\u2192first ready-to-test), review_rounds ([s] each ready-to-test stint that ended in a close or kick-back), total (s opened\u2192closed), tries (times labelled ready-to-test), kicks (ready-to-test removed without close/approved within 10 min), kick_to_done (s first kick-back\u2192closed), waiting_for (s since ready-to-test, open items only), stage (queued|building|review|done), staged, opened_at, closed_at}], done, counted, total, computed_at, summary {wait_before_build, build_time, waiting_for_human, waiting_longest, tries_per_item, kicked_back, done, items, line {queued|building|review|done: {n, avg, box [min,p25,median,p75,max] or null under 3 points}, kick {reviewed, kicked, rate, per_item, to_done}}}. Null means no data yet. The view re-aggregates items after its author/repo filters with the same maths. 0.9: summary.line.<stage> also carries median, p25, p75 (p25/p75 from 3 data points)."
           }
         }
       }
@@ -1338,7 +1338,7 @@
                 "properties": {
                   "client_id": {
                     "type": "string",
-                    "description": "Like Ov23li… or Iv1.…"
+                    "description": "Like Ov23li\u2026 or Iv1.\u2026"
                   }
                 },
                 "required": [
@@ -1394,20 +1394,82 @@
         }
       }
     },
-    "/api/goal/step": {
+    "/api/goal/status": {
+      "get": {
+        "summary": "A goal's latest status and history (newest first).",
+        "parameters": [
+          {
+            "name": "repo",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "number",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "latest, history"
+          }
+        }
+      },
       "post": {
-        "summary": "Goal slice human step (0.17): the goal's owners or James. Keep going or Change direction (note required), both back to Building; ticks the named done-list items.",
+        "summary": "Post a goal status (owners or James): a comment whose first line is 'Status: <color>'.",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
+                "properties": {
+                  "repo": {
+                    "type": "string"
+                  },
+                  "number": {
+                    "type": "integer"
+                  },
+                  "color": {
+                    "type": "string",
+                    "enum": [
+                      "green",
+                      "yellow",
+                      "red"
+                    ]
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                },
                 "required": [
                   "repo",
                   "number",
-                  "decision"
-                ],
+                  "color",
+                  "text"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved"
+          }
+        }
+      }
+    },
+    "/api/james": {
+      "post": {
+        "summary": "James approves (label james-approved) or declines (closed, not planned) a core feature.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
                 "properties": {
                   "repo": {
                     "type": "string"
@@ -1418,19 +1480,12 @@
                   "decision": {
                     "type": "string",
                     "enum": [
-                      "keep",
-                      "redirect"
+                      "approve",
+                      "decline"
                     ]
                   },
                   "note": {
-                    "type": "string",
-                    "maxLength": 4000
-                  },
-                  "done": {
-                    "type": "array",
-                    "items": {
-                      "type": "integer"
-                    }
+                    "type": "string"
                   }
                 }
               }
@@ -1439,16 +1494,34 @@
         },
         "responses": {
           "200": {
-            "description": "Saved; the goal is back in Building"
-          },
-          "400": {
-            "description": "Bad decision or a missing note"
-          },
-          "403": {
-            "description": "Only the goal owners or James"
-          },
-          "409": {
-            "description": "Not a goal, or no slice waiting"
+            "description": "Saved"
+          }
+        }
+      }
+    },
+    "/api/show": {
+      "post": {
+        "summary": "James approves a core feature's show-and-tell (approved; switch-default when it has a switch).",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "repo": {
+                    "type": "string"
+                  },
+                  "number": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Saved"
           }
         }
       }

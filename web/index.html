@@ -18,7 +18,7 @@
   <div class="wz-app bd-app">
     <main class="wz-scroll bd-scroll" id="scroll">
       <!-- 0.12.2: tiny account control, top right -->
-      <p class="bd-acct" id="acct"><button type="button" class="bd-um-btn" id="um-btn" aria-label="Update manager" title="Update manager: WizardOS and every app, installed vs latest"><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M12 4v11m-4.5-4.5L12 15l4.5-4.5M5 19h14"/></svg><span>Update manager</span></button><span class="bd-fresh" id="fresh" aria-live="polite"></span><button type="button" class="bd-reload" id="reload" aria-label="Refresh now" title="Refresh now" hidden><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"/></svg></button><span id="acct-name" hidden></span> <button type="button" class="bd-acct-act" id="acct-act">Sign in</button> <button type="button" class="bd-acct-act" id="settings-btn" aria-haspopup="dialog">Settings</button></p>
+      <p class="bd-acct" id="acct"><span class="bd-fresh" id="fresh" aria-live="polite"></span><button type="button" class="bd-reload" id="reload" aria-label="Refresh now" title="Refresh now" hidden><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"/></svg></button><span id="acct-name" hidden></span> <button type="button" class="bd-acct-act" id="acct-act">Sign in</button> <button type="button" class="bd-acct-act" id="settings-btn" aria-haspopup="dialog">Settings</button></p>
       <!-- Not signed in: one card, one field. -->
       <section id="signin" class="wz-card bd-signin" hidden>
         <h1 class="bd-h1">Sign in with GitHub</h1>
@@ -53,7 +53,8 @@
         <div class="bd-head">
           <div class="bd-switch" role="tablist" aria-label="Show">
             <button type="button" role="tab" data-view="goals" aria-selected="true">Goals</button>
-            <button type="button" role="tab" data-view="features" aria-selected="false">Features</button>
+            <button type="button" role="tab" data-view="core" aria-selected="false">Core features</button>
+            <button type="button" role="tab" data-view="apps" aria-selected="false">App features</button>
             <button type="button" role="tab" data-view="bugs" aria-selected="false">Bugs</button>
           </div>
           <button type="button" class="bd-toggle" id="builder" role="switch" aria-checked="false" aria-label="Builder" aria-describedby="builder-state">
@@ -80,38 +81,16 @@
             </div>
           </div>
           <div class="bd-tools">
+            <button type="button" class="bd-tool" id="report-btn" hidden>Report a bug</button>
             <button type="button" class="bd-tool" id="filter-btn" aria-haspopup="dialog">Filter</button>
             <button type="button" class="bd-tool" id="sort-btn" aria-haspopup="menu">Sort: Oldest</button>
           </div>
           <p class="bd-filtered" id="filtered" hidden></p>
           <p class="bd-totals" id="totals" aria-live="polite"></p>
-        <section class="bd-sec" id="sec-test" hidden>
-          <h2 class="bd-sec-h">Human review <span class="bd-n" id="n-test"></span></h2>
-          <div class="bd-list" id="list-test"></div>
-        </section>
-        <section class="bd-sec" id="sec-airev" hidden>
-          <h2 class="bd-sec-h">AI review <span class="bd-n" id="n-airev"></span></h2>
-          <div class="bd-list rows" id="list-airev"></div>
-        </section>
-        <section class="bd-sec" id="sec-building" hidden>
-          <h2 class="bd-sec-h">Building <span class="bd-n" id="n-building"></span></h2>
-          <div class="bd-list rows" id="list-building"></div>
-        </section>
-        <section class="bd-sec" id="sec-queued" hidden>
-          <h2 class="bd-sec-h">Queued <span class="bd-n" id="n-queued"></span></h2>
-          <div class="bd-list rows" id="list-queued"></div>
-        </section>
-        <section class="bd-sec" id="sec-done" hidden>
-          <h2 class="bd-sec-h">Done <span class="bd-n" id="n-done"></span></h2>
-          <div class="bd-list rows" id="list-done"></div>
-        </section>
+        <!-- 0.18: one section per stage, built by app.js (Goals: one larger card per goal) -->
+        <div id="secs"></div>
         <p class="bd-empty" id="empty" hidden></p>
         </div>
-        <!-- 0.17.1 Update manager (its own view, opened from the header or Settings): this Wizard's WizardOS and every app with Update / Update all. -->
-        <section id="wizards" class="bd-wizards" hidden aria-labelledby="um-h">
-          <div class="bd-um-top"><button type="button" class="wz-button secondary bd-um-back" id="um-back">‹ Back</button><h1 class="bd-um-h" id="um-h">Update manager</h1></div>
-          <div id="um-body"></div>
-        </section>
       </div>
       <p id="loading" class="bd-empty">Loading…</p>
     </main>
@@ -143,10 +122,24 @@
       <div class="bd-chips" id="c-repo" role="group" aria-label="Repo"></div>
       <p class="bd-d-foot"><button type="button" class="wz-button secondary" id="filter-clear">Clear</button> <button type="button" class="wz-button" id="filter-done">Done</button></p>
     </dialog>
+    <dialog id="report" class="wz-sheet bd-report" aria-labelledby="report-h">
+      <h2 id="report-h">Report a bug</h2>
+      <p class="bd-why" id="report-warn" hidden></p>
+      <form id="report-form" class="bd-form bd-report-form" autocomplete="off">
+        <label class="bd-meta" for="report-repo">Where</label>
+        <select id="report-repo" class="wz-input" required></select>
+        <input id="report-title" class="wz-input" maxlength="200" minlength="3" required placeholder="What’s wrong, in a few words" aria-label="Title">
+        <textarea id="report-body" class="wz-input bd-area" rows="4" maxlength="8000" placeholder="What happened, and what you expected" aria-label="What happened"></textarea>
+        <p class="wz-status" id="report-status"></p>
+        <p class="bd-d-foot"><button type="button" class="wz-button secondary" id="report-cancel">Cancel</button> <button type="submit" class="wz-button" id="report-go">Report</button></p>
+      </form>
+    </dialog>
     <dialog id="settings" class="wz-sheet bd-settings" aria-labelledby="settings-h">
       <h2 id="settings-h">Tracker settings</h2>
-      <p class="bd-um-entry"><button type="button" class="wz-button secondary" id="settings-um">Update manager</button> <span class="bd-meta">WizardOS and every app: installed vs latest, Update</span></p>
-      <h3 class="bd-sec-h">Try changes <span class="bd-n" id="try-n"></span></h3>
+      <!-- 0.18: the Update manager lives here only (no separate view); cards show Update just in time -->
+      <h3 class="bd-sec-h">Updates</h3>
+      <div id="um-body"></div>
+      <h3 class="bd-sec-h bd-d-h">Try changes <span class="bd-n" id="try-n"></span></h3>
       <p class="bd-meta">Every switch for a change in Human review. The same switches sit on each card.</p>
       <div class="bd-list rows" id="try-list"></div>
       <p class="bd-meta bd-d-h" id="settings-ver"></p>

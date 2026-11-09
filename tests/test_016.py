@@ -197,7 +197,8 @@ class Steps(unittest.TestCase):
 
 class Rules(unittest.TestCase):
     def test_card_wording(self):
-        self.assertEqual(S.human_rule('bug', 'mistermizel', [], 'mistermizel'), (False, 'You filed this, so someone else tests it.'))
+        self.assertEqual(S.human_rule('bug', 'mistermizel', [], 'mistermizel'), (True, ''))   # 0.18: the filer tests
+        self.assertEqual(S.human_rule('bug', 'mistermizel', [], 'jdefleur'), (False, 'Only Miguel tests this: they filed it.'))
         ok, rule = S.human_rule('goal', 'jdefleur', ['JanMesaric'], 'mistermizel')
         self.assertFalse(ok)
         self.assertTrue(rule.endswith('review this goal.'), rule)
