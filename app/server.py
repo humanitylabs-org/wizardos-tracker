@@ -28,7 +28,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.16.2'
+VERSION = '0.16.3'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -790,7 +790,7 @@ def shape(node):
             'number': node['number'], 'title': node.get('title'), 'url': node.get('url'),
             'type': 'goal' if 'goal' in low else 'feature' if 'feature' in low else 'bug' if 'bug' in low else 'other',
             'state': (node.get('state') or '').lower(), 'state_reason': (node.get('stateReason') or '').lower() or None,
-            'accepted': 'accepted' in low, 'labels': labels, 'author': (node.get('author') or {}).get('login'),
+            'labels': labels, 'author': (node.get('author') or {}).get('login'),
             'created_at': node.get('createdAt'), 'updated_at': node.get('updatedAt'), 'closed_at': node.get('closedAt'),
             'comments': (node.get('comments') or {}).get('totalCount', 0),
             'tasks_done': sum(t['done'] for t in tasks), 'tasks_total': len(tasks),
@@ -836,8 +836,7 @@ def _merge_recent(token, items, f):
             continue  # search already has this change (or a newer one)
         fits = (r['state'] == f['state'] and (f['type'] == 'all' or r['type'] == f['type'])
                 and r['type'] in ('goal', 'bug')
-                and (r['repo'].lower() == f['repo'].lower() if f['repo'] else r['repo'].lower().startswith(f['org'].lower() + '/'))
-                and (r['type'] != 'bug' or f['accepted'] == 'any' or r['accepted'] == (f['accepted'] == 'yes')))
+                and (r['repo'].lower() == f['repo'].lower() if f['repo'] else r['repo'].lower().startswith(f['org'].lower() + '/')))
         if fits:
             by_id[r['id']] = r
         else:
@@ -851,20 +850,16 @@ def board_list(person=None, args=None, agent=False):
     org = args.get('org') or settings()['org']
     if not isinstance(org, str) or not NAME.match(org):
         raise Problem(400, 'Use a GitHub organisation or user name.')
-    kind, state, accepted = args.get('type') or 'all', args.get('state') or 'open', args.get('accepted') or 'any'
-    if kind not in ('all', 'goal', 'bug') or state not in ('open', 'closed') or accepted not in ('any', 'yes', 'no'):
-        raise Problem(400, 'Filters: type all|goal|bug, state open|closed, accepted any|yes|no.')
+    kind, state = args.get('type') or 'all', args.get('state') or 'open'
+    if kind not in ('all', 'goal', 'bug') or state not in ('open', 'closed'):
+        raise Problem(400, 'Filters: type all|goal|bug, state open|closed.')
     repo = _repo(org, args.get('repo'))
     q = f"{'repo:' + repo if repo else 'org:' + org} is:issue is:{state} label:{ {'all': 'goal,bug', 'goal': 'goal', 'bug': 'bug'}[kind] } sort:updated-desc"
-    if kind == 'bug' and accepted != 'any':
-        q += ' label:accepted' if accepted == 'yes' else ' -label:accepted'
     if args.get('refresh'):
         _forget(acct['token'])
     found = ((graphql(acct['token'], SEARCH, {'q': q}).get('data') or {}).get('search') or {})
     items = [shape(n) for n in found.get('nodes') or [] if n and n.get('number')]
-    items = _merge_recent(acct['token'], items, {'org': org, 'repo': repo, 'type': kind, 'state': state, 'accepted': accepted})
-    if kind == 'all' and accepted != 'any':
-        items = [i for i in items if i['type'] != 'bug' or i['accepted'] == (accepted == 'yes')]
+    items = _merge_recent(acct['token'], items, {'org': org, 'repo': repo, 'type': kind, 'state': state})
     for i in items:
         i.pop('prs', None)
     total = found.get('issueCount', len(items))
@@ -987,21 +982,6 @@ def report_feature(person, args, agent=False):
 
 def _current(acct, full, number):
     return gh(acct['token'], 'GET', f'/repos/{full}/issues/{number}', cache=False)
-
-
-def accept_bug(person, args, agent=False):
-    _owner_request(args, agent, 'accept bugs')
-    _, acct = account_for(person, agent)
-    full, number = _target(args)
-    names = [l.get('name', '').lower() for l in _current(acct, full, number).get('labels') or []]
-    if 'bug' not in names:
-        raise Problem(400, 'Only bugs can be accepted.')
-    if 'accepted' not in names:
-        gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/labels', {'labels': ['accepted']})
-    out = _read_issue(acct, full, number, True)
-    if not out['accepted']:
-        raise Problem(403, 'GitHub did not add the accepted label (write access to this repo is needed).')
-    return out
 
 
 def set_state(person, args, state, agent=False):
@@ -2739,7 +2719,7 @@ ASKED = {'owner_request': {'type': 'string', 'description': "Required: the human
 TOOLS = [
     {'name': 'board_list', 'description': 'List Goals and Bugs on the board (GitHub issues labelled goal or bug in the org). Goals include done-list progress and open linked PR counts.', 'inputSchema': {'type': 'object', 'properties': FILTERS}},
     {'name': 'board_get', 'description': 'Read one Goal or Bug: body, done-list, linked PRs and recent comments.', 'inputSchema': {'type': 'object', 'properties': ISSUE}},
-    {'name': 'board_report_bug', 'description': 'Report a small, specific bug (label bug). Anyone on the team or their agent may report one; it is ready to work as soon as it is filed (no acceptance step).', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What happens, what should happen, how to see it.'}}, 'required': ['repo', 'title']}},
+    {'name': 'board_report_bug', 'description': 'Report a small, specific bug (label bug). Anyone on the team or their agent may report one; it is ready to work as soon as it is filed.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What happens, what should happen, how to see it.'}}, 'required': ['repo', 'title']}},
     {'name': 'board_report_feature', 'description': 'Add a feature or improvement to try (label feature). Anyone on the team may add one. The builder builds it behind an off-by-default switch; the team tries it with Try it in the Tracker and keeps or drops it.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What it should do, where, and why it is better.'}}, 'required': ['repo', 'title']}},
     {'name': 'board_comment', 'description': 'Add a comment to a Goal or Bug.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'body': {'type': 'string', 'minLength': 1}}, 'required': ['body']}},
     {'name': 'board_add_goal', 'description': 'HUMANS OPEN GOALS. Use only when a human explicitly asked you to add this goal for them; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string'}, 'done': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Done-list lines (1-20).'}, 'body': {'type': 'string'}, **ASKED}, 'required': ['repo', 'title', 'done', 'owner_request']}},
@@ -2783,7 +2763,7 @@ def rpc(msg):
     try:
         if m == 'initialize':
             r = {'protocolVersion': '2025-06-18', 'capabilities': {'tools': {}}, 'serverInfo': {'name': APP_ID, 'version': VERSION},
-                 'instructions': 'Tracker rules: agents may list, read, report bugs and comment. Never open, close or reopen goals on your own. Bugs need no acceptance: a filed bug is ready to work. '
+                 'instructions': 'Tracker rules: agents may list, read, report bugs and comment. Never open, close or reopen goals on your own. A filed bug is ready to work. '
                                  'Line: Queued -> Building -> AI review (label ai-review) -> Human review (label ready-to-test) -> Done. '
                                  "The builder hands over with ai-review; the opener's (or goal owner's) agent then calls ai_review_pass or ai_review_fail with a short note."}
         elif m == 'tools/list':
@@ -2938,7 +2918,6 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/goals': lambda: add_goal(who, body),
                 '/api/bugs': lambda: report_bug(who, body),
                 '/api/features': lambda: report_feature(who, body),
-                '/api/issue/accept': lambda: accept_bug(who, body),
                 '/api/issue/close': lambda: set_state(who, body, 'closed'),
                 '/api/issue/reopen': lambda: set_state(who, body, 'open'),
                 '/api/issue/task': lambda: set_task(who, body),

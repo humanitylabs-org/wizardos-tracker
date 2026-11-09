@@ -41,6 +41,15 @@ class NoAcceptance(unittest.TestCase):
             self.assertNotIn('`accepted` any|yes|no', text, name)
             self.assertNotIn('after a human accepts it', text, name)
 
+    def test_no_accept_route_or_wording(self):
+        src = (ROOT / 'app/server.py').read_text()
+        self.assertNotIn('/api/issue/accept', src)
+        self.assertNotIn('def accept_bug', src)
+        self.assertNotIn('/api/issue/accept', json.loads((ROOT / 'openapi.json').read_text())['paths'])
+        skill = (ROOT / 'skill/SKILL.md').read_text().lower()
+        self.assertNotIn('accept', skill)
+        self.assertNotIn('In the app (0.7', (ROOT / 'wizard.md').read_text())
+
     def test_versions_agree(self):
         v = S.VERSION
         self.assertEqual(json.loads((ROOT / 'runtipi/config.json').read_text())['version'], v)
