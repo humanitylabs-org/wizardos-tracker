@@ -227,6 +227,7 @@ sw.addEventListener('click', e => {
   const b = e.target.closest('[data-view]');
   if (!b || b.dataset.view === view) return;
   view = b.dataset.view;
+  for (const k of Object.keys(stage)) stage[k] = null;   // 0.15: a new tab always starts unfiltered (all stages)
   for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x === b));
   hold(false);
   if (cache[view]) render(cache[view]);
@@ -662,7 +663,9 @@ function tryWhy(i) {
 // can't be flipped from here, so both get a plain line saying how to try it instead of a dead switch.
 const LIVE_NOTE = 'Live once your Wizard has the update';
 function howToTry(i) {
-  return i.switch_how ? `Turn on: ${i.switch_how}, once your Wizard has the update` : LIVE_NOTE;
+  const need = 'still needs a person to test it: Works or Doesn’t work.';
+  return i.switch_how ? `Turn on: ${i.switch_how}, once your Wizard has the update. It ${need}`
+    : `${LIVE_NOTE}. No switch to try, but it ${need}`;
 }
 function trySwitch(i) {
   const live = i.group === 'test' || (i.group == null && (i.labels || []).some(l => String(l).toLowerCase() === 'ready-to-test'));  // Human review only
