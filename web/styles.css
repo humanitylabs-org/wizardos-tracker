@@ -610,7 +610,6 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
 .bd-act .bd-why-s { flex: 1 1 100%; }
 .bd-act .bd-mini[aria-disabled="true"].bd-mini-go { border-color: var(--line-2); }
 .bd-icard .bd-fail, .bd-goal .bd-fail { display: grid; gap: 8px; }
-.bd-report-form { display: grid; gap: 8px; }
 
 /* 0.18 Goals: larger cards with a status light */
 .bd-goals { display: grid; gap: var(--wz-space-3); }
@@ -678,3 +677,30 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
   box-shadow: 0 4px 16px color-mix(in srgb, var(--ink) 18%, transparent); }
 .bd-newer[hidden] { display: none; }
 .bd-newer-go { background: none; border: 0; padding: 0; color: inherit; font: inherit; font-weight: 650; text-decoration: underline; cursor: pointer; }
+
+/* 0.20 Report or request: one primary button on top, and the WizardOS Reporter form (three short steps) */
+.bd-top { display: flex; align-items: center; gap: var(--wz-space-3); margin: 0 0 var(--wz-space-3); }
+.bd-top .bd-acct { margin: 0 0 0 auto; }
+.bd-rr { min-height: 40px; padding: 0 18px; font-weight: 650; }
+.bd-report { width: min(560px, calc(100vw - 24px)); }
+.rr { display: grid; gap: var(--wz-space-3); }
+.rr h2 { margin: 0; }
+.rr-step { display: grid; gap: 8px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.rr-step[hidden], .rr-picks[hidden], .rr-sub[hidden], .rr-warn[hidden], .rr[hidden] { display: none; }
+.rr-q { padding: 0; margin: 0 0 2px; font-size: var(--wz-text-md); font-weight: 650; color: var(--ink); }
+.rr-sub { margin: 4px 0 0; font-size: var(--wz-text-xs, .75rem); color: var(--ink-3); text-transform: uppercase; letter-spacing: .04em; }
+.rr-kinds { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.rr-picks { display: flex; flex-wrap: wrap; gap: 6px; }
+.rr-pick { min-height: 36px; padding: 0 14px; border: 1px solid var(--line-2); border-radius: var(--r-pill); background: none; color: var(--ink); font: inherit; font-size: var(--wz-text-sm); cursor: pointer; }
+.rr-kind { min-height: 52px; border-radius: var(--r-tile); font-size: var(--wz-text-md); font-weight: 600; }
+.rr-pick[aria-checked="true"] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+.rr-pick:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.rr-unsure .rr-pick { border-style: dashed; color: var(--ink-2); }
+.rr-unsure .rr-pick[aria-checked="true"] { border-style: solid; color: var(--on-accent); }
+.rr-text { height: auto; min-height: 120px; padding: 12px 14px; border-radius: var(--r-tile); line-height: 1.45; resize: vertical; font: inherit; }
+.rr-warn { margin: 0; padding: 10px 12px; border-radius: var(--r-tile); background: color-mix(in srgb, var(--warn, var(--accent)) 14%, transparent); color: var(--ink); font-size: var(--wz-text-sm); line-height: 1.4; }
+.rr-warn .bd-mini { margin-left: 4px; }
+.rr-auto { margin: 0; font-size: var(--wz-text-xs, .75rem); color: var(--ink-3); }
+.rr-foot { justify-content: flex-end; margin: 0; }
+.rr-landed { margin: 0; font-size: var(--wz-text-md); color: var(--ink); line-height: 1.45; }
+@media (max-width: 480px) { .rr-kinds { grid-template-columns: 1fr; } }

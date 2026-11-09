@@ -12,13 +12,17 @@
   <link rel="stylesheet" href="styles.css">
   <script defer src="/wizard-os-home/core/app-client.js"></script>
   <script defer src="wizard-sheet.js"></script>
+  <script defer src="report.js"></script>
   <script defer src="app.js"></script>
 </head>
 <body>
   <div class="wz-app bd-app">
     <main class="wz-scroll bd-scroll" id="scroll">
-      <!-- 0.12.2: tiny account control, top right -->
+      <!-- 0.20: one primary 'Report or request' at the very top (left); the tiny account control stays top right -->
+      <header class="bd-top">
+      <button type="button" class="wz-button bd-rr" id="report-open" aria-haspopup="dialog" hidden>Report or request</button>
       <p class="bd-acct" id="acct"><span class="bd-fresh" id="fresh" aria-live="polite"></span><button type="button" class="bd-reload" id="reload" aria-label="Refresh now" title="Refresh now" hidden><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"/></svg></button><span id="acct-name" hidden></span> <button type="button" class="bd-acct-act" id="acct-act">Sign in</button> <button type="button" class="bd-acct-act" id="settings-btn" aria-haspopup="dialog">Settings</button></p>
+      </header>
       <!-- Not signed in: one card, one field. -->
       <section id="signin" class="wz-card bd-signin" hidden>
         <h1 class="bd-h1">Sign in with GitHub</h1>
@@ -85,7 +89,6 @@
             </div>
           </div>
           <div class="bd-tools">
-            <button type="button" class="bd-tool" id="report-btn" hidden>Report a bug</button>
             <button type="button" class="bd-tool" id="filter-btn" aria-haspopup="dialog">Filter</button>
             <button type="button" class="bd-tool" id="sort-btn" aria-haspopup="menu">Sort: Your turn first</button>
           </div>
@@ -128,17 +131,36 @@
       <div class="bd-chips" id="c-repo" role="group" aria-label="Repo"></div>
       <p class="bd-d-foot"><button type="button" class="wz-button secondary" id="filter-clear">Clear</button> <button type="button" class="wz-button" id="filter-done">Done</button></p>
     </dialog>
+    <!-- 0.20 WizardOS Reporter (web/report.js + app/report.py + /api/report): one short form, three steps -->
     <dialog id="report" class="wz-sheet bd-report" aria-labelledby="report-h">
-      <h2 id="report-h">Report a bug</h2>
-      <p class="bd-why" id="report-warn" hidden></p>
-      <form id="report-form" class="bd-form bd-report-form" autocomplete="off">
-        <label class="bd-meta" for="report-repo">Where</label>
-        <select id="report-repo" class="wz-input" required></select>
-        <input id="report-title" class="wz-input" maxlength="200" minlength="3" required placeholder="What’s wrong, in a few words" aria-label="Title">
-        <textarea id="report-body" class="wz-input bd-area" rows="4" maxlength="8000" placeholder="What happened, and what you expected" aria-label="What happened"></textarea>
-        <p class="wz-status" id="report-status"></p>
-        <p class="bd-d-foot"><button type="button" class="wz-button secondary" id="report-cancel">Cancel</button> <button type="submit" class="wz-button" id="report-go">Report</button></p>
+      <form id="rr-form" class="rr" autocomplete="off" novalidate>
+        <h2 id="report-h">Report or request</h2>
+        <fieldset class="rr-step" id="rr-s1">
+          <legend class="rr-q">What’s up?</legend>
+          <div class="rr-kinds" id="rr-kinds" role="radiogroup" aria-label="What’s up?"></div>
+        </fieldset>
+        <fieldset class="rr-step" id="rr-s2" hidden>
+          <legend class="rr-q">What’s it about?</legend>
+          <p class="rr-sub">WizardOS</p>
+          <div class="rr-picks" id="rr-core" role="radiogroup" aria-label="WizardOS"></div>
+          <p class="rr-sub" id="rr-apps-h" hidden>Your apps</p>
+          <div class="rr-picks" id="rr-apps" role="radiogroup" aria-label="Your apps" hidden></div>
+          <div class="rr-picks rr-unsure" id="rr-unsure"></div>
+        </fieldset>
+        <fieldset class="rr-step" id="rr-s3" hidden>
+          <legend class="rr-q" id="rr-ask">What happened, and what should happen?</legend>
+          <p class="rr-warn" id="rr-warn" hidden></p>
+          <textarea id="rr-text" class="wz-input rr-text" rows="5" maxlength="8000" aria-labelledby="rr-ask"></textarea>
+          <p class="rr-auto" id="rr-auto"></p>
+        </fieldset>
+        <p class="wz-status" id="rr-status" role="status" aria-live="polite"></p>
+        <p class="bd-d-foot rr-foot"><button type="button" class="wz-button secondary" id="rr-cancel">Cancel</button> <button type="submit" class="wz-button" id="rr-go" disabled>Send</button></p>
       </form>
+      <div class="rr rr-done" id="rr-done" hidden>
+        <h2>Thanks</h2>
+        <p class="rr-landed" id="rr-landed" role="status"></p>
+        <p class="bd-d-foot"><a class="bd-link" id="rr-link" href="#" target="_blank" rel="noopener noreferrer">Open on GitHub ↗</a> <button type="button" class="wz-button" id="rr-close">Done</button></p>
+      </div>
     </dialog>
     <dialog id="settings" class="wz-sheet bd-settings" aria-labelledby="settings-h">
       <h2 id="settings-h">Tracker settings</h2>

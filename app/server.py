@@ -23,12 +23,17 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode, urlsplit
 
+import sys
+if '__file__' in globals():
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+import report as reporter  # noqa: E402  0.20: the 'Report or request' form (its own module, a future standalone app)
+
 ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Path(os.environ.get('APP_ROOT', '.')).resolve()
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.19.1'
+VERSION = '0.20.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -2065,6 +2070,8 @@ def board_split(person, args):
             extra = {'can_james': james, 'james_rule': '' if james else JAMES_RULE['show'], 'turn': james}
         elif group == 'shipping':
             extra = {'delivers_ship': True}
+            if cat == 'bug':
+                extra['checked'] = checked_of(n, base)
         elif group == 'queued':
             extra = {'wait_reason': queue_reason(repo)}
         if cat == 'bug' and group in ('airev', 'test'):   # 0.19: bugs are merged (on) before review: already shipping
@@ -2307,7 +2314,7 @@ def item_flow(person, args, agent=False):
     return out
 
 
-DONE_FIELDS = HEAVY_FIELDS + ' closedAt stateReason'
+DONE_FIELDS = HEAVY_FIELDS + ' closedAt stateReason closer: timelineItems(itemTypes: [CLOSED_EVENT], last: 1) { nodes { ... on ClosedEvent { actor { login } } } }'
 DONE_PAGE = 'query($q: String!, $after: String) { ' + _PAGE % (40, DONE_FIELDS) + ' }'
 
 
@@ -2352,6 +2359,8 @@ def done_list(person, args):
                     mine=same_person(author, login, base), opener=person_of(author, base), ship=sh,
                     created_at=n.get('createdAt'), closed_at=n.get('closedAt'), state='closed',
                     state_reason=(n.get('stateReason') or '').lower() or None, labels=labels)
+        if cat == 'bug':
+            card['checked'] = checked_of(n, base)   # 0.20: Checked by <person> / (no problems in 7 days)
         if cat == 'bug' and card['group'] == 'shipping' and card['state_reason'] != 'not_planned':
             card['can_fail'] = human_rule('bug', author, [], login, base)[0]   # 0.19: Doesn't work reopens it
         items.append(card)
@@ -2418,10 +2427,10 @@ def _since_stats(out):
 # person (a person and their own agents count as one person: nobody reviews what they or their agent opened).
 POLICY_DEFAULT = {
     'team': [
-        {'name': 'Miguel', 'logins': ['mistermizel'], 'agents': [{'login': 'oscarhenrycollins', 'name': 'Oscar'}]},
-        {'name': 'James', 'logins': ['jdefleur'], 'agents': [{'login': 'defleur-agents', 'name': 'Archimedes'}]},
-        {'name': 'Jan', 'logins': ['JanMesaric'], 'agents': []},
-        {'name': 'Robert', 'logins': ['hacalastudio'], 'agents': []},
+        {'name': 'Miguel', 'logins': ['mistermizel'], 'agents': [{'login': 'oscarhenrycollins', 'name': 'Oscar'}], 'pronoun': 'he'},
+        {'name': 'James', 'logins': ['jdefleur'], 'agents': [{'login': 'defleur-agents', 'name': 'Archimedes'}], 'pronoun': 'he'},
+        {'name': 'Jan', 'logins': ['JanMesaric'], 'agents': [], 'pronoun': 'he'},
+        {'name': 'Robert', 'logins': ['hacalastudio'], 'agents': [], 'pronoun': 'he'},
     ],
     'builder': {'name': 'WizardOS Builder', 'logins': [BUILDER]},
     # Who may open and close items in each view: a list of team names, or "team" for everyone on it.
@@ -2489,7 +2498,9 @@ def _team_entry(t):
         return None
     logins = [x for x in t.get('logins') or [] if isinstance(x, str) and NAME.match(x)]
     agents = [a for a in t.get('agents') or [] if isinstance(a, dict) and isinstance(a.get('login'), str) and NAME.match(a['login'])]
-    return {'name': t['name'][:40], 'logins': logins, 'agents': [{'login': a['login'], 'name': str(a.get('name') or '')[:40]} for a in agents]}
+    pro = t.get('pronoun') if t.get('pronoun') in PRONOUN_POSS else 'they'
+    return {'name': t['name'][:40], 'logins': logins, 'agents': [{'login': a['login'], 'name': str(a.get('name') or '')[:40]} for a in agents],
+            'pronoun': pro}
 
 
 def _since(v):
@@ -2730,9 +2741,22 @@ def human_rule(kind, opener, assignees, me, base=None):
     who = person_of(opener, base)
     if not any(t['name'].lower() == who.lower() for t in base['team']):
         return True, ''
+    # 0.20: plain words. 'James checks this one (he filed it)'; an agent's item names its person ('his agent filed it').
+    he = pronoun_of(who, base)
     if filed_by_agent(opener, base):   # 0.19 (wizardos-tracker#31): an agent's items go to its person
-        return False, f'Only {who} tests this: their agent filed it.'
-    return False, f'Only {who} tests this: they filed it.'
+        return False, f'{who} checks this one ({PRONOUN_POSS.get(he, "their")} agent filed it)'
+    return False, f'{who} checks this one ({he} filed it)'
+
+
+PRONOUN_POSS = {'he': 'his', 'she': 'her', 'they': 'their'}
+
+
+def pronoun_of(name, base=None):
+    """0.20: the roster's pronoun for a team member (policy team[].pronoun: he, she or they; default they)."""
+    for t in (base or policy_base())['team']:
+        if t['name'].lower() == (name or '').lower():
+            return t.get('pronoun') or 'they'
+    return 'they'
 
 
 def filed_by_agent(login, base=None):
@@ -3111,6 +3135,31 @@ def _close(acct, full, number, reason='completed'):
     gh(acct['token'], 'PATCH', f'/repos/{full}/issues/{number}', {'state': 'closed', 'state_reason': reason})
 
 
+WORKS_BY = re.compile(r"^\s*Tested:\s*works\b.*?@([A-Za-z0-9-]+)", re.I | re.S)
+
+
+def checked_of(node, base=None):
+    """0.20 (Miguel): a bug's Human check, apart from its release. 'Checked by Miguel': the newest `Tested: works — @login`
+    comment (a person's agent counts as the person), else whoever closed it as fixed. Closed by the builder's 7-day sweep
+    (the builder account closed it): 'Checked (no problems in 7 days)'. None while the check is pending."""
+    base = base or policy_base()
+    for c in reversed(((node.get('comments') or {}).get('nodes')) or []):
+        m = WORKS_BY.match((c or {}).get('body') or '')
+        if m:
+            return {'by': person_of(m.group(1), base), 'text': 'Checked by ' + person_of(m.group(1), base)}
+    if not node.get('closedAt') or (node.get('stateReason') or '').lower() == 'not_planned':
+        return None
+    closer = next((((e or {}).get('actor') or {}).get('login') for e in reversed(((node.get('closer') or {}).get('nodes')) or []) if e), None)
+    bots = {x.lower() for x in base['builder']['logins']} | {BUILDER.lower()}
+    if closer and closer.lower() not in bots:
+        return {'by': person_of(closer, base), 'text': 'Checked by ' + person_of(closer, base)}
+    swept = any(((c or {}).get('author') or {}).get('login', '').lower() in bots and '7 days' in ((c or {}).get('body') or '')
+                for c in ((node.get('comments') or {}).get('nodes')) or [])
+    if swept or not closer:
+        return {'by': None, 'text': 'Checked (no problems in 7 days)'}
+    return {'by': None, 'text': 'Closed on merge (no human check)'}   # older items the builder's merge closed
+
+
 def tested(person, args, works):
     """Human review, by the filer (0.18). Works: a core feature goes on to James's show-and-tell (label show-and-tell);
     a bug or app feature is approved and closed (label approved): it then shows as Shipping until its merged change is
@@ -3375,6 +3424,57 @@ def new_item(person, args):
     return {'tab': tab, 'item': card, 'warning': made.get('warning')}
 
 
+# ---------- 0.20 Report or request (WizardOS Reporter: logic in app/report.py) ----------
+
+def report_next(kind, where, org, base=None):
+    """What happens next, in the owner's words, for the 'where it landed' line."""
+    base = base or policy_base()
+    repo = where['repo']
+    if kind == 'feature' and where['area'] == 'core':
+        names = [str(n) for n in base.get('core_approvers') or []] or ['James', 'Miguel']
+        return 'waits for ' + (' or '.join(names) if len(names) < 3 else ', '.join(names[:-1]) + ' or ' + names[-1]) + ' to approve'
+    if repo.split('/')[0].lower() != (org or '').lower():
+        return 'its maintainer picks it up'
+    if repo.split('/')[-1].lower() in BUILDER_SKIPS:
+        return 'Oscar builds this one'
+    return 'the builder starts soon'
+
+
+def report_options(person):
+    account_for(person)
+    return {**reporter.options(), 'core_repos': policy_base()['core_repos']}
+
+
+def report_file(person, args, agent=False):
+    """File one report: label bug or feature (core vs app follows from the repo), version and device filled in."""
+    _, acct = account_for(person, agent)
+    base, org = policy_base(), settings()['org']
+    try:
+        kind, text = reporter.compose(args)
+        where = reporter.resolve(args.get('about'), org, args.get('app_repo'), args.get('app_name'), text,
+                                 args.get('apps'), base['core_repos'])
+    except reporter.ReportError as e:
+        raise Problem(400, str(e)) from None
+    made = _create(acct, where['repo'], reporter.title_of(text), reporter.body_of(kind, text, args, where), reporter.LABELS[kind])
+    card = {'id': made['id'], 'repo': where['repo'], 'number': made['number'], 'title': made['title'], 'url': made['url'],
+            'author': made.get('author'), 'kind': kind, 'labels': made.get('labels') or []}
+    if made.get('labelled') and not hidden_repo(where['repo']):
+        try:
+            owner, name = where['repo'].split('/')
+            node = ((graphql(acct['token'], VIEW_ONE, {'o': owner, 'r': name, 'n': made['number']}, cache=False).get('data') or {}).get('repository') or {}).get('issue')
+            if node:
+                card = _card(node, 'issues')
+                with LOCK:
+                    _made[(_tid(acct['token']), card['id'])] = (time.time(), 'issues', card)
+        except Problem:
+            pass
+    cat = category(where['repo'], [reporter.LABELS[kind]], base)
+    view = 'bugs' if cat == 'bug' else 'core' if cat == 'core' else 'apps'
+    return {'item': card, 'url': made['url'], 'repo': where['repo'], 'kind': kind, 'area': where['area'], 'about': where['name'],
+            'picked': where['picked'], 'view': view, 'landed': reporter.landed(kind, where, report_next(kind, where, org, base)),
+            'warning': made.get('warning')}
+
+
 # ---------- MCP ----------
 
 FILTERS = {'repo': {'type': 'string', 'description': 'Repo name in the org, or owner/name.'},
@@ -3389,6 +3489,7 @@ TOOLS = [
     {'name': 'board_get', 'description': 'Read one Goal or Bug: body, done-list, linked PRs and recent comments.', 'inputSchema': {'type': 'object', 'properties': ISSUE}},
     {'name': 'board_report_bug', 'description': 'Report a small, specific bug (label bug). Anyone on the team or their agent may report one; it is ready to work as soon as it is filed.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What happens, what should happen, how to see it.'}}, 'required': ['repo', 'title']}},
     {'name': 'board_report_feature', 'description': 'Add a feature or improvement to try (label feature). Anyone on the team may add one. The builder builds it behind an off-by-default switch; the team tries it with Try it in the Tracker and keeps or drops it.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What it should do, where, and why it is better.'}}, 'required': ['repo', 'title']}},
+    {'name': 'report_or_request', 'description': "File what an owner said is broken or wants, like the 'Report or request' form: kind bug (something's broken) or feature (something new), about = home (Home, Chats & Settings) | mac (Mac app) | updates (Updates & installing) | agent | an app's repo (e.g. wizard-messenger) | unsure (the Tracker picks from the words), text = the owner's words (bug: what happened, what should happen; feature: what and why). Labels and core vs app follow from the repo; returns where it landed.", 'inputSchema': {'type': 'object', 'properties': {'kind': {'type': 'string', 'enum': ['bug', 'feature']}, 'about': {'type': 'string'}, 'app_name': {'type': 'string'}, 'text': {'type': 'string', 'minLength': 8, 'maxLength': 8000}, 'wizard_version': {'type': 'string'}, 'device': {'type': 'string'}}, 'required': ['kind', 'text']}},
     {'name': 'board_comment', 'description': 'Add a comment to a Goal or Bug.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'body': {'type': 'string', 'minLength': 1}}, 'required': ['body']}},
     {'name': 'board_add_goal', 'description': 'HUMANS OPEN GOALS. Use only when a human explicitly asked you to add this goal for them; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string'}, 'done': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Done-list lines (1-20).'}, 'body': {'type': 'string'}, **ASKED}, 'required': ['repo', 'title', 'done', 'owner_request']}},
     {'name': 'board_close', 'description': 'Close a Bug when a human asked you to (pass their words). Goals are refused: only humans close goals, in the app.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'enum': ['completed', 'not_planned']}, **ASKED}, 'required': ['owner_request']}},
@@ -3410,6 +3511,7 @@ CALLS = {
     'board_report_bug': lambda a: report_bug(None, a, agent=True),
     'board_report_feature': lambda a: report_feature(None, a, agent=True),
     'board_comment': lambda a: add_comment(None, a, agent=True),
+    'report_or_request': lambda a: report_file(None, a, agent=True),
     'board_add_goal': lambda a: add_goal(None, a, agent=True),
     'board_close': lambda a: set_state(None, a, 'closed', agent=True),
     'board_reopen': lambda a: set_state(None, a, 'open', agent=True),
@@ -3548,6 +3650,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, board_list(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
             if path == '/api/issue':
                 return self.send(200, board_get(self.person(), q, fresh=q.get('fresh') == '1'))
+            if path == '/api/report':
+                return self.send(200, report_options(self.person()))
             if path == '/api/repos':
                 return self.send(200, repos(self.person()))
             if path == '/api/boxes':
@@ -3599,6 +3703,7 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/issue/task': lambda: set_task(who, body),
                 '/api/issue/comment': lambda: add_comment(who, body),
                 '/api/new': lambda: new_item(who, body),
+                '/api/report': lambda: report_file(who, body),
                 '/api/test/works': lambda: tested(who, body, True),
                 '/api/test/fails': lambda: tested(who, body, False),
                 '/api/goal/status': lambda: goal_status_set(who, body),
@@ -3620,7 +3725,7 @@ class Handler(BaseHTTPRequestHandler):
                 return routes[path]()
             if path not in ('/api/connect', '/api/disconnect', '/api/device/start', '/api/device/cancel'):
                 gate(who)  # 0.12: signed in, a human login, an active team member (cached 10 min)
-            return self.send(201 if path in ('/api/goals', '/api/bugs', '/api/features', '/api/new') else 200, routes[path]())
+            return self.send(201 if path in ('/api/goals', '/api/bugs', '/api/features', '/api/new', '/api/report') else 200, routes[path]())
         except Problem as e:
             self.send(e.code, {'error': e.message, **({'reason': e.reason} if e.reason else {})})
         except (ValueError, TypeError, AttributeError, KeyError):

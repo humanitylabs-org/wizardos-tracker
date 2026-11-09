@@ -90,7 +90,7 @@ class Release(unittest.TestCase):
         self.assertEqual(out['items']['o/r#77']['release']['text'], 'In For testers 0.3.140')
 
     def test_version(self):
-        self.assertEqual(S.VERSION, '0.19.1')
+        self.assertGreaterEqual(tuple(map(int, S.VERSION.split('.'))), (0, 19, 1))
         self.assertIn(f"const PAGE_VERSION = '{S.VERSION}'", JS)
         self.assertIn('id="d-release"', (Path(__file__).resolve().parent.parent / 'web/index.html').read_text())
 

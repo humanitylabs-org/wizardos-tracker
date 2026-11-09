@@ -130,7 +130,7 @@ class SameForEveryone(unittest.TestCase):
         mine = next(i for i in bugs_m['groups']['test'] if i['number'] == 1)
         self.assertTrue(mine['can_review'])            # 0.18: the filer tests
         jb = next(i for i in S.board_split('j', {'view': 'bugs'})['groups']['test'] if i['number'] == 1)
-        self.assertEqual((jb['can_review'], jb['review_rule']), (False, 'Only Miguel tests this: they filed it.'))
+        self.assertEqual((jb['can_review'], jb['review_rule']), (False, 'Miguel checks this one (he filed it)'))
         g_m, g_j = S.board_split('m', {'view': 'goals'}), S.board_split('j', {'view': 'goals'})
         self.assertEqual([i['can_close'] for i in g_m['groups']['goals']], [False, False])
         self.assertEqual([i['can_close'] for i in g_j['groups']['goals']], [True, True])

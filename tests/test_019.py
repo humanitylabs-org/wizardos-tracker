@@ -113,14 +113,14 @@ class Board(unittest.TestCase):
         by = {i['number']: i for l in d['groups'].values() for i in l}
         self.assertTrue(by[1]['shipped'] and by[1]['can_fail'])          # Miguel filed it: may say Doesn't work in the AI check
         self.assertTrue(by[2]['shipped'] and by[2]['agent_filed'])
-        self.assertEqual(by[2]['review_rule'], 'Only James tests this: their agent filed it.')
+        self.assertEqual(by[2]['review_rule'], 'James checks this one (his agent filed it)')
         self.assertEqual(by[3]['wait_reason'], 'Oscar builds this one')
         self.assertEqual(by[4]['wait_reason'], 'Next for the builder')
         self.assertIn('Bugs (Miguel, 10 Nov)', S.policy('m')['lines'][-1])
         self.assertEqual(S.policy('m')['builder_rules']['bug_flow']['auto_accept_seconds'], 7 * 86400)
 
     def test_version(self):
-        self.assertTrue(S.VERSION.startswith('0.19.'))
+        self.assertGreaterEqual(tuple(map(int, S.VERSION.split('.'))), (0, 19, 0))
         self.assertIn(f"const PAGE_VERSION = '{S.VERSION}'", JS)
 
 
@@ -130,15 +130,15 @@ class UI(unittest.TestCase):
         return json.loads(subprocess.run(['node', '-e', src], capture_output=True, text=True, check=True).stdout)
 
     def test_bug_strip_and_wording(self):
-        src = fn('binsOf') + '\n' + fn('sectionsOf') + '\n' + fn('whereLine') + """
-const onboxOf = () => null;
+        src = fn('binsOf') + '\n' + fn('sectionsOf') + '\n' + fn('shippedText') + '\n' + fn('bugLine') + '\n' + fn('whereLine') + """
+const onboxOf = () => null, HUMAN_CHECK_TIP = '';
 console.log(JSON.stringify([binsOf('bugs').map(b => b.word), binsOf('apps').map(b => b.word),
-  whereLine({group: 'test', shipped: true, can_review: true})[0], whereLine({group: 'queued', wait_reason: 'Oscar builds this one'})[0],
+  whereLine({kind: 'bug', group: 'test', shipped: true, can_review: true})[0], whereLine({group: 'queued', wait_reason: 'Oscar builds this one'})[0],
   sectionsOf('apps').map(s => s[1]).includes('Filed')]));"""
         bins, apps, filer, queued, filed = self.run_js(src)
-        self.assertEqual(bins, ['Queued', 'Building', 'Shipped', 'Done'])
+        self.assertEqual(bins, ['Queued', 'Building', 'Shipped', 'Human check', 'Checked'])   # 0.20
         self.assertEqual(apps, ['Queued', 'Building', 'AI review', 'Human review', 'Shipping', 'Done'])
-        self.assertEqual(filer, 'Fixed and shipping. Check it when you can')
+        self.assertEqual(filer, 'Shipped · Your turn: check it')
         self.assertEqual(queued, 'Queued · Oscar builds this one')
         self.assertFalse(filed)
         self.assertNotIn("'Filed'", JS)

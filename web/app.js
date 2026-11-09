@@ -1,4 +1,7 @@
 'use strict';
+// WizardOS Tracker 0.20.0: one primary 'Report or request' button on top opens the WizardOS Reporter form (web/report.js,
+// /api/report); items someone else checks say 'James checks this one (he filed it)', yours 'Your turn: check it';
+// one Sort for every tab (Your turn first by default), so your items lead Bugs (Shipped included) and App features.
 // WizardOS Tracker 0.19.1: the Goals number is every open goal; Human review / Shipping / Done cards and the detail
 // name the release that has it (wizardos-tracker#7); wizardos-tracker and wizardos-builder items are never shown.
 // 0.19.0: bugs ship before review (Miguel, 10 Nov): the builder merges a fix switched on, so the Bugs
@@ -66,13 +69,10 @@ const picked = Object.fromEntries([...VIEWS, 'features'].map(v => [v, new Set(st
 const pickedWho = Object.fromEntries([...VIEWS, 'features'].map(v => [v, new Set(store.get('board.who.' + v) || [])]));
 let repoMore = false;   // the Repo row's '+N more' is open (not remembered)
 const SORTS = [['turn', 'Your turn first'], ['oldest', 'Oldest'], ['newest', 'Newest'], ['discussed', 'Most discussed'], ['active', 'Recently active']];
-// 0.18.2: new default 'turn' for everyone (new key board.sort2.*); an earlier explicit pick other than Oldest carries over
-const savedSort = v => {
-  const now = store.get('board.sort2.' + v), old = store.get('board.sort.' + v);
-  if (SORTS.some(([k]) => k === now)) return now;
-  return old && old !== 'oldest' && SORTS.some(([k]) => k === old) ? old : 'turn';
-};
-const sortBy = Object.fromEntries([...VIEWS, 'features'].map(v => [v, savedSort(v)]));
+// 0.20: ONE sort for every tab (key board.sort3, default 'Your turn first' for everyone again): a pick on one tab
+// applies on all of them, so an old per-tab pick can never hide your own items on Bugs or App features.
+const savedSort = () => { const k = store.get('board.sort3'); return SORTS.some(([x]) => x === k) ? k : 'turn'; };
+const sortBy = new Proxy({}, { get: () => savedSort(), set: (_, __, k) => { store.set('board.sort3', k); return true; } });
 const ts = iso => { const t = Date.parse(iso || ''); return isNaN(t) ? 0 : t; };
 const SORT_FN = {
   turn: (a, b) => ts(a.created_at) - ts(b.created_at),   // within each group: the existing order (oldest first)
@@ -189,7 +189,7 @@ function show(s) {
   if (s.refused && !s.connected) return refuse(s.refused.reason, s.refused.message);
   const on = !!s.connected;
   el('refused').hidden = true;
-  el('signin').hidden = on; el('board').hidden = !on; el('loading').hidden = true;
+  el('signin').hidden = on; el('board').hidden = !on; el('loading').hidden = true; el('report-open').hidden = !on;
   if (!on && s.notice) say(s.notice, 'error');
   signinMode(s);
   if (!on && s.oauth && !devTimer) api('api/device').then(r => { if (r.state === 'pending') showCode(r); }).catch(() => {});
@@ -375,7 +375,6 @@ function render(d) {
   filteredLine(whoSet, chosen, people, repos);
   const goals = d.view === 'goals';
   el('lists').classList.toggle('bd-goalsview', goals);
-  el('report-btn').hidden = d.view !== 'bugs';
   el('sort-btn').textContent = 'Sort: ' + (SORTS.find(([k]) => k === sortBy[d.view]) || SORTS[0])[1];
   el('sort-btn').hidden = stage[d.view] === 'done';   // Done lists newest closed first
   const keep = i => byWho(i) && byRepo(i);
@@ -420,7 +419,9 @@ function render(d) {
   }
   if (secs.length && secs[secs.length - 1].tagName === 'HR') secs.pop();   // nothing below the 'Your turn' group
   el('secs').replaceChildren(...secs);
-  if ((d.groups.test || []).length) setTimeout(() => checkOnBox(d.groups.test || []), 0);   // 0.16: in the background, cached
+  // 0.16: in the background, cached. 0.20: shipped bugs in their AI check too (their line names the release)
+  const askOn = [...(d.groups.test || []), ...(d.view === 'bugs' ? d.groups.airev || [] : [])];
+  if (askOn.length) setTimeout(() => checkOnBox(askOn), 0);
   el('empty').hidden = any;
   if (only === 'done' && !groups.done) { el('empty').hidden = false; el('empty').textContent = dc.error || 'Loading…'; return; }
   el('empty').textContent = only ? `Nothing in ${(bin || {}).word || ''} here${whoSet.size || chosen.size ? ' with this filter' : ''}.`
@@ -454,7 +455,7 @@ el('sort-btn').onclick = () => {
   for (const [k, label] of SORTS) {
     const it = make('button', 'bd-menu-i', label); it.type = 'button'; it.setAttribute('role', 'menuitemradio');
     it.setAttribute('aria-checked', String(sortBy[view] === k));
-    it.onclick = () => { sortBy[view] = k; store.set('board.sort2.' + view, k); unpop(); if (cache[view]) render(cache[view]); };
+    it.onclick = () => { sortBy[view] = k; unpop(); if (cache[view]) render(cache[view]); };
     list.append(it);
   }
   pop(b, '', [list]);
@@ -626,9 +627,12 @@ function flow(d, groups, done, st, hist) {
 }
 
 // 0.18: each list tab has its own stage strip; every stage has a small ⓘ saying what happens there and who does it.
+const HUMAN_CHECK_TIP = 'A quick sanity check by whoever filed it. It never holds up shipping.';
 const STAGE_INFO = {
   queued: 'Queued. Each card says why it waits: Next for the builder (it picks it up on its next run), or Oscar builds this one (the builder skips the Tracker and Builder repos).',
-  shipped: 'Fixed, merged switched on and already in For testers. The filer’s agent checks it (AI check), then the filer checks it when they can. Doesn’t work, at any point, sends it back to Building. It is Done once it is in a release for everyone and the filer said Works, or after 7 days in the filer’s check with no Doesn’t work (then it closes as fixed).',
+  shipped: 'Fixed and merged switched on: in For testers within minutes, then For everyone with the next release. Shipping never waits on a human. The filer’s agent runs a quick AI check meanwhile. Doesn’t work, at any point, sends it back to Building.',
+  humancheck: 'A quick sanity check by whoever filed it. It never holds up shipping. They can do it any time after Shipped, even while it is still in For testers: Works, or Doesn’t work (back to Building).',
+  checked: 'Whoever filed it said Works, or 7 days passed with no Doesn’t work: Checked (no problems in 7 days). Each card also says which release has it.',
   james: 'James or Miguel approves before the builder starts. Core features change WizardOS for everyone. James or Miguel: Approve or Decline on the card.',
   building: 'The WizardOS Builder writes the change (a feature arrives behind a switch, off by default).',
   corebuild: 'Approved by James or Miguel. The WizardOS Builder writes the change behind a switch, off by default.',
@@ -644,13 +648,17 @@ function binsOf(v) {
   if (v === 'core') return [{ key: 'james', word: 'Waiting for approval', groups: ['james'], tip: 'James or Miguel approves before the builder starts' },
     { key: 'building', word: 'Building', groups: ['queued', 'building'], info: 'corebuild' }, ...tail,
     { key: 'show', word: 'Show-and-tell', groups: ['show'] }, ...end];
+  // 0.20 (Miguel): shipping never waits on humans. Shipped = merged, on its way (AI check running); Human check = the filer's
+  // sanity check, any time after Shipped; Checked = they said Works, or 7 days with no Doesn't work. Release is shown apart.
   if (v === 'bugs') return [{ key: 'queued', word: 'Queued', groups: ['queued'] }, { key: 'building', word: 'Building', groups: ['building'] },
-    { key: 'shipped', word: 'Shipped', groups: ['test', 'airev', 'shipping'], tip: 'AI check, then the filer’s check' }, { key: 'done', word: 'Done', groups: ['done'] }];
+    { key: 'shipped', word: 'Shipped', groups: ['airev'], tip: 'Merged and on its way to everyone. Never waits on a human.' },
+    { key: 'test', word: 'Human check', groups: ['test'], info: 'humancheck', tip: HUMAN_CHECK_TIP },
+    { key: 'done', word: 'Checked', groups: ['shipping', 'done'], info: 'checked', tip: 'Whoever filed it said Works, or 7 days passed with no Doesn’t work' }];
   return [{ key: 'queued', word: 'Queued', groups: ['queued'] }, { key: 'building', word: 'Building', groups: ['building'] }, ...tail, ...end];
 }
 function sectionsOf(v) {
-  if (v === 'bugs') return [['test', 'Shipped · the filer’s check'], ['airev', 'Shipped · AI check'], ['building', 'Building'], ['queued', 'Queued'],
-    ['shipping', 'Shipped · on its way to everyone'], ['done', 'Done']];
+  if (v === 'bugs') return [['test', 'Human check'], ['airev', 'Shipped · AI check'], ['building', 'Building'], ['queued', 'Queued'],
+    ['shipping', 'Checked'], ['done', 'Checked · in a release for everyone']];
   return [['test', 'Human review'], ['show', 'Show-and-tell'], ['james', 'Waiting for approval'], ['airev', 'AI review'],
     ['building', 'Building'], ['queued', v === 'core' ? 'Approved · waiting for the builder' : 'Queued'], ['shipping', 'Shipping'], ['done', 'Done']]
     .filter(([g]) => v === 'core' || !['show', 'james'].includes(g));
@@ -1036,18 +1044,31 @@ function releaseOf(i) {
   return '';
 }
 // ---------- 0.18 cards: title; one plain line 'where it is and what's next'; ONE action area; small meta ----------
+// 0.20 (Miguel): a bug's two facts, side by side and independent: where it shipped, and its Human check.
+// 'Shipped in For testers 0.3.150 · Human check pending', later 'Shipped in For everyone 0.3.152 · Checked by Miguel'.
+function shippedText(t) {
+  if (!t) return 'Shipped';
+  if (/^In /.test(t)) return 'Shipped in ' + t.slice(3);
+  if (/^Waiting\b/.test(t)) return 'Merged · ' + t.charAt(0).toLowerCase() + t.slice(1);   // not in any release yet
+  return /^Shipped\b/.test(t) ? t : 'Shipped · ' + t.charAt(0).toLowerCase() + t.slice(1);
+}
+function bugLine(i) {
+  const g = i.group;
+  const rel = g === 'shipping' || g === 'done' ? (i.ship ? i.ship.text : '') : ((onboxOf(i) || {}).release || {}).text;
+  const ship = shippedText(rel);
+  if (g === 'test') return i.can_review ? [ship + ' · Your turn: check it', 'turn'] : [ship + ' · Human check pending', ''];
+  if (g === 'airev') return [ship + ' · Human check pending', ''];
+  const ck = i.checked ? i.checked.text : 'Checked';
+  return [ship + ' · ' + ck, g === 'done' ? 'done' : ''];
+}
 function whereLine(i) {
   const g = i.group;
-  if (i.shipped && g === 'test') {   // 0.19: a bug, already merged and shipping; the filer checks after the fact
-    if (!i.can_review) return [`Fixed and shipping · waiting for ${i.opener || 'the filer'}’s check` + (i.agent_filed ? ' (their agent filed it)' : ''), ''];
-    return ['Fixed and shipping. Check it when you can', 'turn'];
-  }
-  if (i.shipped && g === 'airev') return [`Fixed and shipping · ${i.ai_reviewer && i.ai_reviewer !== 'any team agent' ? i.ai_reviewer + '’s' : 'an'} AI check running`, ''];
+  if (i.kind === 'bug' && (i.shipped || ((g === 'shipping' || g === 'done') && i.state_reason !== 'not_planned'))) return bugLine(i);
   if (g === 'test') {
-    if (!i.can_review) return [`Waiting for ${i.opener || 'the filer'} to try it`, ''];
+    if (!i.can_review) return [i.review_rule || `${i.opener || 'the filer'} checks this one`, ''];
     const ob = onboxOf(i);
-    if (ob && ob.state === 'no') return ['Your turn: update, then try it', 'turn'];
-    return ['Your turn: try it', 'turn'];
+    if (ob && ob.state === 'no') return ['Your turn: update, then check it', 'turn'];
+    return ['Your turn: check it', 'turn'];
   }
   if (g === 'show') return i.can_james ? ['Your turn: show-and-tell', 'turn'] : ['Waiting for James’ show-and-tell', ''];
   if (g === 'james') return i.can_james ? ['Your turn: approve or decline', 'turn'] : ['Waiting for James or Miguel to approve', ''];
@@ -1065,7 +1086,7 @@ function itemCard(i) {
   top.append(h); c.append(top);
   const [text, cls] = whereLine(i);
   if (text) c.append(make('p', 'bd-where' + (cls ? ' ' + cls : ''), text));
-  const rel = releaseOf(i);
+  const rel = i.kind === 'bug' && /^Shipped/.test(text) ? '' : releaseOf(i);   // 0.20: a bug's line already names it
   if (rel && rel !== (i.ship && i.ship.text)) c.append(make('p', 'bd-hint bd-rel', rel));   // Shipping/Done say it above
   const act = actionArea(i);
   if (act) c.append(act);
@@ -1084,7 +1105,8 @@ function actionArea(i, inDetail) {
   }
   if (g === 'test') {
     if (!i.can_review) {
-      row.append(greyBtn('Works', i.review_rule), greyBtn('Doesn’t work', i.review_rule), make('span', 'bd-why-s', i.review_rule));
+      row.append(greyBtn('Works', i.review_rule), greyBtn('Doesn’t work', i.review_rule));
+      row.append(make('span', 'bd-why-s', i.review_rule));   // 0.20: 'James checks this one (he filed it)'
       return row;
     }
     const ob = onboxOf(i);
@@ -1704,7 +1726,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.19.1';
+const PAGE_VERSION = '0.20.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -1727,7 +1749,7 @@ setTimeout(checkVersion, 5000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.19.1' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.20.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
@@ -1741,38 +1763,9 @@ document.addEventListener('visibilitychange', tick);
 setInterval(() => { if (quiet()) load(view, true); }, 30000);
 el('reload').onclick = () => { if (!inflight) { load(view, true); loadSide(); } };
 
-// ---------- 0.18 Report a bug (Bugs tab): warns when this Wizard isn't on the latest WizardOS (it may be fixed already) ----------
-el('report-btn').onclick = async () => {
-  unpop();
-  const d = cache.bugs || cache[view] || {};
-  const repos = (d.repos || []).slice().sort((a, b) => repoName(a).localeCompare(repoName(b)));
-  const sel = el('report-repo');
-  sel.replaceChildren(...repos.map(r => { const o = make('option', '', repoName(r)); o.value = r; return o; }));
-  const def = repos.find(r => repoName(r) === 'wizard-ux'); if (def) sel.value = def;
-  el('report-status').textContent = '';
-  el('report-warn').hidden = true;
-  WzSheet.open(el('report'));
-  el('report-title').focus();
-  try {
-    const u = await getJSON(UPDATES_API);
-    if (u && u.update_available) {
-      const w = el('report-warn');
-      w.replaceChildren(document.createTextNode(`Your Wizard runs WizardOS ${u.installed}; ${u.latest_for_channel || (u.channel === 'latest' ? u.latest : u.stable)} is out. Update first: this may already be fixed. `),
-        smallBtn('Update', b => updateWizardOS(b)));
-      w.hidden = false;
-    }
-  } catch (_) {}
-};
-el('report-cancel').onclick = () => WzSheet.close(el('report'));
-el('report-form').onsubmit = async e => {
-  e.preventDefault();
-  const go = el('report-go'); go.disabled = true; el('report-status').textContent = '';
-  try {
-    const r = await api('api/new', { type: 'issue', repo: el('report-repo').value, title: el('report-title').value.trim(), body: el('report-body').value.trim() });
-    el('report-title').value = ''; el('report-body').value = '';
-    WzSheet.close(el('report'));
-    toast(r.warning || 'Reported. The builder starts on it next run.');
-    setTimeout(() => load('bugs', true), 800);
-  } catch (err) { el('report-status').textContent = err.message; }
-  finally { go.disabled = false; }
-};
+// ---------- 0.20 Report or request: the WizardOS Reporter (web/report.js) lives in its own module; the Tracker only
+// reloads the tab the item landed on and offers its WizardOS Update button for the 'update first' warning ----------
+if (window.WizardReporter) {
+  WizardReporter.onFiled = r => { setTimeout(() => load(r.view || view, true), 800); };
+  WizardReporter.onUpdate = b => updateWizardOS(b);
+}
