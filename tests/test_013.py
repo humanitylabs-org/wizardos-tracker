@@ -173,8 +173,10 @@ class Rules(unittest.TestCase):
         reset()
 
     def test_human_rules(self):
-        self.assertEqual(S.human_rule('bug', 'oscarhenrycollins', [], 'mistermizel'), (False, 'You filed this, so someone else tests it.'))
-        self.assertTrue(S.human_rule('bug', 'jdefleur', [], 'mistermizel')[0])
+        # 0.18: the filer tests (Miguel's agent Oscar filed it, so Miguel tests); nobody else on the team does
+        self.assertEqual(S.human_rule('bug', 'oscarhenrycollins', [], 'mistermizel'), (True, ''))
+        self.assertEqual(S.human_rule('bug', 'jdefleur', [], 'mistermizel'), (False, 'Only James tests this: they filed it.'))
+        self.assertTrue(S.human_rule('bug', 'stranger', [], 'mistermizel')[0])   # outside the roster: anyone
         ok, rule = S.human_rule('goal', 'jdefleur', ['JanMesaric'], 'mistermizel')
         self.assertFalse(ok)
         self.assertEqual(rule, 'Only Jan or James review this goal.')
@@ -227,28 +229,26 @@ class Reviews(unittest.TestCase):
             S.ai_review_human()
         self.assertEqual(e.exception.reason, 'agents_only')
 
-    def test_two_human_reviews(self):
-        reset({'human_reviews': 2})
+    def test_filer_works_approves_and_others_refused(self):
+        reset()
         S._write('accounts.json', {'people': {'j': {'token': 'tok_james_aaaaaaaaaaaaaaaaaaaaaaa', 'login': 'jdefleur'},
-                                              'n': {'token': 'tok_jan_aaaaaaaaaaaaaaaaaaaaaaaaa', 'login': 'JanMesaric'}}, 'default': 'j'})
+                                              'm': {'token': 'tok_miguel_aaaaaaaaaaaaaaaaaaaaaa', 'login': 'mistermizel'}}, 'default': 'm'})
         GH.issues[8] = {'user': 'mistermizel', 'labels': {'bug', 'ready-to-test'}, 'comments': [('defleur-agents', 'AI review: pass — x')]}
-        r = S.tested('j', {'repo': 'wizard-ux', 'number': 8}, True)
-        self.assertEqual((r['final'], r['reviews']), (False, {'done': 1, 'need': 2}))
-        self.assertIn('ready-to-test', GH.issues[8]['labels'])
         with self.assertRaises(S.Problem) as e:
             S.tested('j', {'repo': 'wizard-ux', 'number': 8}, True)
-        self.assertEqual(e.exception.reason, 'already_reviewed')
-        r = S.tested('n', {'repo': 'wizard-ux', 'number': 8}, True)
+        self.assertEqual(e.exception.reason, 'not_filer')
+        r = S.tested('m', {'repo': 'wizard-ux', 'number': 8}, True)
         self.assertTrue(r['final'])
+        self.assertEqual(r['stage'], 'shipping')
         self.assertEqual(GH.issues[8]['labels'], {'bug', 'approved'})
 
     def test_human_fail_back_to_building(self):
         reset()
         S._write('accounts.json', {'people': {'j': {'token': 'tok_james_aaaaaaaaaaaaaaaaaaaaaaa', 'login': 'jdefleur'}}, 'default': 'j'})
-        GH.issues[9] = {'user': 'mistermizel', 'labels': {'bug', 'ready-to-test'}, 'comments': []}
+        GH.issues[9] = {'user': 'jdefleur', 'labels': {'bug', 'ready-to-test'}, 'comments': []}
         S.tested('j', {'repo': 'wizard-ux', 'number': 9, 'note': 'Button missing'}, False)
         self.assertEqual(GH.issues[9]['labels'], {'bug', 'building'})
-        GH.issues[11] = {'user': 'mistermizel', 'labels': {'bug', 'ready-to-test'}, 'comments': []}
+        GH.issues[11] = {'user': 'jdefleur', 'labels': {'bug', 'ready-to-test'}, 'comments': []}
         S.tested('j', {'repo': 'wizard-ux', 'number': 11}, False)   # 0.16: the note is optional
         self.assertEqual(GH.issues[11]['labels'], {'bug', 'building'})
         self.assertEqual(GH.issues[11]['comments'][-1], ('jdefleur', "Tested: doesn't work — @jdefleur"))
@@ -531,10 +531,10 @@ class AppIdentity(unittest.TestCase):
 
 class FeaturesView(unittest.TestCase):
     def test_three_views_split_cleanly(self):
-        self.assertEqual(S.VIEWS, ('goals', 'features', 'bugs'))
+        self.assertEqual(S.VIEWS, ('goals', 'core', 'apps', 'bugs', 'features'))
         self.assertIn('-label:feature', S.VIEW_Q['bugs'])
         self.assertIn('label:feature', S.VIEW_Q['features'])
         self.assertIn('-label:goal', S.VIEW_Q['features'])
-        for v in S.VIEWS:
+        for v in ('goals', 'features', 'bugs'):
             self.assertEqual(S.steps_for(v)[0]['key'], 'open')
         self.assertIn('features', S.policy_base()['targets'])

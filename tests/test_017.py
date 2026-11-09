@@ -44,35 +44,15 @@ def people():
 
 
 class GoalStep(unittest.TestCase):
+    """0.18: Keep going / Change direction is gone; goals never take Works / Doesn't work."""
     def setUp(self):
         GH.issues.clear()
         reset()
         people()
         GH.issues[20] = {'user': 'jdefleur', 'assignees': ['JanMesaric'], 'labels': {'goal', 'ready-to-test'}, 'comments': [], 'body': BODY}
 
-    def test_keep_going_ticks_and_goes_back_to_building(self):
-        r = S.goal_step('n', {'repo': 'wizard-ux', 'number': 20, 'decision': 'keep', 'done': [1]})
-        self.assertEqual(GH.issues[20]['labels'], {'goal', 'building'})
-        self.assertIn('- [x] two', GH.issues[20]['body'])
-        self.assertIn('- [ ] three', GH.issues[20]['body'])
-        self.assertTrue(GH.issues[20]['comments'][-1][1].startswith('Goal step: keep going — @JanMesaric'))
-        self.assertIn('Now done: two', GH.issues[20]['comments'][-1][1])
-        self.assertEqual(r['decision'], 'keep')
-
-    def test_change_direction_needs_a_note(self):
-        with self.assertRaises(S.Problem) as e:
-            S.goal_step('j', {'repo': 'wizard-ux', 'number': 20, 'decision': 'redirect', 'note': ''})
-        self.assertEqual(e.exception.reason, 'note_required')
-        S.goal_step('j', {'repo': 'wizard-ux', 'number': 20, 'decision': 'redirect', 'note': 'Do the phone first.'})
-        self.assertEqual(GH.issues[20]['labels'], {'goal', 'building'})
-        self.assertIn('Do the phone first.', GH.issues[20]['comments'][-1][1])
-
-    def test_only_owners_or_james_steer(self):
-        with self.assertRaises(S.Problem) as e:
-            S.goal_step('m', {'repo': 'wizard-ux', 'number': 20, 'decision': 'keep'})
-        self.assertEqual(e.exception.code, 403)
-        self.assertEqual(str(e.exception.message), 'Only Jan or James review this goal.')
-        self.assertIn('ready-to-test', GH.issues[20]['labels'])
+    def test_goal_step_is_gone(self):
+        self.assertFalse(hasattr(S, 'goal_step'))
 
     def test_goals_never_take_works(self):
         with self.assertRaises(S.Problem) as e:
@@ -129,7 +109,7 @@ class SameForEveryone(unittest.TestCase):
         nodes = {'bugs': [_node(1, 'mistermizel', ['bug', 'ready-to-test']), _node(2, 'jdefleur', ['bug', 'ready-to-test']),
                           _node(3, 'JanMesaric', ['bug', 'building'])],
                  'goals': [_node(4, 'jdefleur', ['goal', 'ready-to-test'], BODY, ['JanMesaric']), _node(5, 'jdefleur', ['goal'], BODY)]}
-        S._view_nodes = lambda token, q, heavy=False, limit=None: (nodes['goals' if ' label:goal' in q else 'bugs'], 3)
+        S._view_nodes = lambda token, q, heavy=False, limit=None, query=None: (nodes['goals' if ' label:goal' in q else 'bugs'], 3)
         S.view_stats = lambda *a, **k: None
         S.org_repos = lambda *a, **k: ['humanitylabs-org/wizard-ux']
 
@@ -148,12 +128,13 @@ class SameForEveryone(unittest.TestCase):
         bugs_m = S.board_split('m', {'view': 'bugs'})
         self.assertIn('humanitylabs-org/wizard-ux#1', [i['id'] for i in bugs_m['groups']['test']])   # your own item is listed
         mine = next(i for i in bugs_m['groups']['test'] if i['number'] == 1)
-        self.assertFalse(mine['can_review'])
-        self.assertEqual(mine['review_rule'], 'You filed this, so someone else tests it.')
+        self.assertTrue(mine['can_review'])            # 0.18: the filer tests
+        jb = next(i for i in S.board_split('j', {'view': 'bugs'})['groups']['test'] if i['number'] == 1)
+        self.assertEqual((jb['can_review'], jb['review_rule']), (False, 'Only Miguel tests this: they filed it.'))
         g_m, g_j = S.board_split('m', {'view': 'goals'}), S.board_split('j', {'view': 'goals'})
-        self.assertEqual([i['can_close_goal'] for i in g_m['groups']['queued']], [False])
-        self.assertEqual([i['can_close_goal'] for i in g_j['groups']['queued']], [True])
-        self.assertEqual(g_m['groups']['test'][0]['progress'], {'done': 1, 'total': 3, 'of': 'done-list items'})
+        self.assertEqual([i['can_close'] for i in g_m['groups']['goals']], [False, False])
+        self.assertEqual([i['can_close'] for i in g_j['groups']['goals']], [True, True])
+        self.assertEqual(g_m['groups']['goals'][0]['progress'], {'done': 1, 'total': 3, 'of': 'done-list items'})
 
     def test_just_filed_item_shows_for_everyone(self):
         card = {'id': 'humanitylabs-org/wizard-ux#9', 'repo': 'humanitylabs-org/wizard-ux', 'number': 9, 'title': 'New', 'author': 'mistermizel'}

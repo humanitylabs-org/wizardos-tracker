@@ -1,4 +1,11 @@
 'use strict';
+// WizardOS Tracker 0.18: Goals | Core features | App features | Bugs. Core vs app comes from the repo (policy
+// core_repos). Bugs and app features: Filed → Building → AI review → Human review (by the filer) → Shipping → Done.
+// Core features: Waiting for James → Building → AI review → Human review → Show-and-tell (James) → Shipping → Done.
+// Shipping = approved, not yet in a release for everyone; Done = 'Shipped in <version>'. Goals are human-led: a status
+// light (On track / At risk / Blocked) with a short human status, owners, linked items by stage. Cards: title, one
+// 'where it is and what's next' line, ONE action area (Update / Try / Works · Doesn't work / Approve), small meta.
+// The Update manager and Try changes live in Settings only.
 // WizardOS Tracker 0.17: a calmer list (stage strip with count and name only; Stats, Filter and Sort behind small
 // buttons; Works / Doesn't work in the detail), switches you can find (a real toggle, or the exact place with a button,
 // on the card, in the detail and in Settings › Try changes), goals steered with Keep going / Change direction, and a
@@ -18,11 +25,12 @@
 const el = id => document.getElementById(id);
 const make = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 const link = (cls, href) => { const a = make('a', cls); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; return a; };
-const EMPTY = { goals: 'No open goals.', features: 'No open features.', bugs: 'No open bugs. Nice.' };
-const GROUPS = ['test', 'airev', 'building', 'queued'];
-const stage = { goals: null, features: null, bugs: null };   // tap a bin: show only that stage (not remembered)
+const EMPTY = { goals: 'No open goals.', core: 'No open core features.', apps: 'No open app features.', features: 'No open features.', bugs: 'No open bugs. Nice.' };
+const GROUPS = ['test', 'show', 'james', 'airev', 'building', 'queued', 'shipping'];
+const VIEWS = ['goals', 'core', 'apps', 'bugs'];
+const stage = { goals: null, core: null, apps: null, bugs: null, features: null };   // tap a bin: show only that stage (not remembered)
 const doneCache = {};   // view -> { at, items } recently closed, loaded when the Done bin is tapped
-let me = null, view = ({ '#bugs': 'bugs', '#features': 'features' })[location.hash] || 'goals', umOpen = /^#(updates|wizards)$/.test(location.hash), umBack = 'goals', gen = 0, held = null, lastLoad = 0, who = '';
+let me = null, view = ({ '#bugs': 'bugs', '#core': 'core', '#apps': 'apps', '#features': 'apps' })[location.hash] || 'goals', umOpen = false, umBack = 'goals', gen = 0, held = null, lastLoad = 0, who = '';
 const NO_DATA = 'starts once the builder runs';
 const BINS = [
   { key: 'open', group: 'queued', word: 'Queued' },
@@ -40,12 +48,12 @@ const POP = {
 const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (_) { return null; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} } };
 // Chip filters live on Bugs only (0.9: Goals has none); picks are remembered on the device.
-const picked = { goals: new Set(store.get('board.repos.goals') || []), bugs: new Set(store.get('board.repos.bugs') || []), features: new Set(store.get('board.repos.features') || []) };
-const pickedWho = { goals: new Set(store.get('board.who.goals') || []), bugs: new Set(store.get('board.who.bugs') || []), features: new Set(store.get('board.who.features') || []) };
+const picked = Object.fromEntries([...VIEWS, 'features'].map(v => [v, new Set(store.get('board.repos.' + v) || [])]));
+const pickedWho = Object.fromEntries([...VIEWS, 'features'].map(v => [v, new Set(store.get('board.who.' + v) || [])]));
 let repoMore = false;   // the Repo row's '+N more' is open (not remembered)
 const SORTS = [['oldest', 'Oldest'], ['newest', 'Newest'], ['discussed', 'Most discussed'], ['active', 'Recently active']];
 const savedSort = v => SORTS.some(([k]) => k === store.get('board.sort.' + v)) ? store.get('board.sort.' + v) : 'oldest';
-const sortBy = { goals: savedSort('goals'), features: savedSort('features'), bugs: savedSort('bugs') };
+const sortBy = Object.fromEntries([...VIEWS, 'features'].map(v => [v, savedSort(v)]));
 const ts = iso => { const t = Date.parse(iso || ''); return isNaN(t) ? 0 : t; };
 const SORT_FN = {
   oldest: (a, b) => ts(a.created_at) - ts(b.created_at),
@@ -84,7 +92,7 @@ const repoName = r => (r || '').split('/').pop();
 // 0.10: GitHub login -> the name people know, from the policy roster (served as `names`).
 const nameOf = login => { const n = ((cache[view] || {}).names || {})[(login || '').toLowerCase()]; return n || login || ''; };
 const typing = () => !!document.querySelector('.bd-fail');
-const sheetOpen = () => ['detail', 'filter', 'settings'].some(x => el(x).open);
+const sheetOpen = () => ['detail', 'filter', 'settings', 'report'].some(x => el(x).open);
 
 // ---------- one small anchored popover (bins, Builder, Try it); tap outside or Esc closes it ----------
 let popFor = null;
@@ -239,7 +247,7 @@ sw.addEventListener('click', e => {
   unpop(); repoMore = false;
   el('scroll').scrollTop = 0;
   if (cache[view]) render(cache[view]);
-  else { for (const g of [...GROUPS, 'done']) el('sec-' + g).hidden = true; el('totals').textContent = ''; el('strip').replaceChildren(); el('filtered').hidden = true; el('empty').hidden = false; el('empty').textContent = 'Loading…'; }
+  else { el('secs').replaceChildren(); el('totals').textContent = ''; el('strip').replaceChildren(); el('filtered').hidden = true; el('empty').hidden = false; el('empty').textContent = 'Loading…'; }
   load(view);
 });
 
@@ -266,7 +274,8 @@ async function load(which, refresh = false) {
     if (which === view && g === gen && !typing()) render(d);
     if (el('settings').open) tryList();
     say('');
-    if (d.stats && d.stats.pending) loadStats(which);
+    if (d.stats && d.stats.pending && which !== 'goals') loadStats(which);
+    if (which !== 'goals') loadDone(which, refresh);
     if (which === view) freshAt = Date.now();
   } catch (err) {
     if (err.status === 401) { const s = await api('api/status').catch(() => null); if (s) show(s); }
@@ -283,14 +292,14 @@ async function loadStats(which) {
 
 function authorsOf(d) {
   const n = new Map();
-  for (const g of GROUPS) for (const i of d.groups[g]) if (i.author) n.set(i.author, (n.get(i.author) || 0) + 1);
+  for (const i of Object.values(d.groups || {}).flat()) if (i.author) n.set(i.author, (n.get(i.author) || 0) + 1);
   return [...n.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 
 const repoKey = i => (i.repo || '').toLowerCase();
 function reposOf(d, keepWho) {
   const n = new Map();
-  for (const g of GROUPS) for (const i of d.groups[g]) if (keepWho(i)) n.set(i.repo, (n.get(i.repo) || 0) + 1);
+  for (const i of Object.values(d.groups || {}).flat()) if (keepWho(i)) n.set(i.repo, (n.get(i.repo) || 0) + 1);
   return [...n.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
 }
 function render(d) {
@@ -305,7 +314,7 @@ function render(d) {
   const byWho = i => !whoSet.size || whoSet.has((i.author || '').toLowerCase());
   const byRepo = i => !chosen.size || chosen.has(repoKey(i));
   const allWho = authorsOf(d), allRepo = new Map(reposOf(d, () => true).map(([r, n]) => [r.toLowerCase(), n]));
-  const whoN = new Map(authorsOf({ groups: Object.fromEntries(GROUPS.map(g => [g, d.groups[g].filter(byRepo)])) }).map(([p, n]) => [p.toLowerCase(), n]));
+  const whoN = new Map(authorsOf({ groups: Object.fromEntries(Object.entries(d.groups).map(([g, l]) => [g, l.filter(byRepo)])) }).map(([p, n]) => [p.toLowerCase(), n]));
   const repoN = new Map(reposOf(d, byWho).map(([r, n]) => [r.toLowerCase(), n]));
   const label = p => { const n = nameOf(p); return p === d.login ? `${n} (you)` : n; };
   const people = allWho.map(([p, t]) => [p.toLowerCase(), label(p), whoN.get(p.toLowerCase()) || 0, t]).sort((a, b) => b[3] - a[3] || a[1].localeCompare(b[1]));
@@ -313,39 +322,46 @@ function render(d) {
   chipRow('who', whoSet, people);
   chipRow('repo', chosen, repos);
   filteredLine(whoSet, chosen, people, repos);
+  const goals = d.view === 'goals';
+  el('lists').classList.toggle('bd-goalsview', goals);
+  el('report-btn').hidden = d.view !== 'bugs';
   el('sort-btn').textContent = 'Sort: ' + (SORTS.find(([k]) => k === sortBy[d.view]) || SORTS[0])[1];
   el('sort-btn').hidden = stage[d.view] === 'done';   // Done lists newest closed first
   const keep = i => byWho(i) && byRepo(i);
   const order = SORT_FN[sortBy[d.view]];
-  const groups = Object.fromEntries(GROUPS.map(g => { const l = d.groups[g].filter(keep); return [g, order ? l.sort(order) : l]; }));
+  if (goals) return renderGoals(d, keep, order);
+  const groups = Object.fromEntries(GROUPS.map(g => { const l = (d.groups[g] || []).filter(keep); return [g, order ? l.sort(order) : l]; }));
+  // 0.18: Shipping = open approved items + closed items not yet in a release for everyone; Done = shipped (from api/done)
+  const dc = doneCache[d.view] || {};
+  for (const i of groups.shipping) if (dc.open_ship && dc.open_ship[i.id]) i.ship = dc.open_ship[i.id];
+  const closed = dc.items ? dc.items.filter(keep) : null;
+  groups.shipping = [...groups.shipping, ...(closed || []).filter(i => i.group === 'shipping')];
+  groups.done = closed ? closed.filter(i => i.group === 'done') : null;
   const st = d.stats || {}, hist = (st.items || []).filter(keep);
-  const done = st.pending || st.error ? null : hist.filter(i => i.state === 'closed').length;
-  strip(d, groups, done, st);
-  flow(d, groups, done, st, hist);
+  const doneN = st.pending || st.error ? null : hist.filter(i => i.state === 'closed').length;
+  const bins = binsOf(d.view);
+  strip(d, bins, groups);
+  flow(d, groups, doneN, st, hist);
   const only = stage[d.view];
+  const bin = bins.find(b => b.key === only);
+  const showing = g => !only ? g !== 'done' : (bin ? bin.groups.includes(g) : false);
   el('totals').textContent = d.more && !only ? `showing ${d.shown} of ${d.total}` : '';
-  for (const g of GROUPS) {
-    const list = only && only !== g ? [] : groups[g];
-    el('sec-' + g).hidden = !list.length;
-    el('n-' + g).textContent = list.length || '';
-    if (g === 'test') {  // 0.17: one order for everyone (no 'yours last')
-      el('list-test').replaceChildren(...list.map(i => testCard(i, d.view)));
-      if (list.length) setTimeout(() => checkOnBox(d.groups.test || []), 0);   // 0.16: in the background, cached
-    } else el('list-' + g).replaceChildren(...list.map(i => row(i, d.view)));
+  const secs = [];
+  let any = false;
+  for (const [g, title] of sectionsOf(d.view)) {
+    const list = groups[g];
+    if (!showing(g) || !list || !list.length) continue;
+    any = true;
+    const s = make('section', 'bd-sec'); s.id = 'sec-' + g;
+    const h = make('h2', 'bd-sec-h', title + ' '); h.append(make('span', 'bd-n', String(list.length)));
+    const l = make('div', 'bd-list'); l.replaceChildren(...list.map(itemCard));
+    s.append(h, l); secs.push(s);
   }
-  let none = only ? only !== 'done' && !groups[only].length : !GROUPS.some(g => groups[g].length);
-  el('sec-done').hidden = only !== 'done';
-  if (only === 'done') {
-    const dc = doneCache[d.view];
-    const list = dc && dc.items ? dc.items.filter(keep) : null;
-    el('n-done').textContent = list && list.length ? list.length : '';
-    el('list-done').replaceChildren(...(list || []).map(i => row(i, d.view)));
-    el('sec-done').hidden = !(list && list.length);
-    none = !list || !list.length;
-    if (!list) { el('empty').hidden = false; el('empty').textContent = dc && dc.error ? dc.error : 'Loading…'; return; }
-  }
-  el('empty').hidden = !none;
-  el('empty').textContent = only ? `Nothing ${only === 'done' ? 'closed' : 'in ' + ((BINS.find(b => b.group === only) || {}).word || '')} here${whoSet.size || chosen.size ? ' with this filter' : ''}.`
+  el('secs').replaceChildren(...secs);
+  if ((d.groups.test || []).length) setTimeout(() => checkOnBox(d.groups.test || []), 0);   // 0.16: in the background, cached
+  el('empty').hidden = any;
+  if (only === 'done' && !groups.done) { el('empty').hidden = false; el('empty').textContent = dc.error || 'Loading…'; return; }
+  el('empty').textContent = only ? `Nothing in ${(bin || {}).word || ''} here${whoSet.size || chosen.size ? ' with this filter' : ''}.`
     : whoSet.size || chosen.size ? 'Nothing here with this filter.' : EMPTY[d.view];
 }
 // 0.17: 'Filtered: Jan · wizard-ux ×' only when a filter is set; × clears it.
@@ -387,15 +403,14 @@ el('sort-btn').onclick = () => {
 function setStage(g) {
   stage[view] = stage[view] === g ? null : g;
   unpop();
-  if (stage[view] === 'done') loadDone(view);
   if (cache[view]) render(cache[view]);
 }
 async function loadDone(which, force) {
   const hit = doneCache[which];
-  if (hit && hit.items && !force && Date.now() - hit.at < 120000) return;
+  if (hit && hit.items && Date.now() - hit.at < (force ? 60000 : 120000)) return;
   try {
-    const r = await api('api/done?view=' + which);
-    doneCache[which] = { at: Date.now(), items: r.items || [] };
+    const r = await api('api/done?view=' + which + (force ? '&refresh=1' : ''));
+    doneCache[which] = { at: Date.now(), items: r.items || [], open_ship: r.open_ship || {} };
   } catch (err) { doneCache[which] = { at: Date.now(), items: null, error: err.message }; }
   if (which === view && cache[which] && !typing()) render(cache[which]);
 }
@@ -541,25 +556,53 @@ function flow(d, groups, done, st, hist) {
   kickLabel(ls, st);
 }
 
-// 0.17: the calm strip: five stages, count and name only. Tap one to show just that stage; tap it again for all.
-function strip(d, groups, done, st) {
+// 0.18: each list tab has its own stage strip; every stage has a small ⓘ saying what happens there and who does it.
+const STAGE_INFO = {
+  queued: 'Filed. The WizardOS Builder picks it up on its next run.',
+  james: 'Core features change WizardOS for everyone, so James approves them before the builder may start. James: Approve or Decline on the card.',
+  building: 'The WizardOS Builder writes the change (a feature arrives behind a switch, off by default).',
+  corebuild: 'Approved by James. The WizardOS Builder writes the change behind a switch, off by default.',
+  airev: 'The filer’s agent checks that the build matches the issue: on to Human review, or back to Building (counted as a kick-back).',
+  test: 'The person who filed it tries it on their Wizard (Update first if needed, then the switch if there is one) and says Works or Doesn’t work. Doesn’t work goes back to Building.',
+  show: 'James sees it working. When he approves, the switch is removed (on for everyone) and it ships.',
+  shipping: 'Approved, but not yet in a release everyone gets. It shows which wait it is in: Waiting for release, In For testers <version>, Waiting for Mac app build, or Waiting for <app> release.',
+  done: 'In a release that reaches everyone: For everyone (stable) for WizardOS and the Mac app, the app’s latest Store release for apps. The card says Shipped in <version>.',
+};
+function binsOf(v) {
+  const tail = [{ key: 'airev', word: 'AI review', groups: ['airev'] }, { key: 'test', word: 'Human review', groups: ['test'] }];
+  const end = [{ key: 'shipping', word: 'Shipping', groups: ['shipping'] }, { key: 'done', word: 'Done', groups: ['done'] }];
+  if (v === 'core') return [{ key: 'james', word: 'Waiting for James', groups: ['james'] },
+    { key: 'building', word: 'Building', groups: ['queued', 'building'], info: 'corebuild' }, ...tail,
+    { key: 'show', word: 'Show-and-tell', groups: ['show'] }, ...end];
+  return [{ key: 'queued', word: 'Filed', groups: ['queued'] }, { key: 'building', word: 'Building', groups: ['building'] }, ...tail, ...end];
+}
+function sectionsOf(v) {
+  return [['test', 'Human review'], ['show', 'Show-and-tell'], ['james', 'Waiting for James'], ['airev', 'AI review'],
+    ['building', 'Building'], ['queued', v === 'core' ? 'Approved · waiting for the builder' : 'Filed'], ['shipping', 'Shipping'], ['done', 'Done']]
+    .filter(([g]) => v === 'core' || !['show', 'james'].includes(g));
+}
+function strip(d, bins, groups) {
   const only = stage[d.view], out = [];
-  BINS.forEach((x, n) => {
+  bins.forEach((x, n) => {
     if (n) out.push(arrow());
-    const g = x.group || 'done';
-    const count = x.group ? groups[x.group].length : done;
-    const li = make('li', 'bd-stepli bd-binx' + (count ? ' on' : '') + (only === g ? ' sel' : '') + (only && only !== g ? ' dim' : ''));
+    const lists = x.groups.map(g => groups[g]);
+    const count = lists.some(l => l == null) ? null : lists.reduce((a, l) => a + l.length, 0);
+    const li = make('li', 'bd-stepli bd-binx' + (count ? ' on' : '') + (only === x.key ? ' sel' : '') + (only && only !== x.key ? ' dim' : ''));
     li.dataset.step = x.key;
     const b = make('button', 'bd-bin' + (count ? ' on' : '')); b.type = 'button'; b.dataset.step = x.key;
-    b.setAttribute('aria-pressed', String(only === g));
-    b.setAttribute('aria-label', `${x.word}: ${count == null ? 'counting' : count}. ${only === g ? 'Show everything' : 'Show only ' + x.word}`);
+    b.setAttribute('aria-pressed', String(only === x.key));
+    b.setAttribute('aria-label', `${x.word}: ${count == null ? 'counting' : count}. ${only === x.key ? 'Show everything' : 'Show only ' + x.word}`);
     b.append(make('span', 'bd-bin-n', count == null ? '—' : String(count)));
-    if (x.key === 'done') b.title = st.error ? st.error : done == null ? 'Counting…' : `Closed ${sinceText(d.since).toLowerCase()} · tap for the latest`;
-    li.append(b, make('span', 'bd-bin-w', x.word));
-    li.onclick = () => setStage(g);
+    const w = make('span', 'bd-bin-w', x.word + ' ');
+    const info = make('button', 'bd-i bd-i-s'); info.type = 'button'; info.setAttribute('aria-label', 'What happens in ' + x.word); info.append(infoIcon());
+    info.onclick = e => { e.stopPropagation(); pop(info, x.word, STAGE_INFO[x.info || x.key]); };
+    w.append(info);
+    li.append(b, w);
+    li.onclick = () => setStage(x.key);
     out.push(li);
   });
   el('strip').replaceChildren(...out);
+  el('strip').parentNode.style.gridTemplateColumns = bins.map(() => 'minmax(0, 1fr)').join(' var(--ga) ');
 }
 
 // ---------- 0.10: edit a step's target (shared, the same for everyone; permissions later) ----------
@@ -752,7 +795,7 @@ function openApp(id) {
 // can't be flipped from here, so both get a plain line saying how to try it instead of a dead switch.
 const LIVE_NOTE = 'Live once your Wizard has the update';
 function trySwitch(i) {
-  const live = i.group === 'test' || (i.group == null && (i.labels || []).some(l => String(l).toLowerCase() === 'ready-to-test'));  // Human review only
+  const live = i.group === 'test' || i.group === 'show' || (i.group == null && (i.labels || []).some(l => String(l).toLowerCase() === 'ready-to-test'));  // Human review only
   const sw = live && box && box.ok && i.switch ? box.switches[i.switch] : null;
   const on = !!(sw && sw.on && !box.locked);
   const b = make('button', 'bd-try'); b.type = 'button'; b.setAttribute('role', 'switch');
@@ -785,38 +828,22 @@ function trySwitch(i) {
   return b;
 }
 
-function row(i, kind) {
-  const wrap = make('div', 'bd-rowx');
-  const a = tapTarget('bd-item', () => openDetail(i));
-  const top = make('span', 'bd-top'); top.append(make('b', 'bd-title', i.title));
-  if (kind === 'goals') { top.append(ownerChips(i), bubble(i.comments || 0)); if ((i.assignees || []).length > 1) top.classList.add('multi'); }
-  a.append(top);
-  if (i.desc) a.append(make('span', 'bd-desc' + (kind !== 'goals' ? ' one' : ''), i.desc));
-  const meta = make('span', 'bd-meta');
-  if (kind === 'goals') {
-    const p = i.progress || { done: 0, total: 0 };
-    const pct = p.total ? Math.round(100 * p.done / p.total) : 0;
-    if (p.total) {
-      const bar = make('span', 'bd-bar'); const fill = make('i'); fill.style.width = pct + '%'; bar.append(fill);
-      bar.setAttribute('role', 'progressbar'); bar.setAttribute('aria-valuenow', String(pct)); bar.setAttribute('aria-valuemin', '0'); bar.setAttribute('aria-valuemax', '100');
-      a.append(bar);
-    }
-    const rest = [p.total ? `${p.done}/${p.total}` : '', repoName(i.repo)].filter(Boolean).join(' · ');
-    if (rest) meta.append(make('span', 'bd-repo', rest));
-  } else {  // bugs: title, one line, then repo · opener · comments
-    meta.classList.add('bd-meta-b');
-    const a2 = i.group !== 'done' && age(i.created_at);
-    meta.append(document.createTextNode([repoName(i.repo), nameOf(i.author) || i.opener].filter(Boolean).join(' · ') + ' · '));
-    if (a2) { const g = make('span', 'bd-age', a2); g.title = 'Opened ' + when(i.created_at); meta.append(g, document.createTextNode(' · ')); }
-    meta.append(bubble(i.comments || 0));
-  }
-  if (i.group === 'done' && i.closed_at) meta.append(make('span', 'bd-repo', ' · closed ' + when(i.closed_at)));
-  a.append(meta);
-  if (i.group === 'airev') a.append(make('span', 'bd-aiwho', 'AI check: ' + (i.ai_reviewer || 'the opener’s agent')));
-  wrap.append(a);
-  if (i.group !== 'done' && i.switch) wrap.append(trySwitch(i));   // 0.9: no Try it on Done rows; 0.15: only switched changes
-  return wrap;
+// 0.18 shared bits: a greyed button that says why on tap, with the reason in place next to it
+function greyBtn(text, why, cls = 'bd-mini') {
+  const b = make('button', cls, text); b.type = 'button'; b.setAttribute('aria-disabled', 'true'); b.title = why;
+  b.addEventListener('pointerdown', e => e.stopPropagation());
+  b.onclick = e => { e.preventDefault(); e.stopPropagation(); pop(b, '', why); };
+  return b;
 }
+const ago = iso => {
+  const t = ts(iso); if (!t) return '';
+  const s = Math.max(0, (Date.now() - t) / 1000);
+  if (s < 90) return 'just now';
+  if (s < 3600) return Math.round(s / 60) + ' minutes ago';
+  if (s < 86400) { const h = Math.round(s / 3600); return h === 1 ? 'an hour ago' : h + ' hours ago'; }
+  const d = Math.floor(s / 86400); return d === 1 ? 'yesterday' : d + ' days ago';
+};
+const firstName = x => String(x || '').split(' ')[0];
 
 // ---------- Builder switch (0.13.8): real. The builder checks it before every run; pausing asks first ----------
 let builderOn = false;
@@ -926,65 +953,229 @@ async function checkOnBox(items) {
 const ONBOX_TEXT = { yes: 'On your Wizard ✓', no: 'Not on your Wizard yet', unknown: 'Can’t tell if this is on your Wizard' };
 const cap = x => x ? x[0].toUpperCase() + x.slice(1) : x;
 
-// 0.17 card: title; one status line (on your Wizard? · Update, and the switch); one meta line. Test steps, the
-// switch in full and Works / Doesn't work (or a goal's Keep going / Change direction) live in the detail.
-function testCard(t, kind) {
-  const c = make('article', 'bd-card bd-card-calm');
+// ---------- 0.18 cards: title; one plain line 'where it is and what's next'; ONE action area; small meta ----------
+function whereLine(i) {
+  const g = i.group;
+  if (g === 'test') {
+    if (!i.can_review) return [`Waiting for ${i.opener || 'the filer'} to try it`, ''];
+    const ob = onboxOf(i);
+    if (ob && ob.state === 'no') return ['Your turn: update, then try it', 'turn'];
+    return ['Your turn: try it', 'turn'];
+  }
+  if (g === 'show') return i.can_james ? ['Your turn: show-and-tell', 'turn'] : ['Waiting for James’ show-and-tell', ''];
+  if (g === 'james') return i.can_james ? ['Your turn: approve or decline', 'turn'] : ['Waiting for James to approve', ''];
+  if (g === 'airev') return [i.ai_reviewer && i.ai_reviewer !== 'any team agent' ? `Waiting for ${i.ai_reviewer}’s AI check` : 'Waiting for an AI check', ''];
+  if (g === 'building') return i.blocked ? ['The builder is stuck: needs a human', 'warn'] : ['The builder is on it', ''];
+  if (g === 'queued') return [i.category === 'core' ? 'Approved by James · waiting for the builder' : 'Filed · waiting for the builder', ''];
+  if (g === 'shipping') return [i.ship ? i.ship.text : 'Approved · checking releases…', ''];
+  if (g === 'done') return [i.ship ? i.ship.text : 'Done', 'done'];
+  return ['', ''];
+}
+function itemCard(i) {
+  const c = make('article', 'bd-card bd-card-calm bd-icard');
   const top = make('div', 'bd-card-top');
-  const h = tapTarget('bd-title', () => openDetail(t)); h.textContent = t.title;
-  top.append(h, ...(kind === 'goals' ? [ownerChips(t)] : []), ...(t.switch ? [trySwitch(t)] : [])); c.append(top);
-  if (kind === 'goals' && (t.assignees || []).length > 1) top.classList.add('multi');
-  c.append(statusLine(make('p'), t));
-  if (kind === 'goals' && t.slice) { const s = make('p', 'bd-check one', 'Latest slice: ' + t.slice); s.title = t.slice; c.append(s); }
-  const meta = [repoName(t.repo), nameOf(t.author) || t.opener || '', kind !== 'goals' ? age(t.created_at) : '', `${t.comments || 0} comments`];
-  if (kind === 'goals') meta.splice(1, 0, t.progress && t.progress.total ? `${t.progress.done} of ${t.progress.total} done` : 'no done-list yet');
-  const rv = t.reviews || { done: 0, need: 1 };
-  if (rv.need > 1) meta.push(`${rv.done} of ${rv.need} reviews`);
-  c.append(make('p', 'bd-hint', meta.filter(Boolean).join(' · ')));
-  const act = make('p', 'bd-cta');
-  const b = make('button', 'bd-mini bd-mini-go', kind === 'goals' ? 'Review slice' : 'Test it'); b.type = 'button';
-  b.onclick = () => openDetail(t, true);
-  const why = reviewWhy(t, kind);
-  act.append(b); if (why) { b.setAttribute('aria-disabled', 'true'); act.append(make('span', 'bd-why-s', why)); }
-  c.append(act);
+  const h = tapTarget('bd-title', () => openDetail(i)); h.textContent = i.title;
+  top.append(h); c.append(top);
+  const [text, cls] = whereLine(i);
+  if (text) c.append(make('p', 'bd-where' + (cls ? ' ' + cls : ''), text));
+  const act = actionArea(i);
+  if (act) c.append(act);
+  const when_ = i.group === 'done' || i.group === 'shipping' && i.closed_at ? (i.closed_at ? 'closed ' + when(i.closed_at) : '') : age(i.created_at);
+  c.append(make('p', 'bd-hint', [`${repoName(i.repo)} #${i.number}`, nameOf(i.author) || i.opener || '', when_].filter(Boolean).join(' · ')));
   return c;
 }
-// Why this viewer can't do the human step here (shown in place, greyed), or ''.
-function reviewWhy(t, kind) {
-  if (kind === 'goals') return t.can_steer === false ? (t.steer_rule || 'Only the goal’s owners or James review this goal.') : '';
-  if (t.can_review === false) return t.review_rule || 'You filed this, so someone else tests it.';
-  const ob = onboxOf(t);
-  return ob && ob.state === 'no' ? `Test it once it’s on your Wizard: ${ob.fix || 'Not released yet'}.` : '';
+// The one action area: exactly what is needed now, greyed with the reason for anyone else.
+function actionArea(i, inDetail) {
+  const g = i.group, row = make('div', 'bd-act');
+  if (g === 'test') {
+    if (!i.can_review) {
+      row.append(greyBtn('Works', i.review_rule), greyBtn('Doesn’t work', i.review_rule), make('span', 'bd-why-s', i.review_rule));
+      return row;
+    }
+    const ob = onboxOf(i);
+    let wait = '';
+    if (ob && ob.state === 'no') {
+      const u = updateFor(ob);
+      row.append(make('span', 'bd-act-l', ob.fix || 'Not on your Wizard yet'));
+      if (u) row.append(u);
+      wait = 'Update first: this change isn’t on your Wizard yet.';
+    } else if (!ob && ((i.delivers || []).length || i.open_prs)) wait = '';
+    if (!wait && i.switch) {
+      const sw = box && box.ok && box.switches[i.switch];
+      const why = tryWhy(i);
+      const lab = make('span', 'bd-act-l', why ? why : `${(sw && sw.name) || 'Switch'}: ${sw && sw.on && !box.locked ? 'on' : 'off'}`);
+      row.append(trySwitch(i), lab);
+    } else if (!wait && i.switch_place) row.append(...placeBits(i));
+    const yes = wait ? greyBtn('Works', wait, 'bd-mini bd-mini-go') : smallBtn('Works', b => askPop(b, i.category === 'core' ? 'Mark as works? It goes to James’ show-and-tell.' : 'Mark as works? It ships with the next release.', 'Works', () => tested(i, true, '', b)));
+    if (!wait) yes.classList.add('bd-mini-go');
+    const no = wait ? greyBtn('Doesn’t work', wait) : smallBtn('Doesn’t work', b => noteAsk(row, 'What went wrong? (optional)', 'Send back', note => tested(i, false, note, b)));
+    const btns = make('span', 'bd-act-btns'); btns.append(yes, no);
+    row.append(btns);
+    if (wait && inDetail) row.append(make('span', 'bd-why-s', wait));
+    return row;
+  }
+  if (g === 'james') {
+    if (!i.can_james) { row.append(greyBtn('Approve', i.james_rule), greyBtn('Decline', i.james_rule), make('span', 'bd-why-s', i.james_rule)); return row; }
+    const yes = smallBtn('Approve', b => askPop(b, 'Approve this core feature? The builder may start on it.', 'Approve', () => james(i, 'approve', '', b)));
+    yes.classList.add('bd-mini-go');
+    const no = smallBtn('Decline', b => noteAsk(row, 'Why not? (optional)', 'Decline', note => james(i, 'decline', note, b)));
+    row.append(yes, no); return row;
+  }
+  if (g === 'show') {
+    if (!i.can_james) { row.append(greyBtn('Approve', i.james_rule), make('span', 'bd-why-s', i.james_rule)); return row; }
+    if (i.switch) row.append(trySwitch(i), make('span', 'bd-act-l', 'Try it'));
+    const yes = smallBtn('Approve', b => askPop(b, 'Approve after the show-and-tell? The switch goes away (on for everyone) and it ships.', 'Approve', () => showOk(i, b)));
+    yes.classList.add('bd-mini-go');
+    row.append(yes); return row;
+  }
+  return null;
 }
-// The status line: 'On your Wizard ✓' or 'Not on your Wizard yet · <fix> [Update]', then the switch in words.
+// An inline 'why' note under the action area (Doesn't work, Decline), Cancel focused first
+function noteAsk(area, placeholder, yesText, fn) {
+  if (area.nextSibling && area.nextSibling.classList && area.nextSibling.classList.contains('bd-fail')) return;
+  const f = make('form', 'bd-fail bd-confirm'); f.autocomplete = 'off';
+  const ta = make('textarea', 'wz-input bd-area'); ta.rows = 2; ta.maxLength = 4000; ta.placeholder = placeholder; ta.setAttribute('aria-label', placeholder);
+  ta.oninput = () => hold(!!ta.value.trim());
+  const r = make('div', 'bd-btns');
+  const cancel = make('button', 'wz-button secondary', 'Cancel'); cancel.type = 'button';
+  const go = make('button', 'wz-button', yesText); go.type = 'submit';
+  r.append(cancel, go); f.append(ta, r);
+  area.after(f); ta.focus();
+  const close = () => { f.remove(); hold(false); };
+  cancel.onclick = close;
+  f.onkeydown = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  f.onsubmit = async e => { e.preventDefault(); go.disabled = cancel.disabled = true; await fn(ta.value.trim()); close(); };
+}
+function afterAct(i, msg) {
+  hold(false);
+  for (const v of Object.keys(cache)) { const d = cache[v]; if (d && d.groups) for (const g of Object.keys(d.groups)) d.groups[g] = d.groups[g].filter(x => x.id !== i.id); }
+  details.delete(i.id); onbox.delete(i.id); delete doneCache[view];
+  if (el('detail').open) WzSheet.close(el('detail'));
+  if (cache[view]) render(cache[view]);
+  toast(msg); setTimeout(() => load(view, true), 1500);
+}
+async function tested(i, works, note, b) {
+  try {
+    const r = await api(works ? 'api/test/works' : 'api/test/fails', { repo: i.repo, number: i.number, note });
+    afterAct(i, works ? (r.stage === 'show' ? 'Thanks — on to James’ show-and-tell.' : 'Thanks — it’s shipping.') : 'Sent back to the builder.');
+  } catch (err) { pop(b, '', err.message); }
+}
+async function james(i, decision, note, b) {
+  try { await api('api/james', { repo: i.repo, number: i.number, decision, note }); afterAct(i, decision === 'approve' ? 'Approved: the builder may start.' : 'Declined.'); }
+  catch (err) { pop(b, '', err.message); }
+}
+async function showOk(i, b) {
+  try { const r = await api('api/show', { repo: i.repo, number: i.number }); afterAct(i, r.switch_default ? 'Approved: the builder turns it on for everyone.' : 'Approved: it’s shipping.'); }
+  catch (err) { pop(b, '', err.message); }
+}
+// Kept for scripts that call it: the status line in the detail ('On your Wizard ✓' or what to update, and the switch)
 function statusLine(p, t) {
   const v = onboxOf(t);
   p.className = (p.id ? 'bd-d-onbox ' : 'bd-onbox ') + (v ? v.state : 'wait');
   p.replaceChildren(document.createTextNode(v ? ONBOX_TEXT[v.state] || ONBOX_TEXT.unknown : 'Checking your Wizard…'));
-  if (v && v.state === 'no' && v.fix) {
-    p.append(document.createTextNode(' · '), make('b', '', v.fix));
-    const u = updateFor(v);
-    if (u) p.append(document.createTextNode(' '), u);
-  }
-  const sw = t.switch ? switchWords(t) : null;
-  const pl = !t.switch ? placeBits(t) : [];
-  if (sw || pl.length) { p.append(make('span', 'bd-dot', ' · ')); if (sw) p.append(sw); for (const x of pl) p.append(document.createTextNode(' '), x); }
+  if (v && v.state === 'no' && v.fix) p.append(document.createTextNode(' · '), make('b', '', v.fix));
   p.hidden = false;
   return p;
 }
 function onboxLine(p, t) { return statusLine(p, t); }
-// An Update button for the fix an item needs: it opens the Update manager at that app (or WizardOS), or an instruction where none can run.
+// 0.18: Update performs the update in place (the box's own App Manager routes), no separate panel.
 function updateFor(v) {
   const fix = v.fix || '';
-  if (/^Update WizardOS/.test(fix)) return smallBtn('Update', () => openUM());
+  if (/^Update WizardOS/.test(fix)) return smallBtn('Update', b => updateWizardOS(b));
   const m = /^Update (.+)$/.exec(fix);
   if (m) {
     const id = (v.apps || [])[0] || (appsByName().get(m[1].toLowerCase()) || {}).id;
-    return smallBtn('Update', () => openUM(id));
+    return smallBtn('Update', b => id ? updateApp(id, b) : pop(b, '', 'Update it in Settings › Updates.'));
   }
   if (fix === 'Needs the Mac app update') return smallBtn('How', b => pop(b, '', 'In the Mac app: Wizard menu › Check for Updates…'));
   if (/For testers/.test(fix)) return smallBtn('How', b => pop(b, '', 'Settings › Updates › For testers.'));
   return null;
+}
+
+// ---------- 0.18 Goals: the home tab. One larger card per goal: status light, the latest human status, owners,
+// linked bugs and features by stage, and Update status (the goal's owners or James; greyed for others) ----------
+const LIGHT = { green: 'On track', yellow: 'At risk', red: 'Blocked' };
+const STAGE_WORD = { test: 'human review', show: 'show-and-tell', james: 'waiting for James', airev: 'AI review', building: 'building', queued: 'filed', shipping: 'shipping', done: 'done' };
+function renderGoals(d, keep, order) {
+  const list = (d.groups.goals || []).filter(keep);
+  if (order) list.sort(order);
+  el('strip').replaceChildren(); el('totals').textContent = '';
+  el('secs').replaceChildren(...(list.length ? [(() => { const l = make('div', 'bd-list bd-goals'); l.append(...list.map(goalCard)); return l; })()] : []));
+  el('empty').hidden = !!list.length;
+  el('empty').textContent = EMPTY.goals;
+}
+function statusBits(s, big) {
+  const p = make('div', 'bd-gstatus' + (big ? ' big' : ''));
+  if (!s) { const h = make('p', 'bd-ghead'); h.append(make('span', 'bd-light none'), make('span', 'bd-gword none', 'No status yet')); p.append(h); return p; }
+  const head = make('p', 'bd-ghead');
+  head.append(make('span', 'bd-light ' + s.color), make('b', 'bd-gword', LIGHT[s.color] || s.word));
+  p.append(head);
+  if (s.text) p.append(make('p', 'bd-gtext', s.text));
+  const by = make('p', 'bd-hint', `Updated ${ago(s.at)} by ${firstName(s.by_person || s.by_name || s.by)}`);
+  p.append(by);
+  if (s.stale) p.append(make('p', 'bd-hint bd-stale', 'Status is old'));
+  return p;
+}
+function linkedLine(g) {
+  const c = g.linked_counts || {}, keys = ['test', 'show', 'james', 'airev', 'building', 'queued', 'shipping', 'done'].filter(k => c[k]);
+  if (!keys.length) return make('p', 'bd-hint', 'No linked bugs or features yet');
+  return make('p', 'bd-glinked', `${(g.linked || []).length} linked: ` + keys.map(k => `${c[k]} ${STAGE_WORD[k]}`).join(' · '));
+}
+function goalCard(g) {
+  const c = make('article', 'bd-card bd-goal');
+  const top = make('div', 'bd-card-top');
+  const h = tapTarget('bd-title', () => openDetail(g)); h.textContent = g.title;
+  top.append(h, ownerChips(g));
+  if ((g.assignees || []).length > 1) top.classList.add('multi');
+  c.append(top, statusBits(g.status), linkedLine(g));
+  const act = make('div', 'bd-act');
+  act.append(g.can_status ? smallBtn('Update status', b => statusForm(g, act, b)) : greyBtn('Update status', g.status_rule));
+  if (!g.can_status) act.append(make('span', 'bd-why-s', g.status_rule));
+  c.append(act);
+  const p = g.progress || {};
+  c.append(make('p', 'bd-hint', [`${repoName(g.repo)} #${g.number}`, p.total ? `done-list ${p.done} of ${p.total}` : '', `${g.comments || 0} comments`].filter(Boolean).join(' · ')));
+  return c;
+}
+// Pick a colour, write one or two sentences, confirm. Saved as a comment 'Status: <colour>' then the text.
+function statusForm(g, area, btn) {
+  if (area.nextSibling && area.nextSibling.classList && area.nextSibling.classList.contains('bd-fail')) return;
+  const f = make('form', 'bd-fail bd-confirm bd-sform'); f.autocomplete = 'off';
+  const pick = make('div', 'bd-lights'); pick.setAttribute('role', 'radiogroup'); pick.setAttribute('aria-label', 'Status');
+  let color = (g.status && g.status.color) || 'green';
+  const paint = () => pick.querySelectorAll('button').forEach(x => x.setAttribute('aria-checked', String(x.dataset.c === color)));
+  for (const [k, w] of Object.entries(LIGHT)) {
+    const b = make('button', 'bd-lightpick'); b.type = 'button'; b.dataset.c = k; b.setAttribute('role', 'radio');
+    b.append(make('span', 'bd-light ' + k), document.createTextNode(w));
+    b.onclick = () => { color = k; paint(); };
+    pick.append(b);
+  }
+  paint();
+  const ta = make('textarea', 'wz-input bd-area'); ta.rows = 2; ta.maxLength = 600; ta.required = true;
+  ta.placeholder = 'One or two sentences: where it stands'; ta.setAttribute('aria-label', 'Status');
+  ta.oninput = () => hold(!!ta.value.trim());
+  const status = make('p', 'wz-status');
+  const r = make('div', 'bd-btns');
+  const cancel = make('button', 'wz-button secondary', 'Cancel'); cancel.type = 'button';
+  const go = make('button', 'wz-button', 'Post status'); go.type = 'submit';
+  r.append(cancel, go); f.append(pick, ta, status, r);
+  area.after(f); ta.focus();
+  const close = () => { f.remove(); hold(false); };
+  cancel.onclick = close;
+  f.onkeydown = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
+  f.onsubmit = async e => {
+    e.preventDefault();
+    const text = ta.value.trim();
+    if (text.length < 3) { status.textContent = 'Write a sentence or two.'; return; }
+    go.disabled = cancel.disabled = true;
+    try {
+      const res = await api('api/goal/status', { repo: g.repo, number: g.number, color, text });
+      g.status = { ...res.status, by_person: (cache.goals && cache.goals.me_person) || res.status.by_person };
+      details.delete(g.id); close();
+      toast('Status posted.');
+      if (cache[view]) render(cache[view]);
+      if (openId === g.id) openDetail(g);
+    } catch (err) { go.disabled = cancel.disabled = false; status.textContent = err.message; }
+  };
 }
 
 // ---------- detail: the whole issue and its comments, fetched on tap only ----------
@@ -1014,9 +1205,11 @@ function prose(html, empty) {
 let openId = null, openItem = null;
 function roles(i) {
   const r = el('d-roles'), who = i.opener || i.author;
+  const goal = i.kind === 'goal' || i.category === 'goal' || view === 'goals';
   r.hidden = !who;
-  const goal = i.kind === 'goal' || (i.labels || []).some(l => String(l).toLowerCase() === 'goal') || view === 'goals';
-  r.textContent = who ? `Opened by ${who} · AI review by their agent · ` + (goal ? 'human review by the goal’s owner or James' : 'human review by anyone else on the team') : '';
+  if (!who) return;
+  if (goal) { r.textContent = 'Human-led goal, never built by the builder · its owners or James post status · only James closes it'; return; }
+  r.textContent = `Filed by ${who} · AI review by their agent · ${who} tries it` + (i.category === 'core' ? ' · James approves before building and after a show-and-tell' : '') + ' · then Shipping until it’s in a release for everyone';
 }
 function openDetail(i, toAct) {
   const dlg = el('detail');
@@ -1026,14 +1219,14 @@ function openDetail(i, toAct) {
   el('d-gh').href = i.url;
   el('d-labels').textContent = '';
   roles(i);
-  const inReview = !!(cache[view] && (cache[view].groups.test || []).some(x => x.id === i.id));   // 0.16
+  const inReview = i.group === 'test';   // 0.16
   el('d-onbox').hidden = !inReview;
   if (inReview) onboxLine(el('d-onbox'), i);
   el('d-steps').hidden = !(inReview && (i.steps || i.check));
   if (inReview) el('d-steps').textContent = i.steps ? 'To test: ' + cap(i.steps) : i.check || '';
   detailSwitch(i);
   detailGoal(i, null);
-  detailAct(inReview ? i : null);
+  detailAct(i);
   el('d-body').replaceChildren(make('p', 'bd-empty', 'Loading…'));
   closeCtl(null);
   el('d-comments').replaceChildren(); el('d-comments-h').hidden = true;
@@ -1103,137 +1296,80 @@ el('detail').addEventListener('close', () => { openId = null; openItem = null; u
 
 // 0.17: the switch in the detail: a real toggle with its name and state, or the exact place to flip it.
 function detailSwitch(i) {
-  const box_ = el('d-switch');
-  const inReview = !!(cache[view] && (cache[view].groups.test || []).some(x => x.id === i.id));
-  if (!inReview || (!i.switch && !i.switch_place)) { box_.hidden = true; return box_.replaceChildren(); }
+  const box_ = el('d-switch');   // 0.18: the switch sits in the one action area (card and detail); this only explains it
+  if (i.group !== 'test' || (!i.switch && !i.switch_place)) { box_.hidden = true; return box_.replaceChildren(); }
   box_.hidden = false;
-  const row_ = make('div', 'bd-d-swrow');
+  const txt = make('div', 'bd-d-swtxt');
   if (i.switch) {
     const sw = box && box.ok && box.switches[i.switch];
-    const txt = make('div', 'bd-d-swtxt');
-    txt.append(make('b', '', (sw && sw.name) || i.switch), make('span', 'bd-meta', sw && sw.description ? sw.description : 'Feature switch ' + i.switch));
-    const why = tryWhy(i);
-    if (why) txt.append(make('span', 'bd-why-s', why));
-    row_.append(txt, trySwitch(i));
+    txt.append(make('b', '', 'Switch: ' + ((sw && sw.name) || i.switch)), make('span', 'bd-meta', sw && sw.description ? sw.description : 'Feature switch ' + i.switch));
   } else {
-    const pl = i.switch_place, txt = make('div', 'bd-d-swtxt');
+    const pl = i.switch_place;
     txt.append(make('b', '', 'Switch: ' + i.switch_how), make('span', 'bd-meta', pl.kind === 'mac' ? 'A Mac app setting. Run this in Terminal, then quit and reopen Wizard.' : pl.kind === 'app' ? 'A setting inside the app: ' + pl.text : pl.kind === 'box' ? pl.text : 'Turn on: ' + pl.text));
-    if (pl.cmd) { const code = make('code', 'bd-cmd', pl.cmd); txt.append(code); }
-    row_.append(txt);
-    const bits = placeBits(i).filter(x => x.tagName === 'BUTTON');
-    if (bits.length) row_.append(...bits);
+    if (pl.cmd) txt.append(make('code', 'bd-cmd', pl.cmd));
   }
-  box_.replaceChildren(make('h3', 'bd-sec-h bd-d-h', 'Switch'), row_);
+  box_.replaceChildren(txt);
 }
 
-// 0.17 goals: done-list (n of m, ticked items), owners, the latest builder slice and what it delivered.
+// 0.18 goals: status history (newest first), done-list, owners, and linked bugs and features by stage.
 function detailGoal(i, d) {
   const g = el('d-goal');
-  const goal = i.kind === 'goal' || view === 'goals' || (d && d.kind === 'goal');
+  const goal = i.kind === 'goal' || i.category === 'goal' || view === 'goals' || (d && d.kind === 'goal');
   if (!goal) { g.hidden = true; return g.replaceChildren(); }
+  g.hidden = false;
+  const out = [statusBits(i.status, true)];
+  const act = make('div', 'bd-act');
+  const can = d ? d.can_status : i.can_status, rule = (d && d.status_rule) || i.status_rule;
+  act.append(can ? smallBtn('Update status', b => statusForm(i, act, b)) : greyBtn('Update status', rule));
+  if (!can) act.append(make('span', 'bd-why-s', rule));
+  out.push(act);
+  const hist = d ? d.status_history || [] : null;
+  out.push(make('h3', 'bd-sec-h bd-d-h', 'Status history'));
+  if (!hist) out.push(make('p', 'bd-meta', 'Loading…'));
+  else if (!hist.length) out.push(make('p', 'bd-meta', 'No status posted yet.'));
+  else {
+    const ol = make('ol', 'bd-timeline');
+    for (const s of hist) {
+      const li = make('li', 'bd-tl');
+      const h = make('p', 'bd-ghead'); h.append(make('span', 'bd-light ' + s.color), make('b', 'bd-gword', LIGHT[s.color]), make('span', 'bd-hint', ` · ${firstName(s.by_person || s.by)} · ${ago(s.at)}`));
+      li.append(h);
+      if (s.text) li.append(make('p', 'bd-gtext', s.text));
+      ol.append(li);
+    }
+    out.push(ol);
+  }
   const tasks = (d && d.tasks) || i.tasks || [];
   const done = tasks.filter(t => t.done).length;
-  g.hidden = false;
-  const out = [make('h3', 'bd-sec-h bd-d-h', `Done-list ${tasks.length ? done + ' of ' + tasks.length : ''}`)];
+  out.push(make('h3', 'bd-sec-h bd-d-h', `Done-list ${tasks.length ? done + ' of ' + tasks.length : ''}`));
   if (tasks.length) {
     const ul = make('ul', 'bd-tasks');
     for (const t of tasks) { const li = make('li', t.done ? 'done' : ''); li.append(make('span', 'bd-tick', t.done ? '✓' : '○'), document.createTextNode(' ' + t.text)); ul.append(li); }
     out.push(ul);
   } else out.push(make('p', 'bd-meta', 'No done-list in this goal yet (- [ ] items in the description).'));
   const owners = (i.assignees || []).map(nameOf).join(', ');
-  out.push(make('p', 'bd-meta', `Owners: ${owners || 'none yet'} · James opens and closes goals`));
-  if (i.slice) out.push(make('h3', 'bd-sec-h bd-d-h', 'Latest slice' + (i.slice_at ? ' · ' + when(i.slice_at) : '')), make('p', 'bd-d-slice', i.slice));
+  out.push(make('p', 'bd-meta', `Owners: ${owners || 'none yet'} · only James closes goals`));
+  const linked = i.linked || [];
+  out.push(make('h3', 'bd-sec-h bd-d-h', `Linked bugs and features ${linked.length || ''}`));
+  if (!linked.length) out.push(make('p', 'bd-meta', 'None yet. The builder links an item to a goal only on a clear match (a “Goal: owner/repo#N” line).'));
+  for (const k of ['test', 'show', 'james', 'airev', 'building', 'queued', 'shipping', 'done']) {
+    const xs = linked.filter(x => x.stage === k);
+    if (!xs.length) continue;
+    out.push(make('p', 'bd-hint bd-lk-h', cap(STAGE_WORD[k]) + ` (${xs.length})`));
+    const ul = make('ul', 'bd-linked');
+    for (const x of xs) { const li = make('li'); const a = link('bd-link', x.url); a.textContent = x.title; li.append(a, make('span', 'bd-hint', ` · ${x.category === 'bug' ? 'bug' : x.category + ' feature'} · ${repoName(x.repo)} #${x.number}`)); ul.append(li); }
+    out.push(ul);
+  }
   g.replaceChildren(...out);
 }
 
-// 0.17: the human step lives here. Bugs and features: Works / Doesn't work (each asks first). Goals: Keep going /
-// Change direction (a note is required), with the done-list items that are now done ticked in the same step.
+// 0.18: the detail shows the same one action area as the card.
 function detailAct(i) {
   const a = el('d-act');
-  if (!i) { a.hidden = true; return a.replaceChildren(); }
+  const area = i && i.kind !== 'goal' && view !== 'goals' ? actionArea(i, true) : null;
+  if (!area) { a.hidden = true; return a.replaceChildren(); }
   a.hidden = false;
-  const goal = view === 'goals';
-  const why = reviewWhy(i, goal ? 'goals' : view);
-  const status = make('p', 'wz-status');
-  const btns = make('div', 'bd-btns');
-  const yes = make('button', 'wz-button', goal ? 'Keep going' : 'Works'); yes.type = 'button';
-  const no = make('button', 'wz-button secondary', goal ? 'Change direction' : 'Doesn’t work'); no.type = 'button';
-  btns.append(yes, no);
-  const head = make('h3', 'bd-sec-h bd-d-h', goal ? 'Your step' : 'Did it work?');
-  a.replaceChildren(head, btns);
-  const rv = i.reviews || { done: 0, need: 1, by: [] };
-  if (!goal && rv.need > 1) a.append(make('p', 'bd-meta', `${rv.done} of ${rv.need} reviews` + (rv.by && rv.by.length ? ' · Works from ' + rv.by.join(', ') : '')));
-  if (why) {
-    for (const b of [yes, no]) { b.setAttribute('aria-disabled', 'true'); b.onclick = e => pop(e.currentTarget, '', why); }
-    a.append(make('p', 'bd-why', why));
-    return;
-  }
-  a.append(status);
-  const busy = on => a.querySelectorAll('button, textarea, input').forEach(x => { x.disabled = on; });
-  const finish = msg => {
-    hold(false);
-    const d = cache[view]; if (d) { d.groups.test = d.groups.test.filter(x => x.id !== i.id); render(d); }
-    details.delete(i.id); onbox.delete(i.id);
-    WzSheet.close(el('detail'));
-    toast(msg); setTimeout(() => load(view, true), 1500);
-  };
-  const ask = (title, text, yesText, note, act, ticks) => {
-    const f = make('form', 'bd-fail bd-confirm'); f.autocomplete = 'off';
-    const q = make('p', 'bd-ask'); q.append(make('b', '', title)); if (text) q.append(document.createTextNode(' ' + text));
-    f.append(q);
-    const picks = [];
-    if (ticks && ticks.length) {
-      const ul = make('div', 'bd-ticks'); ul.append(make('p', 'bd-meta', 'Tick what this slice finished:'));
-      ticks.forEach((t, n) => {
-        if (t.done) return;
-        const lab = make('label', 'bd-tickrow'); const cb = make('input'); cb.type = 'checkbox'; cb.value = String(n);
-        lab.append(cb, document.createTextNode(' ' + t.text)); ul.append(lab); picks.push(cb);
-      });
-      if (picks.length) f.append(ul);
-    }
-    let ta = null;
-    if (note) {
-      ta = make('textarea', 'wz-input bd-area'); ta.rows = 2; ta.maxLength = 4000;
-      ta.placeholder = note; ta.setAttribute('aria-label', note);
-      ta.oninput = () => hold(!!ta.value.trim());
-      f.append(ta);
-    }
-    const r = make('div', 'bd-btns');
-    const cancel = make('button', 'wz-button secondary', 'Cancel'); cancel.type = 'button';
-    const go = make('button', 'wz-button', yesText); go.type = 'submit';
-    r.append(cancel, go); f.append(r);
-    btns.hidden = true; btns.after(f); cancel.focus();
-    const close = () => { f.remove(); btns.hidden = false; hold(false); status.textContent = ''; };
-    cancel.onclick = close;
-    f.onkeydown = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
-    f.onsubmit = async e => { e.preventDefault(); busy(true); status.textContent = ''; await act(ta ? ta.value.trim() : '', picks.filter(x => x.checked).map(x => +x.value), close); };
-  };
-  if (goal) {
-    const tasks = () => ((details.get(i.id) || {}).data || {}).tasks || i.tasks || [];
-    const step = (decision, msg) => async (note, done, close) => {
-      if (decision === 'redirect' && note.length < 3) { busy(false); status.textContent = 'Say which direction to take.'; return; }
-      try { await api('api/goal/step', { repo: i.repo, number: i.number, decision, note, done }); finish(msg); }
-      catch (err) { busy(false); if (err.status === 403 || err.status === 409) { close(); pop(yes, '', err.message); } else status.textContent = err.message; }
-    };
-    yes.onclick = () => ask('Keep going?', 'The slice is fine: the builder takes the next done-list item.', 'Keep going', 'Anything for the next slice? (optional)', step('keep', 'The builder keeps going.'), tasks());
-    no.onclick = () => ask('Change direction?', 'Back to Building with your note.', 'Send', 'Which direction? (required)', step('redirect', 'Sent back with a new direction.'), tasks());
-    return;
-  }
-  yes.onclick = () => {
-    if (i.reviewed_by_me) return pop(yes, '', `You already said Works. A second, different person reviews it too (${rv.done} of ${rv.need}).`);
-    const last = rv.need <= 1 || rv.done + 1 >= rv.need;
-    ask('Mark as works?', last ? 'This moves it to Done.' : `This counts as review ${rv.done + 1} of ${rv.need}.`, 'Mark as works', '', async (_, __, close) => {
-      try {
-        const r = await api('api/test/works', { repo: i.repo, number: i.number });
-        if (r.final === false) { close(); busy(false); i.reviewed_by_me = true; toast(`Thanks — ${r.reviews.done} of ${r.reviews.need} reviews.`); setTimeout(() => load(view, true), 1500); return; }
-        finish('Thanks — marked as working.');
-      } catch (err) { busy(false); if (err.status === 403 || err.status === 409) { close(); pop(yes, '', err.message); } else status.textContent = err.message; }
-    });
-  };
-  no.onclick = () => ask('Send back to Build?', 'The builder picks it up again.', 'Send back', 'What went wrong? (optional)', async note => {
-    try { await api('api/test/fails', { repo: i.repo, number: i.number, note }); finish('Sent back to the builder.'); }
-    catch (err) { status.textContent = err.message; busy(false); }
-  });
+  const [text] = whereLine(i);
+  a.replaceChildren(make('h3', 'bd-sec-h bd-d-h', text || 'Next'), area);
 }
 
 // ---------- one item's own assembly line (its label timeline, fetched on tap, cached briefly) ----------
@@ -1349,7 +1485,8 @@ async function updateApp(id, btn) {
     store.set('board.wizfail', wizFail);
     wizBusy.delete(id); catalog = null; onbox.clear();
     if (id === 'wizardos-tracker' && !wizFail[id]) { toast('The Tracker updated: reloading…'); setTimeout(() => location.reload(), 1500); return; }
-    if (umOpen) showWizards(); else { await loadCatalog(true); if (cache[view]) render(cache[view]); }
+    await loadCatalog(true); if (el('settings').open) paintWizards();
+    if (cache[view]) render(cache[view]);
   }
 }
 async function updateAll(btn) {
@@ -1366,29 +1503,14 @@ async function updateWizardOS(btn) {
     toast(r && r.started ? 'WizardOS is updating. Wizard restarts in a minute.' : (r && r.error) || 'Update asked.');
   } catch (e) { if (btn) pop(btn, '', e.status === 404 ? 'Update in Settings › Updates.' : e.message); }
 }
-// 0.17.1: the Update manager is its own view (not a tab): opened from the header button, Settings, or a card's Update.
+// 0.18: the Update manager lives in Settings only (no separate view or header button). openUM opens Settings at an app.
 let umFocus = null;
 function openUM(focusId) {
   unpop();
-  for (const d of ['detail', 'settings', 'filter']) if (el(d).open) WzSheet.close(el(d));
-  if (!umOpen) umBack = location.hash;
-  umOpen = true; umFocus = focusId || null;
-  document.body.classList.add('um-open'); el('wizards').hidden = false;
-  try { history.replaceState(null, '', '#updates'); } catch (_) {}
-  el('scroll').scrollTop = 0;
-  el('um-back').focus();
+  umFocus = focusId || null;
+  if (!el('settings').open) { tryList(); WzSheet.open(el('settings')); }
   showWizards(true);
 }
-function closeUM() {
-  umOpen = false; umFocus = null;
-  document.body.classList.remove('um-open'); el('wizards').hidden = true;
-  try { history.replaceState(null, '', umBack && umBack !== '#updates' && umBack !== '#wizards' ? umBack : (view === 'goals' ? location.pathname + location.search : '#' + view)); } catch (_) {}
-  el('um-btn').focus();
-}
-el('um-btn').onclick = () => umOpen ? closeUM() : openUM();
-el('um-back').onclick = closeUM;
-el('settings-um').onclick = () => { WzSheet.close(el('settings')); openUM(); };
-document.addEventListener('keydown', e => { if (e.key === 'Escape' && umOpen && !sheetOpen() && el('pop').hidden) closeUM(); });
 // The Tracker's own row shows the version that is actually running (the server answering this page), so it is right
 // straight after a self-update even if the App Manager's list is a moment behind.
 function runningSelf(a) {
@@ -1401,7 +1523,7 @@ async function showWizards(force) {
   paintWizards();
 }
 function paintWizards() {
-  if (!umOpen || !catalog) return;
+  if (!el('settings').open || !catalog) return;
   const w = el('um-body'), u = updates || {};
   const host = /^[0-9.]+$|^localhost$/.test(location.hostname) ? 'This Wizard' : location.hostname.split('.')[0];
   const card = make('article', 'bd-card bd-wiz');
@@ -1445,7 +1567,7 @@ function paintWizards() {
 // ---------- 0.17 Settings › Try changes: every switch in Human review, on/off, the same toggles as on the cards ----------
 function tryList() {
   const rows = [], seen = new Set();
-  for (const v of ['goals', 'features', 'bugs']) for (const i of ((cache[v] || {}).groups || {}).test || []) {
+  for (const v of VIEWS) for (const i of ((cache[v] || {}).groups || {}).test || []) {
     if ((!i.switch && !i.switch_place) || seen.has(i.id)) continue;
     seen.add(i.id);
     const r = make('div', 'bd-rowx bd-try-row');
@@ -1462,19 +1584,18 @@ function tryList() {
   el('try-list').replaceChildren(...(rows.length ? rows : [make('p', 'bd-empty', 'No change in Human review has a switch right now.')]));
   el('settings-ver').textContent = `WizardOS Tracker ${(me && me.version) || ''}`;
 }
-el('settings-btn').onclick = () => { unpop(); tryList(); WzSheet.open(el('settings')); if (!box || !box.ok) loadSwitches(); };
+el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- start: refresh quietly on focus and every minute ----------
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.17.1' });
-  if (umOpen) openUM();
-  WizardApp.back.register({ canGoBack: () => umOpen, back: () => { if (!umOpen) return false; closeUM(); return true; } });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.18.0' });
+  if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));
 loadCatalog().catch(() => {});
-api('api/status').then(s => { show(s); if (umOpen) paintWizards(); if (s.connected) { load(view); loadSide(); setTimeout(() => { for (const other of ['goals', 'features', 'bugs']) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; }).catch(() => {}); }, 600); } })
+api('api/status').then(s => { show(s); if (s.connected) { load(view); loadSide(); setTimeout(() => { for (const other of VIEWS) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; }).catch(() => {}); }, 600); } })
   .catch(err => { el('loading').hidden = true; say(err.message, 'error'); });
 const quiet = () => me && me.connected && !document.hidden && !typing() && !sheetOpen() && !popFor;
 const tick = () => { if (quiet() && Date.now() - lastLoad > 20000) load(view, true); };
@@ -1482,3 +1603,39 @@ window.addEventListener('focus', tick);
 document.addEventListener('visibilitychange', tick);
 setInterval(() => { if (quiet()) load(view, true); }, 30000);
 el('reload').onclick = () => { if (!inflight) { load(view, true); loadSide(); } };
+
+// ---------- 0.18 Report a bug (Bugs tab): warns when this Wizard isn't on the latest WizardOS (it may be fixed already) ----------
+el('report-btn').onclick = async () => {
+  unpop();
+  const d = cache.bugs || cache[view] || {};
+  const repos = (d.repos || []).slice().sort((a, b) => repoName(a).localeCompare(repoName(b)));
+  const sel = el('report-repo');
+  sel.replaceChildren(...repos.map(r => { const o = make('option', '', repoName(r)); o.value = r; return o; }));
+  const def = repos.find(r => repoName(r) === 'wizard-ux'); if (def) sel.value = def;
+  el('report-status').textContent = '';
+  el('report-warn').hidden = true;
+  WzSheet.open(el('report'));
+  el('report-title').focus();
+  try {
+    const u = await getJSON(UPDATES_API);
+    if (u && u.update_available) {
+      const w = el('report-warn');
+      w.replaceChildren(document.createTextNode(`Your Wizard runs WizardOS ${u.installed}; ${u.latest_for_channel || (u.channel === 'latest' ? u.latest : u.stable)} is out. Update first: this may already be fixed. `),
+        smallBtn('Update', b => updateWizardOS(b)));
+      w.hidden = false;
+    }
+  } catch (_) {}
+};
+el('report-cancel').onclick = () => WzSheet.close(el('report'));
+el('report-form').onsubmit = async e => {
+  e.preventDefault();
+  const go = el('report-go'); go.disabled = true; el('report-status').textContent = '';
+  try {
+    const r = await api('api/new', { type: 'issue', repo: el('report-repo').value, title: el('report-title').value.trim(), body: el('report-body').value.trim() });
+    el('report-title').value = ''; el('report-body').value = '';
+    WzSheet.close(el('report'));
+    toast(r.warning || 'Reported. The builder starts on it next run.');
+    setTimeout(() => load('bugs', true), 800);
+  } catch (err) { el('report-status').textContent = err.message; }
+  finally { go.disabled = false; }
+};
