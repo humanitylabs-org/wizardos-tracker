@@ -658,3 +658,10 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
   .bd-goals-btn { min-height: 36px; padding: 0 10px; }
   .bd-head .bd-toggle { margin-left: auto; }
 }
+
+/* 0.18.2: 'Your turn first' divider, Still not working */
+.bd-turn-div { display: flex; align-items: center; gap: 8px; margin: 0 0 var(--wz-space-2); padding: 0 4px; font-size: 0.75rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+.bd-turn-div::after { content: ''; flex: 1; height: 1px; background: color-mix(in srgb, var(--accent) 35%, transparent); }
+.bd-turn-end { border: 0; height: 1px; margin: var(--wz-space-3, 12px) 4px; background: var(--line, color-mix(in srgb, var(--ink) 12%, transparent)); }
+.bd-still { display: inline-block; margin: 4px 0; padding: 2px 10px; border-radius: var(--r-pill, 999px); font-size: 0.75rem; font-weight: 650; color: var(--wz-warning, var(--danger)); border: 1px solid currentColor; }
+.bd-still-n.warn b { color: var(--wz-warning, var(--danger)); }

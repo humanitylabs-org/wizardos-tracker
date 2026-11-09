@@ -81,12 +81,13 @@
                 <p class="bd-loop bd-loops" id="loop"><i class="bd-loop2" aria-hidden="true"></i><button type="button" class="bd-kick bd-kick-ai" id="kick-ai" aria-label="AI review fail goes back to Building" hidden></button><button type="button" class="bd-kick bd-kick-h" id="kick" aria-label="Doesn't work goes back to Building" hidden></button></p>
               </div>
               <p class="bd-meta" id="stats-note"></p>
+              <p class="bd-meta bd-still-n" id="still-n" hidden></p>
             </div>
           </div>
           <div class="bd-tools">
             <button type="button" class="bd-tool" id="report-btn" hidden>Report a bug</button>
             <button type="button" class="bd-tool" id="filter-btn" aria-haspopup="dialog">Filter</button>
-            <button type="button" class="bd-tool" id="sort-btn" aria-haspopup="menu">Sort: Oldest</button>
+            <button type="button" class="bd-tool" id="sort-btn" aria-haspopup="menu">Sort: Your turn first</button>
           </div>
           <p class="bd-filtered" id="filtered" hidden></p>
           <p class="bd-totals" id="totals" aria-live="polite"></p>
@@ -104,6 +105,7 @@
     <dialog id="detail" class="wz-sheet bd-detail" aria-labelledby="d-title">
       <h2 id="d-title" class="bd-d-title"></h2>
       <p id="d-meta" class="bd-meta"></p>
+      <p id="d-still" class="bd-still" hidden></p>
       <p id="d-labels" class="bd-meta bd-labels"></p>
       <p id="d-roles" class="bd-d-roles" hidden></p>
       <p id="d-onbox" class="bd-d-onbox" hidden></p>

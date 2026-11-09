@@ -46,11 +46,11 @@ class James(unittest.TestCase):
         reset()
         people()
 
-    def test_only_james_approves_core(self):
+    def test_only_james_approves_core(self):   # 0.18.2: James or Miguel (test_0182 covers Miguel)
         GH.issues[30] = {'user': 'mistermizel', 'labels': {'feature'}, 'comments': []}
         with self.assertRaises(S.Problem) as e:
-            S.james_decide('m', {'repo': 'wizard-ux', 'number': 30, 'decision': 'approve'})
-        self.assertEqual((e.exception.code, str(e.exception.message)), (403, 'Only James can approve core features.'))
+            S.james_decide('n', {'repo': 'wizard-ux', 'number': 30, 'decision': 'approve'})
+        self.assertEqual((e.exception.code, str(e.exception.message)), (403, 'Only James or Miguel can approve core features.'))
         try:
             S.james_decide('j', {'repo': 'wizard-ux', 'number': 30, 'decision': 'approve'})
         except S.Problem:
