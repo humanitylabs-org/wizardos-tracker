@@ -28,7 +28,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.18.2'
+VERSION = '0.19.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1876,6 +1876,17 @@ GOAL_FIELDS = (' number title url body createdAt updatedAt author { login } assi
                '  ... on Issue { number title url state stateReason repository { nameWithOwner } labels(first: 15) { nodes { name } } } } } } }')
 GOAL_PAGE = 'query($q: String!, $after: String) { ' + _PAGE % (30, GOAL_FIELDS) + ' }'
 OPEN_GROUPS = ('test', 'show', 'james', 'airev', 'building', 'queued', 'shipping')
+# 0.19: the builder never picks these up (Miguel, 9 Nov): Oscar builds them directly
+BUILDER_SKIPS = ('wizardos-tracker', 'wizardos-builder')
+# 0.19 bug rule (Miguel, 10 Nov): a bug in the filer's check this long with no Doesn't work is closed as fixed (by the
+# builder host's sweep, builder-tick); the clock starts no earlier than the rule itself, so older items get 7 days too.
+BUG_ACCEPT_SECONDS = 7 * 86400
+BUG_RULE_SINCE = '2026-11-10T00:00:00Z'
+
+
+def queue_reason(repo):
+    """Why a queued item waits: the builder takes it next, or Oscar builds it himself (the builder skips the repo)."""
+    return 'Oscar builds this one' if (repo or '').split('/')[-1].lower() in BUILDER_SKIPS else 'Next for the builder'
 
 
 def item_group(repo, labels, state='open', base=None):
@@ -2006,6 +2017,13 @@ def board_split(person, args):
             extra = {'can_james': james, 'james_rule': '' if james else JAMES_RULE['show'], 'turn': james}
         elif group == 'shipping':
             extra = {'delivers_ship': True}
+        elif group == 'queued':
+            extra = {'wait_reason': queue_reason(repo)}
+        if cat == 'bug' and group in ('airev', 'test'):   # 0.19: bugs are merged (on) before review: already shipping
+            extra['shipped'] = True
+            extra['can_fail'] = human_rule('bug', author, [], login, base)[0]
+        if group == 'test':
+            extra['agent_filed'] = filed_by_agent(author, base)
         card.update(group=group, category=cat, kind='bug' if cat == 'bug' else 'feature', mine=same_person(author, login, base),
                     can_close=same_person(author, login, base), opener=person_of(author, base), created_at=n.get('createdAt'),
                     labels=names, blocked=any(str(l).lower().startswith('builder:blocked') for l in names), **extra)
@@ -2019,6 +2037,7 @@ def board_split(person, args):
                 g = 'james' if cat == 'core' else 'queued'
                 ok = approver if g == 'james' else False
                 groups[g].insert(0, {**it, 'group': g, 'category': cat, 'mine': own, 'can_close': own, 'can_james': ok, 'turn': ok,
+                                     'wait_reason': queue_reason(it['repo']) if g == 'queued' else None,
                                      'james_rule': '' if ok else JAMES_RULE['approve'], 'opener': person_of(it.get('author') or '', base)})
     stats = view_stats(acct['token'], org, view, cached_only=not args.get('with_stats')) or {'pending': True, 'items': [], 'done': None}
     repos_wanted = _repo_list(args.get('repos'))
@@ -2285,6 +2304,8 @@ def done_list(person, args):
                     mine=same_person(author, login, base), opener=person_of(author, base), ship=sh,
                     created_at=n.get('createdAt'), closed_at=n.get('closedAt'), state='closed',
                     state_reason=(n.get('stateReason') or '').lower() or None, labels=labels)
+        if cat == 'bug' and card['group'] == 'shipping' and card['state_reason'] != 'not_planned':
+            card['can_fail'] = human_rule('bug', author, [], login, base)[0]   # 0.19: Doesn't work reopens it
         items.append(card)
     items.sort(key=lambda i: i.get('closed_at') or '', reverse=True)
     repos_wanted = _repo_list(args.get('repos'))
@@ -2606,7 +2627,9 @@ def policy(person=None):
     lines = [f"Goals: opened and closed by {views['goals'][0]['role']}",
              f"Features: opened and closed by {views['features'][0]['role'].lower()}",
              f"Bugs: opened and closed by {views['bugs'][0]['role'].lower()}",
-             f"Build: {base['builder']['name']} only · Human review: the filer · Core features: James or Miguel approves first, James after the show-and-tell"]
+             f"Build: {base['builder']['name']} only · Human review: the filer · Core features: James or Miguel approves first, James after the show-and-tell",
+             "Bugs (Miguel, 10 Nov): merged switched on and shipping before review; AI check, then the filer's check after the fact. "
+             "Doesn't work reopens it to Building. Done once in a For everyone release and the filer said Works, or 7 days in the filer's check with no Doesn't work."]
     login = None
     try:
         _, acct = account_for(person)
@@ -2619,7 +2642,11 @@ def policy(person=None):
             'builds': {'builders': base['builder']['logins']}, 'lines': lines,
             # 0.18: what the builder must honour
             'builder_rules': {'never_build': ['goal'], 'core_repos': base['core_repos'], 'core_feature_needs_label': JAMES_LABEL,
-                              'switch_default_label': DEFAULT_LABEL, 'goal_tag_line': 'Goal: <owner/repo#N> (only on a clear match)'}, 'editable_file': 'DATA_DIR/policy.json'}
+                              'switch_default_label': DEFAULT_LABEL, 'goal_tag_line': 'Goal: <owner/repo#N> (only on a clear match)',
+                              'skip_repos': list(BUILDER_SKIPS),
+                              'bug_flow': {'merge': 'switched on, before any review', 'hand_back': AI_LABEL, 'filer_check': HUMAN_LABEL,
+                                           'auto_accept_seconds': BUG_ACCEPT_SECONDS, 'auto_accept_since': BUG_RULE_SINCE,
+                                           'filer_note': 'Fixed and shipping. Check it when you can'}}, 'editable_file': 'DATA_DIR/policy.json'}
 
 
 # ---------- 0.13: two-step review (AI review, then Human review; optional second human) ----------
@@ -2655,7 +2682,15 @@ def human_rule(kind, opener, assignees, me, base=None):
     who = person_of(opener, base)
     if not any(t['name'].lower() == who.lower() for t in base['team']):
         return True, ''
+    if filed_by_agent(opener, base):   # 0.19 (wizardos-tracker#31): an agent's items go to its person
+        return False, f'Only {who} tests this: their agent filed it.'
     return False, f'Only {who} tests this: they filed it.'
+
+
+def filed_by_agent(login, base=None):
+    """Is this login a team member's agent (not the person's own account)?"""
+    low = (login or '').lower()
+    return any(low == a['login'].lower() for t in (base or policy_base())['team'] for a in t['agents'])
 
 
 def goal_closer(me, base=None):
@@ -3031,24 +3066,30 @@ def _close(acct, full, number, reason='completed'):
 def tested(person, args, works):
     """Human review, by the filer (0.18). Works: a core feature goes on to James's show-and-tell (label show-and-tell);
     a bug or app feature is approved and closed (label approved): it then shows as Shipping until its merged change is
-    in a release that reaches everyone, then Done. Doesn't work: back to Building (a kick-back, counted in stats)."""
+    in a release that reaches everyone, then Done. Doesn't work: back to Building (a kick-back, counted in stats).
+    0.19 bug rule (Miguel, 10 Nov): a bug is merged switched on before any review, so the filer may say Doesn't work at
+    any point after the merge: in AI review, in their own check, or after it closed (it reopens to Building)."""
     _, acct = account_for(person)
     full, number = _target(args)
     login = acct.get('login') or 'someone'
     base = policy_base()
     cur = _current(acct, full, number)
     names = _labels(cur)
-    if HUMAN_LABEL not in names:
+    opener = ((cur.get('user') or {}).get('login') or '')
+    cat = category(full, names, base)
+    closed = (cur.get('state') or 'open') == 'closed'
+    late = cat == 'bug' and not works and (closed or AI_LABEL in names) and HUMAN_LABEL not in names
+    if HUMAN_LABEL not in names and not late:
         if AI_LABEL in names:
             raise Problem(409, 'This is still in AI review: the agent checks it first, then it comes to you.', 'ai_review')
         raise Problem(409, 'This is not waiting for a test any more. Refresh to see the latest.')
-    opener = ((cur.get('user') or {}).get('login') or '')
-    cat = category(full, names, base)
     if cat == 'goal':
         raise Problem(409, 'Goals are human-led: they get status updates, not Works / Doesn\u2019t work.', 'goal')
     ok, rule = human_rule('bug', opener, [], login, base)
     if not ok:
         raise Problem(403, rule, 'not_filer')
+    if late and closed and (cur.get('state_reason') or '').lower() == 'not_planned':
+        raise Problem(409, 'This was closed as not planned. File a new bug if it is still broken.')
     if works:
         body = f'Tested: works \u2014 @{login}'
     else:
@@ -3065,21 +3106,26 @@ def tested(person, args, works):
         if nxt == APPROVED_LABEL:
             _close(acct, full, number)
     else:
-        _drop_label(acct, full, number, HUMAN_LABEL)
+        if closed:   # 0.19: Doesn't work on a shipped bug reopens it to Building
+            gh(acct['token'], 'PATCH', f'/repos/{full}/issues/{number}', {'state': 'open'})
+            _drop_label(acct, full, number, APPROVED_LABEL)
+        for lab in (HUMAN_LABEL, AI_LABEL):
+            if lab in names:
+                _drop_label(acct, full, number, lab)
         try:
             _add_label(acct, full, number, 'building')
         except Problem:
             pass
     after = _current(acct, full, number)
     now = _labels(after)
-    if HUMAN_LABEL in now or (works and nxt not in now):
+    if HUMAN_LABEL in now or (works and nxt not in now) or (late and AI_LABEL in now):
         raise Problem(403, 'Your comment is saved, but GitHub did not change the labels (write access to this repo is needed).')
     with LOCK:
         _tested[(_tid(acct['token']), f'{full}#{number}')] = time.time()
         _ship.clear()
     return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'works': works, 'labels': now, 'saved': True,
             'stage': ('show' if nxt == SHOW_LABEL else 'shipping') if works else 'building', 'state': after.get('state'),
-            'reviews': {'done': 1 if works else 0, 'need': 1}, 'final': True}
+            'reopened': bool(closed and not works), 'reviews': {'done': 1 if works else 0, 'need': 1}, 'final': True}
 
 
 def james_people(base=None):

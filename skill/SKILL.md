@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.18.2
+version: 0.19.0
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -23,12 +23,14 @@ Goals (own header button) | Core features | App features | Bugs; an item with bo
 Anyone on the allowlist files: Miguel/Oscar (`mistermizel`, `oscarhenrycollins`), James/Archimedes (`jdefleur`, `defleur-agents`), DeFleur agents, Jan (`JanMesaric`), Robert/Nebula (`hacalastudio`). A person and their own agent count as one person. Roster: `GET /api/policy`.
 
 ## Flows (agreed with James, 9 Nov)
-- **Bugs**: Filed → Building → AI review (the filer's agent) → Human review by **the filer** → Shipping → Done.
-- **App features**: same as bugs; the filer tries it with its switch. No James step.
-- **Core features**: Filed → **Waiting for approval** (0.18.2, wizard-os#423: **James or Miguel** approves — policy `core_approvers`; the builder must not start until the issue has label `james-approved`; Approve / Decline, Decline closes it as not planned; others see 'Only James or Miguel can approve core features.') → Building → AI review → Human review by the filer → **Show-and-tell** (label `show-and-tell`; James approves: no switch → closed, with a switch → label `switch-default`, the builder removes the switch / turns it on for everyone, merges and closes) → Shipping → Done.
+- **Bugs** (0.19, Miguel 10 Nov: squashed without waiting for people): Queued → Building (the builder merges the fix **switched on** and hands it back already merged; in For testers within minutes) → **Shipped** (AI check by the filer's agent, then the filer's own check after the fact: 'Fixed and shipping. Check it when you can') → Done. Doesn't work at any point (also after it closed) reopens it to Building. Done = in a For everyone release and the filer said Works, or 7 days in the filer's check with no Doesn't work (the builder host closes it as fixed). Promotion to For everyone never waits on a bug's human check. Hotfix: the same, plus the front of the queue.
+- **App features**: Queued → Building → AI review → Human review by the filer (with its switch) → Shipping → Done. No James step.
+- **Core features**: Queued → **Waiting for approval** (0.18.2, wizard-os#423: **James or Miguel** approves — policy `core_approvers`; the builder must not start until the issue has label `james-approved`; Approve / Decline, Decline closes it as not planned; others see 'Only James or Miguel can approve core features.') → Building → AI review → Human review by the filer → **Show-and-tell** (label `show-and-tell`; James approves: no switch → closed, with a switch → label `switch-default`, the builder removes the switch / turns it on for everyone, merges and closes) → Shipping → Done.
 - **Kick-backs** (AI review fail, Human Doesn't work) go back to Building and are counted in stats. Stats also show **Still not working**: items where a human said Doesn't work more than once (`summary.still_not_working`; `board_flow` returns `still_not_working` per item, the detail shows a badge).
 
 Labels: `building`, `ai-review`, `ready-to-test` (Human review), `show-and-tell`, `james-approved`, `approved`, `switch-default`.
+
+Queued cards say why they wait: 'Next for the builder', or 'Oscar builds this one' (wizardos-tracker and wizardos-builder: the builder skips them).
 
 ## Shipping and Done (the board stays truthful)
 Works on a bug or app feature (or James's show-and-tell without a switch) adds `approved` and **closes the issue at once** (the builder never sees it as work again). The Tracker then shows it as **Shipping** until every merged PR that delivered it is in a release that reaches everyone, with the wait it is in: `Waiting for release` (merged, not in a For testers release), `In For testers <version>`, `Waiting for Mac app build` (try-wizard), `Waiting for <App> release` (Store). **Done** = in the stable (For everyone) WizardOS release / a published Mac release / the app's latest Store release; the card says `Shipped in <version>` (kept once seen). Specs and tools (`wizard-os`, `wizard-app-index`) ship on merge.

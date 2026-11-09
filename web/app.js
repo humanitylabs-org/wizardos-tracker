@@ -1,4 +1,10 @@
 'use strict';
+// WizardOS Tracker 0.19.0: bugs ship before review (Miguel, 10 Nov): the builder merges a fix switched on, so the Bugs
+// strip is Queued → Building → Shipped (AI check, then the filer's check, after the fact) → Done. The filer's card says
+// 'Fixed and shipping. Check it when you can'; Doesn't work (any time, even after it closed) reopens it to Building.
+// Done = in a For everyone release and the filer said Works, or 7 days in the filer's check with no Doesn't work.
+// Queued replaces Filed and says why it waits; the Goals count is only goals of yours needing a status update;
+// goal cards are minimal; a small 'Tracker updated · Reload' bar appears when the server runs a newer version.
 // WizardOS Tracker 0.18.2: the default sort is 'Your turn first': items the viewer can act on now (their Human review,
 // approvals for James or Miguel, show-and-tell for James, goals they own needing a status update) on top under a small
 // 'Your turn' divider, then everything else oldest first. Core features wait for approval by James OR Miguel
@@ -266,14 +272,16 @@ function markView() {
   for (const x of sw.querySelectorAll('[data-view]')) x.setAttribute('aria-selected', String(x.dataset.view === view));
   el('goals-btn').setAttribute('aria-pressed', String(view === 'goals'));
 }
-// goals needing attention: no status yet, At risk, Blocked, or a status older than 7 days
+// 0.19: the number is only goals of yours needing a status update (you own it; no status yet, or older than 7 days)
+const GOALS_TIP = 'Goals of yours needing a status update';
+function goalsDue(g) { return (g || []).filter(x => !!x.turn).length; }
 function goalsBadge() {
   const g = cache.goals && cache.goals.groups && cache.goals.groups.goals, n = el('goals-n');
-  if (!g) { n.hidden = true; return; }
-  const k = g.filter(x => !x.status || x.status.stale || x.status.color !== 'green').length;
+  const k = g ? goalsDue(g) : 0;
   n.hidden = !k; n.textContent = k ? String(k) : '';
-  n.setAttribute('aria-label', k ? `${k} need${k === 1 ? 's' : ''} attention` : '');
-  el('goals-btn').title = k ? `${k} goal${k === 1 ? '' : 's'} need attention (no status, at risk, blocked or status old)` : 'Goals';
+  n.title = GOALS_TIP;
+  n.setAttribute('aria-label', k ? `${k}: ${GOALS_TIP.toLowerCase()}` : '');
+  el('goals-btn').title = k ? `${GOALS_TIP}: ${k}` : 'Goals';
 }
 function pickView(v) {
   if (!v || v === view) return;
@@ -617,7 +625,8 @@ function flow(d, groups, done, st, hist) {
 
 // 0.18: each list tab has its own stage strip; every stage has a small ⓘ saying what happens there and who does it.
 const STAGE_INFO = {
-  queued: 'Filed. The WizardOS Builder picks it up on its next run.',
+  queued: 'Queued. Each card says why it waits: Next for the builder (it picks it up on its next run), or Oscar builds this one (the builder skips the Tracker and Builder repos).',
+  shipped: 'Fixed, merged switched on and already in For testers. The filer’s agent checks it (AI check), then the filer checks it when they can. Doesn’t work, at any point, sends it back to Building. It is Done once it is in a release for everyone and the filer said Works, or after 7 days in the filer’s check with no Doesn’t work (then it closes as fixed).',
   james: 'James or Miguel approves before the builder starts. Core features change WizardOS for everyone. James or Miguel: Approve or Decline on the card.',
   building: 'The WizardOS Builder writes the change (a feature arrives behind a switch, off by default).',
   corebuild: 'Approved by James or Miguel. The WizardOS Builder writes the change behind a switch, off by default.',
@@ -633,11 +642,15 @@ function binsOf(v) {
   if (v === 'core') return [{ key: 'james', word: 'Waiting for approval', groups: ['james'], tip: 'James or Miguel approves before the builder starts' },
     { key: 'building', word: 'Building', groups: ['queued', 'building'], info: 'corebuild' }, ...tail,
     { key: 'show', word: 'Show-and-tell', groups: ['show'] }, ...end];
-  return [{ key: 'queued', word: 'Filed', groups: ['queued'] }, { key: 'building', word: 'Building', groups: ['building'] }, ...tail, ...end];
+  if (v === 'bugs') return [{ key: 'queued', word: 'Queued', groups: ['queued'] }, { key: 'building', word: 'Building', groups: ['building'] },
+    { key: 'shipped', word: 'Shipped', groups: ['test', 'airev', 'shipping'], tip: 'AI check, then the filer’s check' }, { key: 'done', word: 'Done', groups: ['done'] }];
+  return [{ key: 'queued', word: 'Queued', groups: ['queued'] }, { key: 'building', word: 'Building', groups: ['building'] }, ...tail, ...end];
 }
 function sectionsOf(v) {
+  if (v === 'bugs') return [['test', 'Shipped · the filer’s check'], ['airev', 'Shipped · AI check'], ['building', 'Building'], ['queued', 'Queued'],
+    ['shipping', 'Shipped · on its way to everyone'], ['done', 'Done']];
   return [['test', 'Human review'], ['show', 'Show-and-tell'], ['james', 'Waiting for approval'], ['airev', 'AI review'],
-    ['building', 'Building'], ['queued', v === 'core' ? 'Approved · waiting for the builder' : 'Filed'], ['shipping', 'Shipping'], ['done', 'Done']]
+    ['building', 'Building'], ['queued', v === 'core' ? 'Approved · waiting for the builder' : 'Queued'], ['shipping', 'Shipping'], ['done', 'Done']]
     .filter(([g]) => v === 'core' || !['show', 'james'].includes(g));
 }
 function strip(d, bins, groups) {
@@ -1016,6 +1029,11 @@ const cap = x => x ? x[0].toUpperCase() + x.slice(1) : x;
 // ---------- 0.18 cards: title; one plain line 'where it is and what's next'; ONE action area; small meta ----------
 function whereLine(i) {
   const g = i.group;
+  if (i.shipped && g === 'test') {   // 0.19: a bug, already merged and shipping; the filer checks after the fact
+    if (!i.can_review) return [`Fixed and shipping · waiting for ${i.opener || 'the filer'}’s check` + (i.agent_filed ? ' (their agent filed it)' : ''), ''];
+    return ['Fixed and shipping. Check it when you can', 'turn'];
+  }
+  if (i.shipped && g === 'airev') return [`Fixed and shipping · ${i.ai_reviewer && i.ai_reviewer !== 'any team agent' ? i.ai_reviewer + '’s' : 'an'} AI check running`, ''];
   if (g === 'test') {
     if (!i.can_review) return [`Waiting for ${i.opener || 'the filer'} to try it`, ''];
     const ob = onboxOf(i);
@@ -1026,8 +1044,8 @@ function whereLine(i) {
   if (g === 'james') return i.can_james ? ['Your turn: approve or decline', 'turn'] : ['Waiting for James or Miguel to approve', ''];
   if (g === 'airev') return [i.ai_reviewer && i.ai_reviewer !== 'any team agent' ? `Waiting for ${i.ai_reviewer}’s AI check` : 'Waiting for an AI check', ''];
   if (g === 'building') return i.blocked ? ['The builder is stuck: needs a human', 'warn'] : ['The builder is on it', ''];
-  if (g === 'queued') return [i.category === 'core' ? 'Approved · waiting for the builder' : 'Filed · waiting for the builder', ''];
-  if (g === 'shipping') return [i.ship ? i.ship.text : 'Approved · checking releases…', ''];
+  if (g === 'queued') return [(i.category === 'core' ? 'Approved · ' : 'Queued · ') + (i.wait_reason || 'Next for the builder'), i.wait_reason === 'Oscar builds this one' ? 'oscar' : ''];
+  if (g === 'shipping') return [(i.kind === 'bug' && i.closed_at ? 'Fixed · ' : '') + (i.ship ? i.ship.text : 'Approved · checking releases…'), ''];
   if (g === 'done') return [i.ship ? i.ship.text : 'Done', 'done'];
   return ['', ''];
 }
@@ -1047,6 +1065,12 @@ function itemCard(i) {
 // The one action area: exactly what is needed now, greyed with the reason for anyone else.
 function actionArea(i, inDetail) {
   const g = i.group, row = make('div', 'bd-act');
+  // 0.19: a shipped bug (AI check running, or closed and on its way to everyone): the filer can still say Doesn't work
+  if (i.kind === 'bug' && i.can_fail && (g === 'airev' || (g === 'shipping' && i.closed_at))) {
+    const no = smallBtn('Doesn’t work', b => noteAsk(row, 'What went wrong? (optional)', g === 'shipping' ? 'Reopen' : 'Send back', note => tested(i, false, note, b)));
+    row.append(make('span', 'bd-act-l', 'Still broken?'), no);
+    return row;
+  }
   if (g === 'test') {
     if (!i.can_review) {
       row.append(greyBtn('Works', i.review_rule), greyBtn('Doesn’t work', i.review_rule), make('span', 'bd-why-s', i.review_rule));
@@ -1066,7 +1090,7 @@ function actionArea(i, inDetail) {
       const lab = make('span', 'bd-act-l', why ? why : `${(sw && sw.name) || 'Switch'}: ${sw && sw.on && !box.locked ? 'on' : 'off'}`);
       row.append(trySwitch(i), lab);
     } else if (!wait && i.switch_place) row.append(...placeBits(i));
-    const yes = wait ? greyBtn('Works', wait, 'bd-mini bd-mini-go') : smallBtn('Works', b => askPop(b, i.category === 'core' ? 'Mark as works? It goes to James’ show-and-tell.' : 'Mark as works? It ships with the next release.', 'Works', () => tested(i, true, '', b)));
+    const yes = wait ? greyBtn('Works', wait, 'bd-mini bd-mini-go') : smallBtn('Works', b => askPop(b, i.category === 'core' ? 'Mark as works? It goes to James’ show-and-tell.' : i.shipped ? 'Mark as works? It closes as fixed.' : 'Mark as works? It ships with the next release.', 'Works', () => tested(i, true, '', b)));
     if (!wait) yes.classList.add('bd-mini-go');
     const no = wait ? greyBtn('Doesn’t work', wait) : smallBtn('Doesn’t work', b => noteAsk(row, 'What went wrong? (optional)', 'Send back', note => tested(i, false, note, b)));
     const btns = make('span', 'bd-act-btns'); btns.append(yes, no);
@@ -1117,7 +1141,7 @@ function afterAct(i, msg) {
 async function tested(i, works, note, b) {
   try {
     const r = await api(works ? 'api/test/works' : 'api/test/fails', { repo: i.repo, number: i.number, note });
-    afterAct(i, works ? (r.stage === 'show' ? 'Thanks — on to James’ show-and-tell.' : 'Thanks — it’s shipping.') : 'Sent back to the builder.');
+    afterAct(i, works ? (r.stage === 'show' ? 'Thanks — on to James’ show-and-tell.' : 'Thanks — it’s shipping.') : r.reopened ? 'Reopened: back to the builder.' : 'Sent back to the builder.');
   } catch (err) { pop(b, '', err.message); }
 }
 async function james(i, decision, note, b) {
@@ -1155,7 +1179,7 @@ function updateFor(v) {
 // ---------- 0.18 Goals: the home tab. One larger card per goal: status light, the latest human status, owners,
 // linked bugs and features by stage, and Update status (the goal's owners or James; greyed for others) ----------
 const LIGHT = { green: 'On track', yellow: 'At risk', red: 'Blocked' };
-const STAGE_WORD = { test: 'human review', show: 'show-and-tell', james: 'waiting for approval', airev: 'AI review', building: 'building', queued: 'filed', shipping: 'shipping', done: 'done' };
+const STAGE_WORD = { test: 'human review', show: 'show-and-tell', james: 'waiting for approval', airev: 'AI review', building: 'building', queued: 'queued', shipping: 'shipping', done: 'done' };
 function renderGoals(d, keep, order) {
   const list = (d.groups.goals || []).filter(keep);
   if (order) list.sort(order);
@@ -1186,19 +1210,26 @@ function linkedLine(g) {
   if (!keys.length) return make('p', 'bd-hint', 'No linked bugs or features yet');
   return make('p', 'bd-glinked', `${(g.linked || []).length} linked: ` + keys.map(k => `${c[k]} ${STAGE_WORD[k]}`).join(' · '));
 }
+// 0.19: a minimal goal card: title, status light + one line, owner, done list, updated ago (the rest is in the detail)
 function goalCard(g) {
-  const c = make('article', 'bd-card bd-goal');
+  const c = make('article', 'bd-card bd-goal bd-goal-min');
   const top = make('div', 'bd-card-top');
   const h = tapTarget('bd-title', () => openDetail(g)); h.textContent = g.title;
   top.append(h, ownerChips(g));
   if ((g.assignees || []).length > 1) top.classList.add('multi');
-  c.append(top, statusBits(g.status), linkedLine(g));
-  const act = make('div', 'bd-act');
-  act.append(g.can_status ? smallBtn('Update status', b => statusForm(g, act, b)) : greyBtn('Update status', g.status_rule));
-  if (!g.can_status) act.append(make('span', 'bd-why-s', g.status_rule));
-  c.append(act);
+  c.append(top);
+  const s = g.status, line = make('p', 'bd-gline');
+  line.append(make('span', 'bd-light ' + (s ? s.color : 'none')));
+  const word = make('b', 'bd-gword' + (s ? '' : ' none'), s ? (LIGHT[s.color] || s.word) : 'No status yet');
+  line.append(word);
+  if (s && s.text) { const t = make('span', 'bd-gone', ' · ' + s.text.replace(/\s+/g, ' ')); t.title = s.text; line.append(t); }
+  c.append(line);
   const p = g.progress || {};
-  c.append(make('p', 'bd-hint', [`${repoName(g.repo)} #${g.number}`, p.total ? `done-list ${p.done} of ${p.total}` : '', `${g.comments || 0} comments`].filter(Boolean).join(' · ')));
+  const meta = [p.total ? `Done list ${p.done}/${p.total}` : 'No done list', s ? `updated ${ago(s.at)}` : '', s && s.stale ? 'status is old' : ''].filter(Boolean);
+  const m = make('p', 'bd-hint bd-gmeta', meta.join(' · '));
+  if (p.total) m.title = 'Ticked items on the goal’s done list (its checkboxes)';
+  c.append(m);
+  if (g.turn && g.can_status) { const act = make('div', 'bd-act'); act.append(smallBtn('Update status', b => statusForm(g, act, b))); c.append(act); }
   return c;
 }
 // Pick a colour, write one or two sentences, confirm. Saved as a comment 'Status: <colour>' then the text.
@@ -1274,6 +1305,7 @@ function roles(i) {
   r.hidden = !who;
   if (!who) return;
   if (goal) { r.textContent = 'Human-led goal, never built by the builder · its owners or James post status · only James closes it'; return; }
+  if (i.category === 'bug' || i.kind === 'bug') { r.textContent = `Reported by ${who} · merged and shipping as soon as it’s built · then an AI check by their agent and ${who}’s own check · Doesn’t work reopens it`; return; }
   r.textContent = `Filed by ${who} · AI review by their agent · ${who} tries it` + (i.category === 'core' ? ' · James or Miguel approves before building, James after a show-and-tell' : '') + ' · then Shipping until it’s in a release for everyone';
 }
 function openDetail(i, toAct) {
@@ -1655,11 +1687,31 @@ function tryList() {
 }
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
+// ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
+const PAGE_VERSION = '0.19.0';
+function newerBar(v) {
+  let b = el('newer');
+  if (!b) {
+    b = make('div', 'bd-newer'); b.id = 'newer'; b.setAttribute('role', 'status');
+    const t = make('span', 'bd-newer-t'), go = make('button', 'bd-newer-go', 'Reload'); go.type = 'button';
+    go.onclick = () => location.reload();
+    b.append(t, document.createTextNode(' · '), go); document.body.append(b);
+  }
+  b.querySelector('.bd-newer-t').textContent = 'Tracker updated';
+  b.title = `This page is ${PAGE_VERSION}; the Tracker now runs ${v}.`;
+  b.hidden = false;
+}
+async function checkVersion() {
+  try { const h = await getJSON('healthz'); if (h && h.version && h.version !== PAGE_VERSION) newerBar(h.version); } catch (_) {}
+}
+setInterval(checkVersion, 120000);
+setTimeout(checkVersion, 5000);
+
 // ---------- start: refresh quietly on focus and every minute ----------
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.18.2' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.19.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
