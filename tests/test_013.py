@@ -388,6 +388,41 @@ class BuiltInClientId(unittest.TestCase):
         if S.GITHUB_APP_CLIENT_ID:
             self.assertTrue(S.is_github_app_client(S.GITHUB_APP_CLIENT_ID))
 
+    def test_0161_github_app_is_built_in_default(self):
+        if os.environ.get('GITHUB_APP_CLIENT_ID'):
+            self.skipTest('env overrides the built-in GitHub App')
+        self.assertEqual(S.GITHUB_APP_CLIENT_ID, 'Iv23li1x6wuDUDj6Herx')
+        self.assertEqual(S.DEFAULT_GITHUB_CLIENT_ID, 'Iv23li1x6wuDUDj6Herx')
+        reset({})
+        info = S.client_id_info()
+        self.assertEqual((info['client_id'], info['source'], info['kind'], info['scope']),
+                         ('Iv23li1x6wuDUDj6Herx', 'built-in', 'github-app', ''))
+        self.assertEqual(info['fallback'], 'Ov23liRmzoKiwejdVDOo')
+        GH.device_asks[:] = []
+        orig = S.device_run
+        S.device_run = lambda flow: None
+        try:
+            S.device_start('p@x')
+        finally:
+            S.device_run = orig
+        self.assertEqual(GH.device_asks[-1], {'client_id': 'Iv23li1x6wuDUDj6Herx'}, 'no repo scope for the GitHub App')
+
+    def test_0161_saved_oauth_session_keeps_working(self):
+        """Someone signed in through the classic OAuth App before 0.16.1 keeps their token until they sign in again."""
+        reset({})
+        a = S.accounts()
+        a['people']['p@x'] = {'token': 'gho_good_aaaaaaaaaaaaaaaaaaaaaaaa', 'login': 'hacalastudio', 'kind': 'oauth', 'via': 'github',
+                              'scopes': 'read:org, repo', 'saved_at': 1}
+        S._write('accounts.json', a)
+        GH.refresh_seen[:] = []
+        _, acct = S.account_for('p@x')
+        self.assertEqual(acct['token'], 'gho_good_aaaaaaaaaaaaaaaaaaaaaaaa')
+        st = S.status('p@x')
+        self.assertEqual((st['account'] or {}).get('login'), 'hacalastudio')
+        self.assertFalse(st.get('refused'))
+        self.assertEqual(GH.refresh_seen, [], 'an OAuth App token is never refreshed with the new client id')
+        self.assertIn('p@x', S.accounts()['people'])
+
 
 class GithubAppSignIn(unittest.TestCase):
     """0.15: a GitHub App's device-flow token expires (8 h) and renews itself with its refresh token (no secret)."""

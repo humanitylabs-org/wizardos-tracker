@@ -27,7 +27,7 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.16.0'
+VERSION = '0.16.1'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -515,8 +515,10 @@ _device = {}  # person key -> flow (device_code stays on the box, never returned
 # A client id is public, not a secret. 0.15: the humanitylabs-org 'WizardOS Tracker' GitHub App (Device Flow, expiring
 # user tokens, installed on the org only) becomes the default once it exists; the classic OAuth App stays as the fallback
 # (its 'repo' scope reaches every repo a person has, and GitHub keeps only 10 of its tokens per person, so new sign-ins
-# on other boxes silently revoke old ones).
-GITHUB_APP_CLIENT_ID = os.environ.get('GITHUB_APP_CLIENT_ID') or None
+# on other boxes silently revoke old ones). 0.16.1: the GitHub App exists (app id 5676161, installed on humanitylabs-org)
+# and is the built-in default; env GITHUB_APP_CLIENT_ID still overrides. People already signed in through the OAuth App
+# keep their saved token (it never refreshes and needs no client id) until they sign in again.
+GITHUB_APP_CLIENT_ID = os.environ.get('GITHUB_APP_CLIENT_ID') or 'Iv23li1x6wuDUDj6Herx'
 LEGACY_OAUTH_CLIENT_ID = 'Ov23liRmzoKiwejdVDOo'
 DEFAULT_GITHUB_CLIENT_ID = GITHUB_APP_CLIENT_ID or LEGACY_OAUTH_CLIENT_ID
 
