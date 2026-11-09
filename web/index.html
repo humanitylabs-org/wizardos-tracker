@@ -18,7 +18,7 @@
   <div class="wz-app bd-app">
     <main class="wz-scroll bd-scroll" id="scroll">
       <!-- 0.12.2: tiny account control, top right -->
-      <p class="bd-acct" id="acct"><span class="bd-fresh" id="fresh" aria-live="polite"></span><button type="button" class="bd-reload" id="reload" aria-label="Refresh now" title="Refresh now" hidden><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"/></svg></button><span id="acct-name" hidden></span> <button type="button" class="bd-acct-act" id="acct-act">Sign in</button></p>
+      <p class="bd-acct" id="acct"><span class="bd-fresh" id="fresh" aria-live="polite"></span><button type="button" class="bd-reload" id="reload" aria-label="Refresh now" title="Refresh now" hidden><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"/></svg></button><span id="acct-name" hidden></span> <button type="button" class="bd-acct-act" id="acct-act">Sign in</button> <button type="button" class="bd-acct-act" id="settings-btn" aria-haspopup="dialog">Settings</button></p>
       <!-- Not signed in: one card, one field. -->
       <section id="signin" class="wz-card bd-signin" hidden>
         <h1 class="bd-h1">Sign in with GitHub</h1>
@@ -55,6 +55,7 @@
             <button type="button" role="tab" data-view="goals" aria-selected="true">Goals</button>
             <button type="button" role="tab" data-view="features" aria-selected="false">Features</button>
             <button type="button" role="tab" data-view="bugs" aria-selected="false">Bugs</button>
+            <button type="button" role="tab" data-view="wizards" aria-selected="false">Wizards</button>
           </div>
           <button type="button" class="bd-toggle" id="builder" role="switch" aria-checked="false" aria-label="Builder" aria-describedby="builder-state">
             <span class="bd-ctl-name" aria-hidden="true">Builder</span>
@@ -63,26 +64,17 @@
           </button>
         </div>
 
-        <!-- The assembly line (0.13): Queued → Building → AI review → Human review → Done, numbers first, each bin with
-             its own tiny stat. Tap a bin to show only that stage; ⓘ says who does it. Two return arrows to Building
-             (from AI review and from Human review) carry their kick-back rates. -->
-        <div class="bd-flow" id="flow" role="group" aria-label="How work moves">
-          <ol class="bd-steps" id="steps"></ol>
-          <div class="bd-ctls" id="ctl" role="group" aria-label="Targets and who does each step"></div>
-          <p class="bd-loop bd-loops" id="loop"><i class="bd-loop2" aria-hidden="true"></i><button type="button" class="bd-kick bd-kick-ai" id="kick-ai" aria-label="AI review fail goes back to Building" hidden></button><button type="button" class="bd-kick bd-kick-h" id="kick" aria-label="Doesn't work goes back to Building" hidden></button></p>
-        </div>
-
-        <!-- Bugs only: Who and Repo chip rows (multi-select, counts, All resets), and a tiny sort control. -->
-        <div class="bd-filters" id="filters" hidden>
-          <div class="bd-chips" id="c-who" role="group" aria-label="Who opened it"></div>
-          <div class="bd-chips" id="c-repo" role="group" aria-label="Repo"></div>
-        </div>
-        <div class="bd-sub">
-          <div class="bd-fs" id="f-stage" hidden><button type="button" class="bd-pick on bd-stagepick" aria-label="Show every stage"></button></div>
+        <!-- 0.17: a calm stage strip (count and name only; tap one to show just that stage). Timings, targets and the
+             return arrows live in Stats. One Filter button (person, repo) and a small Sort menu. -->
+        <div id="lists">
+          <div class="bd-flow bd-strip" role="group" aria-label="How work moves"><ol class="bd-steps" id="strip"></ol></div>
+          <div class="bd-tools">
+            <button type="button" class="bd-tool" id="filter-btn" aria-haspopup="dialog">Filter</button>
+            <button type="button" class="bd-tool" id="sort-btn" aria-haspopup="menu">Sort: Oldest</button>
+            <button type="button" class="bd-tool bd-tool-link" id="stats-btn" aria-haspopup="dialog">Stats</button>
+          </div>
+          <p class="bd-filtered" id="filtered" hidden></p>
           <p class="bd-totals" id="totals" aria-live="polite"></p>
-          <div class="bd-sort" id="sort" role="radiogroup" aria-label="Sort" hidden></div>
-        </div>
-
         <section class="bd-sec" id="sec-test" hidden>
           <h2 class="bd-sec-h">Human review <span class="bd-n" id="n-test"></span></h2>
           <div class="bd-list" id="list-test"></div>
@@ -104,6 +96,9 @@
           <div class="bd-list rows" id="list-done"></div>
         </section>
         <p class="bd-empty" id="empty" hidden></p>
+        </div>
+        <!-- 0.17 Wizards: each team Wizard the Tracker knows, its WizardOS, and every app with Update / Update all. -->
+        <section id="wizards" class="bd-wizards" hidden></section>
       </div>
       <p id="loading" class="bd-empty">Loading…</p>
     </main>
@@ -117,12 +112,40 @@
       <p id="d-labels" class="bd-meta bd-labels"></p>
       <p id="d-roles" class="bd-d-roles" hidden></p>
       <p id="d-onbox" class="bd-d-onbox" hidden></p>
-      <p id="d-steps" class="bd-d-roles" hidden></p>
+      <div id="d-switch" class="bd-d-switch" hidden></div>
+      <p id="d-steps" class="bd-d-steps" hidden></p>
+      <div id="d-goal" class="bd-d-goal" hidden></div>
+      <div id="d-act" class="bd-d-act" hidden></div>
       <div id="d-flow" class="bd-d-flow"></div>
       <div id="d-body" class="bd-d-body"></div>
       <h3 id="d-comments-h" class="bd-sec-h bd-d-h" hidden>Comments <span class="bd-n" id="d-n-comments"></span></h3>
       <ol id="d-comments" class="bd-comments"></ol>
       <p class="bd-d-foot"><button type="button" class="wz-button secondary bd-d-close" id="d-close" hidden>Mark done</button> <a id="d-gh" class="bd-link" href="#" target="_blank" rel="noopener noreferrer">Open on GitHub ↗</a></p>
+    </dialog>
+    <!-- 0.17: Stats (the old full line: timings, targets, return arrows), Filter, and the Tracker's settings. -->
+    <dialog id="stats" class="wz-sheet bd-stats" aria-labelledby="stats-h">
+      <h2 id="stats-h">Stats</h2>
+      <div class="bd-flow" id="flow" role="group" aria-label="How work moves">
+        <ol class="bd-steps" id="steps"></ol>
+        <div class="bd-ctls" id="ctl" role="group" aria-label="Targets and who does each step"></div>
+        <p class="bd-loop bd-loops" id="loop"><i class="bd-loop2" aria-hidden="true"></i><button type="button" class="bd-kick bd-kick-ai" id="kick-ai" aria-label="AI review fail goes back to Building" hidden></button><button type="button" class="bd-kick bd-kick-h" id="kick" aria-label="Doesn't work goes back to Building" hidden></button></p>
+      </div>
+      <p class="bd-meta" id="stats-note"></p>
+    </dialog>
+    <dialog id="filter" class="wz-sheet bd-filter" aria-labelledby="filter-h">
+      <h2 id="filter-h">Filter</h2>
+      <h3 class="bd-sec-h">Person</h3>
+      <div class="bd-chips" id="c-who" role="group" aria-label="Who opened it"></div>
+      <h3 class="bd-sec-h bd-d-h">Repo</h3>
+      <div class="bd-chips" id="c-repo" role="group" aria-label="Repo"></div>
+      <p class="bd-d-foot"><button type="button" class="wz-button secondary" id="filter-clear">Clear</button> <button type="button" class="wz-button" id="filter-done">Done</button></p>
+    </dialog>
+    <dialog id="settings" class="wz-sheet bd-settings" aria-labelledby="settings-h">
+      <h2 id="settings-h">Tracker settings</h2>
+      <h3 class="bd-sec-h">Try changes <span class="bd-n" id="try-n"></span></h3>
+      <p class="bd-meta">Every switch for a change in Human review. The same switches sit on each card.</p>
+      <div class="bd-list rows" id="try-list"></div>
+      <p class="bd-meta bd-d-h" id="settings-ver"></p>
     </dialog>
   </div>
 </body>

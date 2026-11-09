@@ -28,7 +28,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.16.3'
+VERSION = '0.17.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -995,7 +995,16 @@ def set_state(person, args, state, agent=False):
         # signed in with their own account (agents are refused in the human UI already). GitHub permissions
         # (Triage for agents, Write only for the builder, Owners Miguel and James) are the real enforcement.
         opener = ((cur.get('user') or {}).get('login') or '')
-        if not same_person(opener, acct.get('login') or ''):
+        if 'goal' in [l.get('name', '').lower() for l in cur.get('labels') or []]:
+            # 0.17: only James closes or reopens a goal; closing needs every done-list item ticked, or `anyway`.
+            if not goal_closer(acct.get('login') or ''):
+                raise Problem(403, f'Only {goal_closers_text()} closes a goal.', 'not_goal_closer')
+            tasks = tasks_of(cur.get('body'))
+            if state == 'closed' and cur.get('state') != 'closed' and not (tasks and all(t['done'] for t in tasks)) and args.get('anyway') is not True:
+                left = sum(1 for t in tasks if not t['done'])
+                raise Problem(409, f'{left} done-list item{"" if left == 1 else "s"} not ticked yet. Close anyway?' if tasks
+                              else 'This goal has no done-list. Close anyway?', 'not_all_done')
+        elif not same_person(opener, acct.get('login') or ''):
             who = person_of(opener) or 'whoever opened it'
             kind = 'goal' if 'goal' in [l.get('name', '').lower() for l in cur.get('labels') or []] else 'bug'
             raise Problem(403, f"Only {who} can {'close' if state == 'closed' else 'reopen'} this {kind}.", 'not_opener')
@@ -1020,7 +1029,13 @@ def set_task(person, args):
     index, checked, expect = args.get('index'), args.get('done'), args.get('text')
     if not isinstance(index, int) or isinstance(index, bool) or not isinstance(checked, bool):
         raise Problem(400, 'index must be a number and done true or false.')
-    lines = (_current(acct, full, number).get('body') or '').split('\n')
+    cur = _current(acct, full, number)
+    if 'goal' in [l.get('name', '').lower() for l in cur.get('labels') or []]:   # 0.17: owners or James tick a goal
+        ok, rule = human_rule('goal', (cur.get('user') or {}).get('login') or '',
+                              [a.get('login') for a in cur.get('assignees') or [] if isinstance(a, dict)], acct.get('login') or '')
+        if not ok:
+            raise Problem(403, rule.replace(' review this goal.', ' tick this goal’s done-list.'), 'not_reviewer')
+    lines = (cur.get('body') or '').split('\n')
     found = [i for i, l in enumerate(lines) if TASK.match(l.rstrip('\r'))]
     if not 0 <= index < len(found):
         raise Problem(409, 'The done-list changed on GitHub. Refresh and try again.')
@@ -1254,6 +1269,7 @@ def _card(node, tab):
         out['check'] = re.sub(r'^(ready (to|for) test(ing)?)[.:!\s—-]*', '', _plain(said[-1]['body'], 320), flags=re.I) if said else ''
         out['check_from'] = 'builder' if said else ''
         out['switch'], out['switch_how'] = switch_info([c.get('body') for c in said], node.get('body'))
+        out['switch_place'] = None if out['switch'] else switch_place(out['switch_how'], [c.get('body') for c in said] + [node.get('body')], repo)
         if not said:  # first real line of the description (not a "Part of #13" link line)
             lines = [_plain(x, 220) for x in re.split(r'\n\s*\n|\r?\n', node.get('body') or '')]
             out['check'] = next((x for x in lines if x and not re.fullmatch(r'(part of|closes|fixes|refs?)\s+\S*#\d+\.?', x, re.I)), '')
@@ -1301,6 +1317,33 @@ def switch_info(builder_bodies, issue_body=None):
     return None, None
 
 
+MAC_CMD = re.compile(r'defaults\s+write\s+[A-Za-z0-9_.-]+\s+[A-Za-z0-9_.-]+\s+-bool\s+(?:YES|true|1)\b')
+ENV_HOW = re.compile(r'^(?:env\s+)?[A-Z][A-Z0-9_]{2,}=\S+$|^[a-z0-9-]+/[A-Z][A-Z0-9_]{2,}\b|^env\b')
+
+
+def switch_place(how, bodies, repo):
+    """0.17: where to flip a switch the Tracker can't flip itself. {kind mac|app|box|other, text, cmd?, repo?}:
+    a Mac user default (with the exact Terminal command), a setting inside one app (the page opens that app), a box
+    knob for whoever runs the box, or the words as written."""
+    if not how:
+        return None
+    texts = [b for b in bodies or [] if isinstance(b, str)]
+    cmd = next((m.group(0) for b in reversed(texts) for m in [MAC_CMD.search(b)] if m), None)
+    name = (repo or '').split('/')[-1].lower()
+    word = re.split(r'[\s(]', how, maxsplit=1)[0]
+    if cmd or name in MAC_REPOS or 'mac user default' in ' '.join(texts).lower():
+        if not cmd and re.fullmatch(r'[A-Za-z][A-Za-z0-9_.-]{2,60}', word):
+            cmd = f'defaults write org.humanitylabs.wizard.mvp {word} -bool YES'
+        return {'kind': 'mac', 'text': f'On your Mac: {word}. Run this in Terminal, then quit and reopen Wizard.', 'cmd': cmd}
+    if ENV_HOW.search(how):
+        return {'kind': 'box', 'text': f'On the Wizard box (whoever runs it): {re.split(r"\s*\.\s+", how, maxsplit=1)[0].strip(" .")}'}
+    if 'settings' in how.lower() and name not in OFF_BOX and name not in ('wizard-ux', 'wizard-app-manager', 'wizard-agent-service'):
+        return {'kind': 'app', 'text': how if how.lower().startswith('settings') else how, 'repo': repo}
+    if how.lower().startswith('settings'):
+        return {'kind': 'settings', 'text': f'In Wizard: {how}.'}
+    return {'kind': 'other', 'text': how}
+
+
 def switch_of(builder_bodies, issue_body=None):
     return switch_info(builder_bodies, issue_body)[0]
 
@@ -1320,7 +1363,8 @@ RELEASES_REPO = os.environ.get('WIZARD_RELEASES_REPO', 'humanitylabs-org/wizard-
 STORE_INDEX = os.environ.get('WIZARD_STORE_INDEX', 'https://apps.aiwizards.com').rstrip('/')
 MAC_REPOS = {'try-wizard'}                                   # the Mac app: ships as a Mac build, not on the box
 OFF_BOX = {'wizard-os', 'wizard-app-index', 'wizard-issue-media', '.github'}   # specs, tools, websites: never on a box
-FIX_ORDER = ('Not released yet', 'Needs a Mac app build', 'Switch to For testers in Settings', 'Update WizardOS in Settings')
+MAC_FIX = 'Needs the Mac app update'
+FIX_ORDER = ('Not released yet', MAC_FIX, 'Switch to For testers in Settings', 'Update WizardOS in Settings')
 ON_TEXT, OFF_TEXT, UNKNOWN_TEXT = 'On your Wizard ✓', 'Not on your Wizard yet', 'Can’t tell if this is on your Wizard'
 _forever = {}     # immutable lookups: compare(sha, sha), manifests, version -> commit, recipe -> image commit
 _timed = {}       # key -> (time, value): release pointers, Store listings, Mac releases (10 min)
@@ -1338,8 +1382,10 @@ def delivered(node):
             continue
         repo = (x.get('repository') or {}).get('nameWithOwner')
         sha = ((x.get('mergeCommit') or {}).get('oid') or '').lower()
-        if x.get('merged') and repo and SHA40.match(sha):
-            seen[(repo.lower(), x.get('number'))] = {'repo': repo, 'number': x.get('number'), 'sha': sha, 'url': x.get('url')}
+        if x.get('merged') and repo and (SHA40.match(sha) or not sha):
+            # 0.17: a token that can't read a repo's commits gets mergeCommit null; keep the PR (sha '') so a Mac change
+            # still counts (it needs the Mac app) and anything else says it can't tell, instead of vanishing
+            seen[(repo.lower(), x.get('number'))] = {'repo': repo, 'number': x.get('number'), 'sha': sha if SHA40.match(sha) else '', 'url': x.get('url')}
         elif (x.get('state') or '').upper() == 'OPEN':
             open_prs += 1
     return list(seen.values())[:12], open_prs
@@ -1502,9 +1548,23 @@ def where(token, d, box):
     if name in OFF_BOX:
         return 'na', None, None
     if name in MAC_REPOS:
-        tag = mac_release(token, repo)
-        got = contains(token, repo, sha, tag) if tag else False
-        return ('na', None, None) if got else ('no', 'Needs a Mac app build', None) if got is False else ('unknown', None, None)
+        # 0.17: a Mac app change is only on your Wizard when the Mac app you look from is known to contain it. The page
+        # sends its Mac app version when it runs inside one; otherwise (browser, phone, unknown) it needs the Mac app.
+        mac = box.get('mac')
+        if mac and sha:
+            got = None
+            for tag in (f'mac-mvp-{mac}', f'v{mac}', mac):   # try-wizard tags Mac releases mac-mvp-<version>
+                try:
+                    got = contains(token, repo, sha, tag)
+                except Problem:   # no such tag
+                    got = None
+                if got is not None:
+                    break
+            if got:
+                return 'yes', None, None
+        return 'no', MAC_FIX, None
+    if not sha:
+        return 'unknown', None, None
     release = box.get('release')
     manifest = release_manifest(token, release) if release else None
     pinned = release_commit(manifest, repo)
@@ -1560,8 +1620,9 @@ def _box_facts(raw):
     rel = raw.get('release') if isinstance(raw.get('release'), str) and VERSION_RE.match(raw.get('release')) else None
     apps = {k: v for k, v in (raw.get('apps') or {}).items() if isinstance(k, str) and APP_ID_RE.match(k)
             and isinstance(v, str) and VERSION_RE.match(v)} if isinstance(raw.get('apps'), dict) else {}
+    mac = raw.get('mac') if isinstance(raw.get('mac'), str) and VERSION_RE.match(raw.get('mac')) else None
     return {'release': rel, 'channel': 'latest' if raw.get('channel') == 'latest' else 'stable' if raw.get('channel') == 'stable' else None,
-            'apps': dict(list(apps.items())[:40])}
+            'apps': dict(list(apps.items())[:40]), 'mac': mac}
 
 
 def on_box(person, args):
@@ -1577,7 +1638,7 @@ def on_box(person, args):
             continue
         ds = [{'repo': d['repo'], 'number': d.get('number') if isinstance(d.get('number'), int) else None, 'sha': d['sha'].lower()}
               for d in (it.get('delivers') or [])[:12] if isinstance(d, dict) and isinstance(d.get('repo'), str)
-              and REPO_FULL.match(d['repo']) and isinstance(d.get('sha'), str) and SHA40.match(d['sha'].lower())]
+              and REPO_FULL.match(d['repo']) and isinstance(d.get('sha'), str) and (SHA40.match(d['sha'].lower()) or d['sha'] == '')]
         n = it.get('open_prs') if isinstance(it.get('open_prs'), int) and not isinstance(it.get('open_prs'), bool) else 0
         items.append((it['id'], ds, n))
     token, tid = acct['token'], _tid(acct['token'])
@@ -1602,7 +1663,7 @@ def on_box(person, args):
 
 
 def board_view(person, args):
-    """One tab of the board, already filtered for the person looking."""
+    """One tab of the board (0.3 shape). 0.17: the same items for everyone; nothing is filtered by who is looking."""
     _, acct = account_for(person)
     tab = args.get('tab') or 'goals'
     if tab not in ('goals', 'test', 'issues'):
@@ -1612,17 +1673,16 @@ def board_view(person, args):
     login = (acct.get('login') or '').strip()
     scope = 'repo:' + repo if repo else 'org:' + org
     q = {'goals': f'{scope} is:issue is:open label:goal',
-         'test': f'{scope} is:issue is:open label:ready-to-test' + (f' -author:{login}' if NAME.match(login) else ''),
+         'test': f'{scope} is:issue is:open label:ready-to-test',   # 0.17: everyone sees the same items
          'issues': f'{scope} is:issue is:open -label:goal'}[tab] + ' sort:updated-desc'
     if args.get('refresh'):
         _forget(acct['token'])
     found = ((graphql(acct['token'], VIEW, {'q': q}).get('data') or {}).get('search') or {})
     nodes = [n for n in found.get('nodes') or [] if n and n.get('number')]
-    if tab == 'issues':  # bugs and unlabelled issues; ones waiting for someone else's test live in To test
+    if tab == 'issues':  # bugs and unlabelled issues; ones waiting for a test live in To test (for everyone)
         def plain_or_bug(n):
             names = {l['name'].lower() for l in (n.get('labels') or {}).get('nodes') or []}
-            mine = ((n.get('author') or {}).get('login') or '').lower() == login.lower()
-            return names <= {'bug', 'ready-to-test', 'approved', 'accepted'} and ('ready-to-test' not in names or mine)
+            return names <= {'bug', 'ready-to-test', 'approved', 'accepted'} and 'ready-to-test' not in names
         nodes = [n for n in nodes if plain_or_bug(n)]
     items = [_card(n, tab) for n in nodes]
     t, now = _tid(acct['token']), time.time()
@@ -1725,7 +1785,18 @@ def board_split(person, args):
         else:
             group = 'building' if 'building' in names else 'queued'
             card = _card(n, 'goals' if view == 'goals' else 'issues')
-        card.update(group=group, mine=mine, can_close=mine, opener=person_of(author, base), created_at=n.get('createdAt'),
+        if view == 'goals':   # 0.17: done-list, who steers, who closes, the latest builder slice
+            gf = goal_flags(n.get('body'), assignees, author, login, base)
+            said = [c for c in (n.get('comments') or {}).get('nodes') or [] if ((c.get('author') or {}).get('login') or '').lower() == BUILDER]
+            gf['slice'] = _plain(said[-1]['body'], 280) if said else ''
+            gf['slice_at'] = said[-1].get('createdAt') if said else None
+            if gf['tasks']:
+                gf['progress'] = {'done': sum(t['done'] for t in gf['tasks']), 'total': len(gf['tasks']), 'of': 'done-list items'}
+            extra = {**extra, **gf, 'can_review': False if group == 'test' else extra.get('can_review'),
+                     'review_rule': '' if group != 'test' else gf['steer_rule']}
+            if group == 'test':
+                extra.pop('reviews', None)
+        card.update(group=group, mine=mine, can_close=(extra.get('can_close_goal') if view == 'goals' else mine), opener=person_of(author, base), created_at=n.get('createdAt'),
                     labels=[l['name'] for l in (n.get('labels') or {}).get('nodes') or []], **extra)
         groups[group].append(card)
     have = {i['id'] for g in groups.values() for i in g}
@@ -2087,14 +2158,14 @@ def _targets(over):
                         out[view][TARGET_KEYS[k]] = _seconds(v)
     return out
 STEP_TEXT = {
-    'open': {'goals': '{who} opens goals and closes them once they work. Nobody else adds or closes a goal.',
+    'open': {'goals': '{who} opens goals and closes them once every done-list item is ticked. Nobody else adds or closes a goal.',
              'features': 'Anyone on the team, or their own agent, opens a feature to try and closes it once they like it.',
              'bugs': 'Anyone on the team, or their own agent, opens a bug and closes it once it works.'},
     'build': 'The WizardOS Builder writes the code, then labels it ai-review and says what to check.',
-    'ai': "The opener's agent (a goal's owner's) checks the build matches the issue: pass to Human review, or back to Building.",
+    'ai': "The opener's agent (a goal's owner's) checks the build matches the issue (for a goal: that the slice moves its next done-list item forward): pass to Human review, or back to Building.",
     'review': {'bugs': "Someone on the team, not whoever opened it, tries it and says Works or Doesn't work.",
                'features': "Someone on the team, not whoever opened it, tries it and says Works or Doesn't work.",
-               'goals': "The goal's owner, or {who}, tries it and says Works or Doesn't work."},
+               'goals': "The goal's owners, or {who}, look at the slice: Keep going (the builder takes the next done-list item) or Change direction (with a note), and tick the done-list items that are now done."},
 }
 
 
@@ -2257,7 +2328,8 @@ def steps_for(view, base=None):
          'who': [_who(t) for t in team] if view != 'goals' else [_who(t) for t in openers],
          'except': 'whoever opened it (a person and their own agent count as one)' if view != 'goals' else '',
          'about': STEP_TEXT['review'][view].format(who=goal_names), 'reviews': base['human_reviews'],
-         'next': ("Works: the opener closes it (Done). Doesn't work: back to Build." if base['human_reviews'] == 1
+         'next': (f"Keep going or Change direction: back to Build for the next slice. {goal_names} closes the goal once every done-list item is ticked." if view == 'goals'
+                  else "Works: the opener closes it (Done). Doesn't work: back to Build." if base['human_reviews'] == 1
                   else f"Works from {base['human_reviews']} different people: the opener closes it (Done). Doesn't work: back to Build.")},
     ]
 
@@ -2295,8 +2367,9 @@ def _goal_people(base):
 
 
 def human_rule(kind, opener, assignees, me, base=None):
-    """(allowed, rule text) for a human saying Works / Doesn't work. Bugs: anyone on the team except the
-    opener (a person and their own agent are one person). Goals: the goal's owners (assignees) or James."""
+    """(allowed, rule text) for the human step. Bugs and features: Works / Doesn't work by anyone on the team except
+    the opener (a person and their own agent are one person). Goals (0.17): no Works / Doesn't work; the goal's owners
+    (assignees) or James say Keep going / Change direction and tick done-list items."""
     base = base or policy_base()
     mine = person_of(me, base).lower()
     if kind == 'goal':
@@ -2305,11 +2378,109 @@ def human_rule(kind, opener, assignees, me, base=None):
         g = base['open']['goals']
         others = [] if g == 'team' else [t['name'] for t in base['team'] if t['name'].lower() in {str(n).lower() for n in g}]
         names = list(dict.fromkeys(owners + others)) or ['James']
-        rule = ('Only ' + (' or '.join(names) if len(names) < 3 else ', '.join(names[:-1]) + ' or ' + names[-1]) + ' test this goal.')
+        rule = ('Only ' + (' or '.join(names) if len(names) < 3 else ', '.join(names[:-1]) + ' or ' + names[-1]) + ' review this goal.')
         return mine in allowed, rule
     if same_person(opener, me, base):
         return False, 'You filed this, so someone else tests it.'
     return True, ''
+
+
+def goal_closer(me, base=None):
+    """0.17: only James (policy open.goals) closes or reopens a goal."""
+    base = base or policy_base()
+    return bool(me) and person_of(me, base).lower() in _goal_people(base)
+
+
+def goal_closers_text(base=None):
+    base = base or policy_base()
+    g = base['open']['goals']
+    names = [t['name'] for t in base['team'] if g != 'team' and t['name'].lower() in {str(n).lower() for n in g}]
+    return ' or '.join(names) or 'James'
+
+
+def goal_flags(body, assignees, opener, login, base=None):
+    """What the signed-in person may do on a goal: steer (owners or James), close (James, once all ticked)."""
+    base = base or policy_base()
+    tasks = tasks_of(body)
+    steer, rule = human_rule('goal', opener, assignees, login, base)
+    closer = goal_closer(login, base)
+    all_done = bool(tasks) and all(t['done'] for t in tasks)
+    return {'tasks': tasks, 'all_done': all_done, 'can_steer': steer, 'steer_rule': rule, 'can_close_goal': closer,
+            'close_rule': f'Only {goal_closers_text(base)} closes a goal.'}
+
+
+GOAL_STEP = {'keep': 'Goal step: keep going', 'redirect': 'Goal step: change direction'}
+
+
+def goal_step(person, args):
+    """POST /api/goal/step {repo, number, decision keep|redirect, note, done: [done-list indexes now done]}.
+    0.17: the human step for a goal slice (label ready-to-test on a goal). The goal's owners or James only. Keep going:
+    the slice is fine, back to Building for the next done-list item. Change direction: a note is required, back to
+    Building. Ticks the named done-list items in the issue body first. Goals never use Works / Doesn't work."""
+    _, acct = account_for(person)
+    full, number = _target(args)
+    login = acct.get('login') or 'someone'
+    base = policy_base()
+    decision = args.get('decision')
+    if decision not in GOAL_STEP:
+        raise Problem(400, 'decision must be keep or redirect.')
+    note = args.get('note') if isinstance(args.get('note'), str) else ''
+    note = note.strip()
+    if len(note) > 4000:
+        raise Problem(400, 'The note is too long (4000 characters max).')
+    if decision == 'redirect' and len(note) < 3:
+        raise Problem(400, 'Say which direction to take (a short note).', 'note_required')
+    done = args.get('done') if isinstance(args.get('done'), list) else []
+    if not all(isinstance(i, int) and not isinstance(i, bool) and 0 <= i < 200 for i in done):
+        raise Problem(400, 'done must be a list of done-list indexes.')
+    cur = _current(acct, full, number)
+    names = [l.get('name', '').lower() for l in cur.get('labels') or []]
+    if 'goal' not in names:
+        raise Problem(409, 'This is not a goal. Bugs and features use Works / Doesn\u2019t work.', 'not_goal')
+    if HUMAN_LABEL not in names:
+        raise Problem(409, 'This goal has no slice waiting for you. Refresh to see the latest.')
+    opener = ((cur.get('user') or {}).get('login') or '')
+    assignees = [a.get('login') for a in cur.get('assignees') or [] if isinstance(a, dict)]
+    ok, rule = human_rule('goal', opener, assignees, login, base)
+    if not ok:
+        raise Problem(403, rule, 'not_reviewer')
+    ticked = []
+    if done:
+        lines = (cur.get('body') or '').split('\n')
+        found = [i for i, l in enumerate(lines) if TASK.match(l.rstrip('\r'))]
+        changed = False
+        for idx in sorted(set(done)):
+            if idx >= len(found):
+                raise Problem(409, 'The done-list changed on GitHub. Refresh and try again.')
+            i = found[idx]
+            cr = '\r' if lines[i].endswith('\r') else ''
+            m = TASK.match(lines[i].rstrip('\r'))
+            ticked.append(m.group(4).strip())
+            if m.group(2) not in 'xX':
+                lines[i] = m.group(1) + 'x' + m.group(3) + m.group(4) + cr
+                changed = True
+        if changed:
+            gh(acct['token'], 'PATCH', f'/repos/{full}/issues/{number}', {'body': '\n'.join(lines)})
+    body = f'{GOAL_STEP[decision]} \u2014 @{login}'
+    if ticked:
+        body += '\n\nNow done: ' + '; '.join(ticked)
+    if note:
+        body += '\n\n' + note
+    gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
+    _drop_label(acct, full, number, HUMAN_LABEL)
+    try:
+        gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/labels', {'labels': ['building']})
+    except Problem:
+        pass
+    after = _current(acct, full, number)
+    now = [l.get('name', '').lower() for l in after.get('labels') or []]
+    if HUMAN_LABEL in now:
+        raise Problem(403, 'Your note is saved, but GitHub did not change the labels (write access to this repo is needed).')
+    with LOCK:
+        _tested[(_tid(acct['token']), f'{full}#{number}')] = time.time()
+    tasks = tasks_of(after.get('body'))
+    return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'decision': decision, 'labels': now, 'saved': True,
+            'tasks': tasks, 'all_done': bool(tasks) and all(t['done'] for t in tasks)}
 
 
 def _comment_rows(rows):
@@ -2609,8 +2780,15 @@ def issue_detail(person, args):
     rows = gh(acct['token'], 'GET', f'/repos/{full}/issues/{number}/comments?per_page=100', accept=HTML_JSON) if count else []
     who = lambda x: ((x or {}).get('user') or {}).get('login')
     kind = 'goal' if 'goal' in [str(l.get('name', '')).lower() for l in it.get('labels') or [] if isinstance(l, dict)] else 'bug'
-    return {'kind': kind, 'can_close': same_person(who(it), acct.get('login') or ''),
-            'close_rule': f'Only {person_of(who(it)) or "whoever opened it"} can close this {kind}.',
+    goal = goal_flags(it.get('body') or '', [a.get('login') for a in it.get('assignees') or [] if isinstance(a, dict)],
+                      who(it), acct.get('login') or '') if kind == 'goal' else {}
+    raw = gh(acct['token'], 'GET', f'/repos/{full}/issues/{number}') if kind == 'goal' else {}
+    if goal and isinstance(raw, dict):   # the HTML read has no markdown body; the done-list comes from the raw one
+        goal.update({k: v for k, v in goal_flags(raw.get('body') or '', [a.get('login') for a in raw.get('assignees') or [] if isinstance(a, dict)],
+                                                 who(it), acct.get('login') or '').items()})
+    return {'kind': kind, **goal,
+            'can_close': goal['can_close_goal'] if kind == 'goal' else same_person(who(it), acct.get('login') or ''),
+            'close_rule': goal['close_rule'] if kind == 'goal' else f'Only {person_of(who(it)) or "whoever opened it"} can close this {kind}.',
             'id': f'{full}#{number}', 'repo': full, 'number': number, 'title': it.get('title'), 'url': it.get('html_url'),
             'state': it.get('state'), 'author': who(it), 'opener': person_of(who(it)), 'created_at': it.get('created_at'), 'updated_at': it.get('updated_at'),
             'labels': [l.get('name') for l in it.get('labels') or [] if isinstance(l, dict)],
@@ -2646,10 +2824,12 @@ def tested(person, args, works):
         raise Problem(409, 'This is not waiting for a test any more. Refresh to see the latest.')
     opener = ((cur.get('user') or {}).get('login') or '')
     kind = 'goal' if 'goal' in names else 'bug'
+    if kind == 'goal':  # 0.17: goals are long-running; their human step is Keep going / Change direction
+        raise Problem(409, 'Goals don\u2019t use Works / Doesn\u2019t work: say Keep going or Change direction.', 'goal')
     assignees = [a.get('login') for a in cur.get('assignees') or [] if isinstance(a, dict)]
     ok, rule = human_rule(kind, opener, assignees, login, base)
     if not ok:
-        raise Problem(403, rule, 'own_item' if kind == 'bug' else 'not_reviewer')
+        raise Problem(403, rule, 'own_item')
     need = base['human_reviews']
     prog = review_progress(_issue_comments(acct, full, number, cur.get('comments') or 0), base) if need > 1 else {'done': 0, 'by': []}
     me = person_of(login, base)
@@ -2730,8 +2910,8 @@ TOOLS = [
     {'name': 'try_set', 'description': "Switch 'Try it' on or off for one item (repo owner/name + number) only when a human asked; pass their words as owner_request. Mock-up.", 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'number': {'type': 'integer'}, 'on': {'type': 'boolean'}, **ASKED}, 'required': ['repo', 'number', 'on', 'owner_request']}},
     {'name': 'board_flow', 'description': "One item's own assembly line from its GitHub label timeline: seconds spent in Queued, Building and Review, closed time, kick-backs (ready-to-test removed without a close), current stage.", 'inputSchema': {'type': 'object', 'properties': ISSUE}},
     {'name': 'targets_set', 'description': "Change one step's target time for everyone (view goals|bugs, step queued|building|ai|review|done (ai = AI review, review = Human review), seconds or '4h'/'3d') only when a human asked; pass their words as owner_request. Current targets: GET /api/policy.", 'inputSchema': {'type': 'object', 'properties': {'view': {'type': 'string', 'enum': ['goals', 'features', 'bugs']}, 'step': {'type': 'string', 'enum': ['queued', 'building', 'ai', 'review', 'done']}, 'seconds': {'description': 'Seconds (60 to 31536000) or a string like 30m, 4h, 3d, 2w.', 'type': ['integer', 'string']}, **ASKED}, 'required': ['view', 'step', 'seconds', 'owner_request']}},
-    {'name': 'ai_review_pass', 'description': "AI REVIEW (agents only). The builder hands work over with label ai-review. If you are the opener's agent (a goal's owner's agent; for openers outside the roster any team agent), check the build matches the issue's scope, then pass it on to Human review (ai-review -> ready-to-test) with a short note saying what you checked and what a human should try.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What you checked, and what the human reviewer should try.'}}, 'required': ['note']}},
-    {'name': 'ai_review_fail', 'description': "AI REVIEW (agents only). The build does not match the issue's scope: send it back to Building (removes ai-review, adds building) with a short note saying what is missing or wrong; the builder picks it up again. Counted on the AI review -> Building return arrow.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What is missing or wrong, for the builder.'}}, 'required': ['note']}},
+    {'name': 'ai_review_pass', 'description': "AI REVIEW (agents only). The builder hands work over with label ai-review. If you are the opener's agent (a goal's owner's agent; for openers outside the roster any team agent), check the build matches the issue's scope (for a goal: that this slice moves its next done-list item forward), then pass it on to Human review (ai-review -> ready-to-test) with a short note saying what you checked and what a human should try (write the steps after 'Human test:'). Bugs and features then get Works / Doesn't work from someone other than the opener; a goal slice gets Keep going / Change direction from the goal's owners or James, who also tick finished done-list items. Only James closes a goal.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What you checked, and what the human reviewer should try.'}}, 'required': ['note']}},
+    {'name': 'ai_review_fail', 'description': "AI REVIEW (agents only). The build does not match the issue's scope (for a goal: the slice does not move a done-list item forward): send it back to Building (removes ai-review, adds building) with a short note saying what is missing or wrong; the builder picks it up again. Counted on the AI review -> Building return arrow.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What is missing or wrong, for the builder.'}}, 'required': ['note']}},
     {'name': 'board_reopen', 'description': 'Reopen a Bug when a human asked you to (pass their words). Goals are refused: only humans reopen goals.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, **ASKED}, 'required': ['owner_request']}},
 ]
 CALLS = {
@@ -2765,6 +2945,7 @@ def rpc(msg):
             r = {'protocolVersion': '2025-06-18', 'capabilities': {'tools': {}}, 'serverInfo': {'name': APP_ID, 'version': VERSION},
                  'instructions': 'Tracker rules: agents may list, read, report bugs and comment. Never open, close or reopen goals on your own. A filed bug is ready to work. '
                                  'Line: Queued -> Building -> AI review (label ai-review) -> Human review (label ready-to-test) -> Done. '
+                                 "Bugs and features: Works / Doesn't work by someone other than the opener. Goals are long-running: each slice gets Keep going or Change direction from the goal's owners or James, and only James closes a goal once its done-list is ticked. "
                                  "The builder hands over with ai-review; the opener's (or goal owner's) agent then calls ai_review_pass or ai_review_fail with a short note."}
         elif m == 'tools/list':
             r = {'tools': TOOLS}
@@ -2925,6 +3106,7 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/new': lambda: new_item(who, body),
                 '/api/test/works': lambda: tested(who, body, True),
                 '/api/test/fails': lambda: tested(who, body, False),
+                '/api/goal/step': lambda: goal_step(who, body),
                 '/api/onbox': lambda: on_box(who, body),
                 '/api/builder': lambda: builder_set(who, body),
                 '/api/try': lambda: try_set(who, body),
