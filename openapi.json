@@ -2,8 +2,12 @@
   "openapi": "3.0.3",
   "info": {
     "title": "WizardOS Tracker",
-    "version": "0.16.2",
-    "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged. 0.13: two-step review (Queued → Building → AI review [label ai-review] → Human review [label ready-to-test] → Done; AI review is agents-only via MCP ai_review_pass / ai_review_fail; policy human_reviews 1|2) and Sign in with GitHub via the OAuth device flow (no client secret)."
+    "version": "0.16.3",
+    "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged. 0.13: two-step review (Queued → Building → AI review [label ai-review] → Human review [label ready-to-test] → Done; AI review is agents-only via MCP ai_review_pass / ai_review_fail; policy human_reviews 1|2) and Sign in with GitHub via the OAuth device flow (no client secret).",
+    "contact": {
+      "name": "WizardOS Tracker",
+      "url": "https://github.com/humanitylabs-org/wizardos-tracker"
+    }
   },
   "paths": {
     "/healthz": {
@@ -204,15 +208,6 @@
           },
           {
             "name": "state",
-            "in": "query",
-            "schema": {
-              "type": {
-                "type": "string"
-              }
-            }
-          },
-          {
-            "name": "accepted",
             "in": "query",
             "schema": {
               "type": {
@@ -464,50 +459,6 @@
                   },
                   "body": {
                     "type": "string"
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/issue/accept": {
-      "post": {
-        "summary": "Accept a bug (label accepted)",
-        "responses": {
-          "200": {
-            "description": "OK",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object"
-                }
-              }
-            }
-          },
-          "400": {
-            "description": "Invalid request"
-          },
-          "401": {
-            "description": "No GitHub account connected / token refused"
-          },
-          "403": {
-            "description": "GitHub token cannot do that"
-          }
-        },
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "repo": {
-                    "type": "string"
-                  },
-                  "number": {
-                    "type": "integer"
                   }
                 }
               }
@@ -1443,5 +1394,9 @@
         }
       }
     }
+  },
+  "externalDocs": {
+    "description": "Source",
+    "url": "https://github.com/humanitylabs-org/wizardos-tracker"
   }
 }
