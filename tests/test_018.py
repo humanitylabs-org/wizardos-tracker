@@ -126,7 +126,7 @@ class Shipping(unittest.TestCase):
             S.code_commit = lambda t, repo, c: c
             S.mac_release = lambda t, repo: None
             one = lambda repo, sha: S.ship_one('t', {'repo': 'humanitylabs-org/' + repo, 'sha': sha})
-            self.assertEqual(one('wizard-ux', 'a')[:2], ('done', 'Shipped in 0.3.130'))
+            self.assertEqual(one('wizard-ux', 'a')[:2], ('done', 'In For everyone 0.3.130'))
             self.assertEqual(one('wizard-ux', 'b')[:2], ('testers', 'In For testers 0.3.134'))
             self.assertEqual(one('wizard-ux', 'c')[:2], ('waiting', 'Waiting for release'))
             self.assertEqual(one('try-wizard', 'x')[:2], ('mac', 'Waiting for Mac app build'))
@@ -134,7 +134,7 @@ class Shipping(unittest.TestCase):
             st = S.ship_status('t', 'o/r#1', [{'repo': 'humanitylabs-org/wizard-ux', 'sha': 'c'}], [], 'closed', None, ['approved'])
             self.assertEqual((st['state'], st['text']), ('shipping', 'Waiting for release'))
             st = S.ship_status('t', 'o/r#2', [{'repo': 'humanitylabs-org/wizard-ux', 'sha': 'a'}], [], 'closed', None, ['approved'])
-            self.assertEqual((st['state'], st['text']), ('done', 'Shipped in 0.3.130'))
+            self.assertEqual((st['state'], st['text']), ('done', 'In For everyone 0.3.130'))
         finally:
             (S.release_pointer, S.release_manifest, S.release_commit, S.contains, S.store_listing, S.mac_release, S.code_commit, S._write) = saved
 

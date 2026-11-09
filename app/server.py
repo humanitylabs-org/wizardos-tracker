@@ -28,7 +28,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.19.0'
+VERSION = '0.19.1'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -859,8 +859,8 @@ def board_list(person=None, args=None, agent=False):
     q = f"{'repo:' + repo if repo else 'org:' + org} is:issue is:{state} label:{ {'all': 'goal,bug', 'goal': 'goal', 'bug': 'bug'}[kind] } sort:updated-desc"
     if args.get('refresh'):
         _forget(acct['token'])
-    found = ((graphql(acct['token'], SEARCH, {'q': q}).get('data') or {}).get('search') or {})
-    items = [shape(n) for n in found.get('nodes') or [] if n and n.get('number')]
+    found = ((graphql(acct['token'], SEARCH, {'q': unhide_q(q)}).get('data') or {}).get('search') or {})
+    items = [shape(n) for n in found.get('nodes') or [] if n and n.get('number') and not hidden_repo(_node_repo(n))]
     items = _merge_recent(acct['token'], items, {'org': org, 'repo': repo, 'type': kind, 'state': state})
     for i in items:
         i.pop('prs', None)
@@ -1078,7 +1078,7 @@ def repos(person):
         me = gh(acct['token'], 'GET', '/user')
         if (me.get('login') or '').lower() == org.lower():  # your own account: include private repos
             rows = [r for r in gh(acct['token'], 'GET', '/user/repos?per_page=100&affiliation=owner&sort=pushed') if r['owner']['login'].lower() == org.lower()]
-    rows = [r for r in rows if not r.get('archived') and r.get('has_issues', True)]
+    rows = [r for r in rows if not r.get('archived') and r.get('has_issues', True) and not hidden_repo(r.get('full_name'))]
     return {'org': org, 'repos': sorted([{'name': r['name'], 'full_name': r['full_name'], 'private': r.get('private', False),
                                           'can_write': bool((r.get('permissions') or {}).get('push'))} for r in rows], key=lambda r: r['name'].lower())}
 
@@ -1116,7 +1116,8 @@ def org_repos(token, org):
                     break
         except Problem:
             return hit[1] if hit else []
-    names = sorted({r['full_name'] for r in rows if isinstance(r, dict) and r.get('full_name') and not r.get('archived')}, key=str.lower)
+    names = sorted({r['full_name'] for r in rows if isinstance(r, dict) and r.get('full_name') and not r.get('archived')
+                    and not hidden_repo(r['full_name'])}, key=str.lower)
     with LOCK:
         _org_repos[key] = (time.time(), names)
     return names
@@ -1656,7 +1657,7 @@ def ship_one(token, d, base=None):
         if not sha:
             return 'unknown', 'Merged; can\u2019t tell if it\u2019s released', None
         if stable and pins.get(stable) and contains(token, repo, sha, pins[stable]):
-            return 'done', f'Shipped in {stable}', stable
+            return 'done', f'In For everyone {stable}', stable   # 0.19.1 (#7): the channel it reached
         if latest and pins.get(latest) and contains(token, repo, sha, pins[latest]):
             return 'testers', f'In For testers {latest}', latest
         return 'waiting', 'Waiting for release', None
@@ -1682,7 +1683,7 @@ def ship_status(token, iid, delivers, open_prs, state, state_reason, labels, bas
         return {'state': 'done', 'wait': None, 'text': 'Closed: not planned', 'version': None}
     kept = (_read('shipped.json', {}) or {}).get(iid) if state == 'closed' else None
     if isinstance(kept, dict) and kept.get('text'):
-        return {'state': 'done', 'wait': None, 'text': kept['text'], 'version': kept.get('version')}
+        return {'state': 'done', 'wait': None, 'text': kept_text(kept), 'version': kept.get('version')}
     if not delivers:
         if open_prs:
             return {'state': 'shipping', 'wait': 'waiting', 'text': 'Waiting for the change to merge', 'version': None}
@@ -1713,6 +1714,29 @@ def ship_status(token, iid, delivers, open_prs, state, state_reason, labels, bas
             for k in sorted(_ship, key=lambda k: _ship[k][0])[:300]:
                 _ship.pop(k, None)
     return out
+
+
+def kept_text(kept):
+    """A kept 'Shipped in 0.3.134' (a WizardOS release, before 0.19.1) reads 'In For everyone 0.3.134' now."""
+    text, v = kept.get('text') or '', kept.get('version') or ''
+    return f'In For everyone {v}' if v and text == f'Shipped in {v}' and ' ' not in v else text
+
+
+def release_of(token, delivers):
+    """0.19.1 (wizardos-tracker#7): which release has this item's merged change, from the same lookup as Shipping:
+    {text 'Shipped in Messenger 0.2.0-unified.16.34' | 'In For testers 0.3.x' | 'In For everyone 0.3.y' | 'Shipped in
+    Mac app 1.2', version}; None when no release has all of it yet (or it ships on merge)."""
+    ds = [d for d in delivers or [] if d.get('repo')]
+    if not ds:
+        return None
+    parts = [ship_one(token, d) for d in ds]
+    worst = min(parts, key=lambda p: SHIP_RANK[p[0]])
+    if worst[2]:
+        return {'text': worst[1], 'version': worst[2]}
+    if worst[0] == 'done':
+        shipped = [p for p in parts if p[2]]
+        return {'text': shipped[-1][1], 'version': shipped[-1][2]} if shipped else None
+    return None
 
 
 def _box_facts(raw):
@@ -1751,6 +1775,10 @@ def on_box(person, args):
         if hit and time.time() - hit[0] < VERDICT_SECONDS:
             return iid, hit[1]
         v = verdict(token, ds, n, box)
+        try:
+            v['release'] = release_of(token, ds)
+        except Problem:
+            v['release'] = None
         with LOCK:
             _verdicts[key] = (time.time(), v)
             if len(_verdicts) > 2000:
@@ -1777,8 +1805,8 @@ def board_view(person, args):
          'issues': f'{scope} is:issue is:open -label:goal'}[tab] + ' sort:updated-desc'
     if args.get('refresh'):
         _forget(acct['token'])
-    found = ((graphql(acct['token'], VIEW, {'q': q}).get('data') or {}).get('search') or {})
-    nodes = [n for n in found.get('nodes') or [] if n and n.get('number')]
+    found = ((graphql(acct['token'], VIEW, {'q': unhide_q(q)}).get('data') or {}).get('search') or {})
+    nodes = [n for n in found.get('nodes') or [] if n and n.get('number') and not hidden_repo(_node_repo(n))]
     if tab == 'issues':  # bugs and unlabelled issues; ones waiting for a test live in To test (for everyone)
         def plain_or_bug(n):
             names = {l['name'].lower() for l in (n.get('labels') or {}).get('nodes') or []}
@@ -1808,11 +1836,12 @@ def _view_nodes(token, q, heavy=False, limit=MAX_ITEMS, query=None):
     """Up to `limit` issues for one view, page by page."""
     nodes, after, total = [], None, 0
     rest = query or PAGES[heavy]
+    q = unhide_q(q)
     while len(nodes) < limit:
         data = graphql(token, rest, {'q': q, 'after': after}).get('data') or {}
         found = data.get('search') or {}
         total = found.get('issueCount', total)
-        nodes += [n for n in found.get('nodes') or [] if n and n.get('number')]
+        nodes += [n for n in found.get('nodes') or [] if n and n.get('number') and not hidden_repo(_node_repo(n))]
         page = found.get('pageInfo') or {}
         if not page.get('hasNextPage') or not page.get('endCursor'):
             break
@@ -1878,6 +1907,25 @@ GOAL_PAGE = 'query($q: String!, $after: String) { ' + _PAGE % (30, GOAL_FIELDS) 
 OPEN_GROUPS = ('test', 'show', 'james', 'airev', 'building', 'queued', 'shipping')
 # 0.19: the builder never picks these up (Miguel, 9 Nov): Oscar builds them directly
 BUILDER_SKIPS = ('wizardos-tracker', 'wizardos-builder')
+# 0.19.1: the board never shows items of these repos at all (Oscar fixes them directly); filtered server-side, both in
+# the GitHub search (so counts match) and on every node returned.
+HIDDEN_REPOS = ('humanitylabs-org/wizardos-tracker', 'humanitylabs-org/wizardos-builder')
+HIDDEN_Q = ''.join(f' -repo:{r}' for r in HIDDEN_REPOS)
+
+
+def hidden_repo(repo):
+    return str(repo or '').lower() in HIDDEN_REPOS
+
+
+def _node_repo(n):
+    return ((n or {}).get('repository') or {}).get('nameWithOwner') or ''
+
+
+def unhide_q(q):
+    """Add the hidden-repo exclusions to an org-wide search (a single-repo search on a hidden repo finds nothing)."""
+    if re.search(r'(?:^|\s)repo:', q) or HIDDEN_Q in q:
+        return q   # one repo: the node filter drops a hidden one
+    return q + HIDDEN_Q
 # 0.19 bug rule (Miguel, 10 Nov): a bug in the filer's check this long with no Doesn't work is closed as fixed (by the
 # builder host's sweep, builder-tick); the clock starts no earlier than the rule itself, so older items get 7 days too.
 BUG_ACCEPT_SECONDS = 7 * 86400
@@ -1921,7 +1969,7 @@ def linked_items(node, base=None):
         repo = (x.get('repository') or {}).get('nameWithOwner') or ''
         labels = [l['name'] for l in (x.get('labels') or {}).get('nodes') or [] if l]
         cat = category(repo, labels, base)
-        if cat == 'goal':
+        if cat == 'goal' or hidden_repo(repo):
             continue
         state = (x.get('state') or '').lower()
         iid = f"{repo}#{x.get('number')}"
@@ -3322,7 +3370,8 @@ def new_item(person, args):
                                          'author': made.get('author'), 'kind': 'goal' if kind == 'goal' else 'bug'}
     if made.get('labelled'):
         with LOCK:
-            _made[(_tid(acct['token']), card['id'])] = (time.time(), tab, card)
+            if not hidden_repo(card.get('repo')):   # 0.19.1: never shown, even right after filing
+                _made[(_tid(acct['token']), card['id'])] = (time.time(), tab, card)
     return {'tab': tab, 'item': card, 'warning': made.get('warning')}
 
 
