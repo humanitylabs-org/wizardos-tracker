@@ -24,14 +24,14 @@ ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Pa
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.14.2'
+VERSION = '0.15.0'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
 # 0.13: Sign in with GitHub (OAuth device flow). No client secret: only a public client id, set by a team
 # member (POST /api/settings/github-client-id), in DATA_DIR/policy.json `github_client_id`, or env GITHUB_CLIENT_ID.
 GITHUB_WEB = os.environ.get('GITHUB_WEB', 'https://github.com').rstrip('/')
-DEVICE_SCOPE = 'repo read:org'
+DEVICE_SCOPE = 'repo read:org'  # classic OAuth App only; a GitHub App's permissions come from the app, not a scope
 CLIENT_ID = re.compile(r'^[A-Za-z0-9._-]{8,80}$')
 # Only these people may open Goals in the app (GitHub logins, comma separated).
 GOAL_AUTHORS = {x.strip().lower() for x in os.environ.get('GOAL_AUTHORS', 'jdefleur').split(',') if x.strip()}
@@ -52,6 +52,9 @@ STATIC_TYPES = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; ch
 NAME = re.compile(r'^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,99})$')
 TASK = re.compile(r'^(\s*[-*+]\s+\[)([ xX])(\]\s?)(.*)$')
 LOCK = threading.Lock()
+
+
+TOKEN_DEAD = 'GitHub says your saved sign-in no longer works (it was revoked, regenerated or has expired). Sign in again.'
 
 
 class Problem(Exception):
@@ -122,9 +125,115 @@ def account_for(person=None, agent=False):
     acct = people.get(key) if key else None
     if not acct or not acct.get('token'):
         raise Problem(401, 'No GitHub account is connected in Board. Ask the owner to connect one in the app.' if agent else 'Connect your GitHub account first.')
+    if acct.get('refresh_token') and _due(acct):
+        acct = refresh_account(key, acct) or acct
     if not agent:
-        _check_person(key, acct)
+        try:
+            _check_person(key, acct)
+        except Problem as e:
+            fresh = e.reason == 'token_dead' and acct.get('refresh_token') and refresh_account(key, acct, force=True)
+            if not fresh:
+                raise
+            acct = fresh
+            _check_person(key, acct)
     return key, acct
+
+
+# ---------- 0.15: GitHub App user tokens expire (8 h); the refresh token (6 months) renews them silently ----------
+# Device-flow tokens of a GitHub App refresh with the client id alone (no client secret). A refresh token works once:
+# the new pair replaces the old one at once, under REFRESH_LOCK, so two requests never spend the same refresh token.
+
+REFRESH_EARLY = 15 * 60   # renew when less than this is left
+REFRESH_EVERY = 5 * 60    # background check, so idle boxes (and the agent's tools) stay signed in
+REFRESH_LOCK = threading.Lock()
+_renamed = {}  # token id -> the token that replaced it
+
+
+def _due(acct, now=None):
+    exp = acct.get('expires_at')
+    return bool(exp) and exp - (now or time.time()) < REFRESH_EARLY
+
+
+def _token_fields(d, now=None):
+    """The parts of a GitHub token answer the Tracker keeps (refresh fields only when GitHub sent them)."""
+    now = now or time.time()
+    out = {}
+    if isinstance(d.get('refresh_token'), str) and d['refresh_token']:
+        out['refresh_token'] = d['refresh_token']
+    for k, to in (('expires_in', 'expires_at'), ('refresh_token_expires_in', 'refresh_expires_at')):
+        try:
+            if d.get(k) is not None:
+                out[to] = int(now + int(d[k]))
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+def refresh_account(key, acct=None, force=False):
+    """Swap a person's refresh token for a new token pair. -> the updated account, or None (no refresh token,
+    GitHub refused it, or GitHub could not be reached). `acct`: the copy the caller holds; if the saved token has
+    moved on already, the saved account is returned without spending anything."""
+    with REFRESH_LOCK:
+        cur = accounts()['people'].get(key)
+        if not cur or not cur.get('refresh_token'):
+            return None
+        if acct is not None and cur.get('token') != acct.get('token'):
+            return cur
+        if not force and not _due(cur):
+            return cur
+        if cur.get('refresh_expires_at') and cur['refresh_expires_at'] <= time.time():
+            return None
+        code, d = _gh_form(GITHUB_WEB + '/login/oauth/access_token', {'client_id': cur.get('client_id') or github_client_id() or '',
+                                                                      'grant_type': 'refresh_token', 'refresh_token': cur['refresh_token']})
+        d = d if isinstance(d, dict) else {}
+        if not d.get('access_token'):
+            if d.get('error') in ('bad_refresh_token', 'unauthorized_client', 'incorrect_client_credentials'):
+                with LOCK:
+                    a = accounts()
+                    if (a['people'].get(key) or {}).get('refresh_token') == cur['refresh_token']:
+                        a['people'][key].pop('refresh_token', None)  # spent or revoked: the next sign-in replaces it
+                        a['people'][key]['refresh_failed'] = d.get('error')
+                        _write('accounts.json', a)
+            return None
+        new = {**cur, 'token': d['access_token'], 'refreshed_at': int(time.time())}
+        new.pop('refresh_failed', None)
+        new.update(_token_fields(d))
+        with LOCK:
+            a = accounts()
+            a['people'][key] = new
+            _write('accounts.json', a)
+            for k, v in list(_renamed.items()):
+                if v == cur['token']:
+                    _renamed[k] = new['token']
+            _renamed[_tid(cur['token'])] = new['token']
+        _forget(cur['token'])
+        return new
+
+
+def refresh_token_of(token):
+    """gh() got a 401 for `token`: renew the account that holds it. -> the new token, or None."""
+    if _tid(token) in _renamed:
+        return _renamed[_tid(token)]
+    for key, acct in accounts()['people'].items():
+        if acct.get('token') == token and acct.get('refresh_token'):
+            new = refresh_account(key, acct, force=True)
+            return new['token'] if new and new.get('token') != token else None
+    return None
+
+
+def refresh_loop(sleep=time.sleep, rounds=None):
+    """Renew every saved GitHub App token shortly before it expires (also refreshes the 6-month refresh token)."""
+    n = 0
+    while rounds is None or n < rounds:
+        n += 1
+        for key, acct in list(accounts()['people'].items()):
+            if acct.get('refresh_token') and _due(acct):
+                try:
+                    refresh_account(key, acct)
+                except Exception:  # noqa: BLE001 - one bad account never stops the loop
+                    pass
+        if rounds is None or n < rounds:
+            sleep(REFRESH_EVERY)
 
 
 # ---------- 0.12: team-only, human-only (the human UI; MCP tools are unchanged) ----------
@@ -219,7 +328,7 @@ def team_member(token, login, fresh=False):
     if not ok:
         g = _gql_member(token)
         if g == 'bad' or code == 401:
-            raise Problem(401, 'GitHub says your saved token no longer works (it was revoked, regenerated or has expired). Make a new token and sign in again.', 'token_dead')
+            raise Problem(401, TOKEN_DEAD, 'token_dead')
         if g is True:
             ok = True
         elif g is False:
@@ -275,7 +384,9 @@ def gate(person):
 
 
 def public_account(acct):
-    return {k: acct.get(k) for k in ('login', 'name', 'html_url', 'kind', 'scopes', 'saved_at')}
+    out = {k: acct.get(k) for k in ('login', 'name', 'html_url', 'kind', 'scopes', 'saved_at')}
+    out['renews'] = bool(acct.get('refresh_token'))
+    return out
 
 
 # ---------- GitHub client (60 s read cache per token) ----------
@@ -294,7 +405,8 @@ def _forget(token):
             _cache.pop(k, None)
 
 
-def gh(token, method, path, body=None, cache=True, accept='application/vnd.github+json'):
+def gh(token, method, path, body=None, cache=True, accept='application/vnd.github+json', _retry=True):
+    token = _renamed.get(_tid(token), token)  # a request that still holds a token refreshed meanwhile
     url = GITHUB + path
     key = (_tid(token), method, url, json.dumps(body, sort_keys=True) if body is not None else '', accept)
     if cache and method in ('GET', 'GRAPHQL'):
@@ -317,7 +429,10 @@ def gh(token, method, path, body=None, cache=True, accept='application/vnd.githu
         except ValueError:
             msg = ''
         if e.code == 401:
-            raise Problem(401, 'GitHub says your saved token no longer works (it was revoked, regenerated or has expired). Make a new token and sign in again.', 'token_dead') from None
+            new = _retry and refresh_token_of(token)  # 0.15: an expired GitHub App token renews itself once
+            if new:
+                return gh(new, method, path, body, cache, accept, _retry=False)
+            raise Problem(401, TOKEN_DEAD, 'token_dead') from None
         if e.code in (403, 429) and 'rate limit' in msg.lower():
             raise Problem(429, 'GitHub rate limit reached. Try again in a minute.') from None
         if e.code in (403, 404):
@@ -348,7 +463,7 @@ def graphql(token, query, variables, cache=True):
 
 # ---------- account ----------
 
-def connect(person, args, via='token'):
+def connect(person, args, via='token', client_id=None):
     token = args.get('token')
     if not isinstance(token, str) or not 20 <= len(token.strip()) <= 400 or any(c.isspace() for c in token.strip()):
         raise Problem(400, 'Paste a GitHub personal access token (it starts with github_pat_ or ghp_).')
@@ -372,9 +487,13 @@ def connect(person, args, via='token'):
     if not team_member(token, login):
         raise not_member_problem(token, login)
     kind = ('fine-grained' if token.startswith('github_pat_') else 'classic' if token.startswith('ghp_')
-            else 'oauth' if token.startswith('gho_') or via == 'github' else 'token')
+            else 'github-app' if token.startswith('ghu_') else 'oauth' if token.startswith('gho_') or via == 'github' else 'token')
     acct = {'token': token, 'login': user.get('login'), 'name': user.get('name'), 'avatar_url': user.get('avatar_url'),
             'html_url': user.get('html_url'), 'kind': kind, 'scopes': scopes, 'saved_at': int(time.time()), 'via': via}
+    if via == 'github':  # 0.15: a GitHub App's expiring token comes with a refresh token
+        acct.update(_token_fields(args))
+        if client_id:
+            acct['client_id'] = client_id
     with LOCK:
         a = accounts()
         key = person_key(person)
@@ -390,12 +509,22 @@ def connect(person, args, via='token'):
 _device = {}  # person key -> flow (device_code stays on the box, never returned)
 
 
-# The humanitylabs-org 'WizardOS Tracker' OAuth App (Device Flow). A client id is public, not a secret.
-DEFAULT_GITHUB_CLIENT_ID = 'Ov23liRmzoKiwejdVDOo'
+# A client id is public, not a secret. 0.15: the humanitylabs-org 'WizardOS Tracker' GitHub App (Device Flow, expiring
+# user tokens, installed on the org only) becomes the default once it exists; the classic OAuth App stays as the fallback
+# (its 'repo' scope reaches every repo a person has, and GitHub keeps only 10 of its tokens per person, so new sign-ins
+# on other boxes silently revoke old ones).
+GITHUB_APP_CLIENT_ID = os.environ.get('GITHUB_APP_CLIENT_ID') or None
+LEGACY_OAUTH_CLIENT_ID = 'Ov23liRmzoKiwejdVDOo'
+DEFAULT_GITHUB_CLIENT_ID = GITHUB_APP_CLIENT_ID or LEGACY_OAUTH_CLIENT_ID
+
+
+def is_github_app_client(cid):
+    """GitHub App client ids start Iv1./Iv23; OAuth Apps Ov23 (or 20 hex characters, older ones)."""
+    return isinstance(cid, str) and cid.startswith('Iv')
 
 
 def github_client_id():
-    """policy.json `github_client_id`, else env GITHUB_CLIENT_ID, else the team's built-in OAuth App."""
+    """policy.json `github_client_id`, else env GITHUB_CLIENT_ID, else the team's built-in app."""
     for v in (_policy_file().get('github_client_id'), os.environ.get('GITHUB_CLIENT_ID'), DEFAULT_GITHUB_CLIENT_ID):
         if isinstance(v, str) and CLIENT_ID.match(v.strip()):
             return v.strip()
@@ -405,8 +534,9 @@ def github_client_id():
 def client_id_info():
     pv = _policy_file().get('github_client_id')
     src = 'policy' if isinstance(pv, str) and CLIENT_ID.match(pv.strip()) else 'env' if os.environ.get('GITHUB_CLIENT_ID') else 'built-in' if github_client_id() else None
-    return {'set': bool(src), 'client_id': github_client_id(), 'source': src, 'scope': DEVICE_SCOPE,
-            'note': 'A GitHub OAuth App client id with Device Flow enabled. No client secret is used or stored.'}
+    return {'set': bool(src), 'client_id': github_client_id(), 'source': src, 'scope': '' if is_github_app_client(github_client_id()) else DEVICE_SCOPE,
+            'kind': 'github-app' if is_github_app_client(github_client_id()) else 'oauth-app', 'fallback': LEGACY_OAUTH_CLIENT_ID,
+            'note': 'A GitHub App (or OAuth App) client id with Device Flow enabled. No client secret is used or stored.'}
 
 
 def set_client_id(person, args):
@@ -462,13 +592,21 @@ def device_public(flow, person=None):
     return out
 
 
+def _device_code(cid):
+    fields = {'client_id': cid} if is_github_app_client(cid) else {'client_id': cid, 'scope': DEVICE_SCOPE}
+    code, d = _gh_form(GITHUB_WEB + '/login/device/code', fields)
+    return code, d if isinstance(d, dict) else {}
+
+
 def device_start(person):
     """POST /api/device/start: ask GitHub for a device code; the box polls for the token in the background."""
     cid = github_client_id()
     if not cid:
         raise Problem(404, 'Sign in with GitHub is not set up on this box yet. Use a token instead.', 'no_client_id')
-    code, d = _gh_form(GITHUB_WEB + '/login/device/code', {'client_id': cid, 'scope': DEVICE_SCOPE})
-    d = d if isinstance(d, dict) else {}
+    code, d = _device_code(cid)
+    if (code != 200 or not d.get('device_code')) and cid != LEGACY_OAUTH_CLIENT_ID and d.get('error') in ('device_flow_disabled', 'incorrect_client_credentials', 'unauthorized_client'):
+        cid = LEGACY_OAUTH_CLIENT_ID  # 0.15: the GitHub App is not set up right: the classic OAuth App still signs people in
+        code, d = _device_code(cid)
     if code != 200 or not d.get('device_code') or not d.get('user_code'):
         err = d.get('error')
         raise Problem(502, DEVICE_ERRORS.get(err) or ('Could not reach GitHub. Try again.' if not code else f'GitHub answered {code}' + (f' ({err}).' if err else '.')), err)
@@ -503,7 +641,7 @@ def device_poll_once(flow, now=None, wait=None):
     if d.get('access_token'):
         flow['device_code'] = None
         try:
-            connect(flow['person'], {'token': d['access_token']}, via='github')  # the same checks as a pasted token
+            connect(flow['person'], {**d, 'token': d['access_token']}, via='github', client_id=flow['client_id'])  # the same checks as a pasted token
             flow.update(state='done', message='Signed in.')
         except Problem as e:
             flow.update(state='refused' if e.reason in ('agent', 'not_member') else 'error', message=e.message, reason=e.reason)
@@ -1128,7 +1266,7 @@ def _card(node, tab):
                 if ((c.get('author') or {}).get('login') or '').lower() == BUILDER]
         out['check'] = re.sub(r'^(ready (to|for) test(ing)?)[.:!\s—-]*', '', _plain(said[-1]['body'], 320), flags=re.I) if said else ''
         out['check_from'] = 'builder' if said else ''
-        out['switch'] = switch_of([c.get('body') for c in said], node.get('body'))
+        out['switch'], out['switch_how'] = switch_info([c.get('body') for c in said], node.get('body'))
         if not said:  # first real line of the description (not a "Part of #13" link line)
             lines = [_plain(x, 220) for x in re.split(r'\n\s*\n|\r?\n', node.get('body') or '')]
             out['check'] = next((x for x in lines if x and not re.fullmatch(r'(part of|closes|fixes|refs?)\s+\S*#\d+\.?', x, re.I)), '')
@@ -1141,16 +1279,40 @@ def _card(node, tab):
 # 0.14 Try it: the builder names the change's feature switch in its "What to check" hand-over comment with one line
 # `Switch: <author>/<id>` (the id in the shell's tweaks catalog). The newest builder comment that has one wins; the
 # issue body is the fallback (a person may add it there). None: the change has no switch.
-SWITCH_LINE = re.compile(r'^[ \t>*_`-]*switch[*_`]*\s*:[\s*_`]*([a-z0-9][a-z0-9-]{0,39}/[a-z0-9][a-z0-9-]{0,63})[*_`]*\s*\.?\s*$',
+SWITCH_LINE = re.compile(r'^[ \t>*_`-]*switch[*_`]*\s*:[\s*_`]*([a-z0-9][a-z0-9-]{0,39}/[a-z0-9][a-z0-9-]{0,63})[*_`]*[ \t]*(?:\([^\n]*\))?\s*\.?\s*$',
                          re.I | re.M)
 
 
-def switch_of(builder_bodies, issue_body=None):
-    for body in [*reversed([b for b in builder_bodies or [] if isinstance(b, str)]), issue_body]:
-        m = SWITCH_LINE.findall(body or '') if isinstance(body, str) else []
+# 0.15: a `Switch:` line that is not a shell tweak id (a device setting, an env knob) still marks a switched change; the
+# Tracker cannot flip it, so it shows the line's words as how to turn it on.
+ANY_SWITCH_LINE = re.compile(r'^[ \t>*_`-]*switch[*_`]*\s*:[*_`]*[ \t]*(\S.*?)\s*$', re.I | re.M)
+NO_SWITCH = re.compile(r'^(none|no|n/?a|nothing|no switch|-+)(\W|$)', re.I)  # 'Switch: none. It ships live.'
+
+
+def _switch_how(text):
+    t = re.sub(r'\([^)]*\)', '', text)            # drop asides: '(off by default)', '(device setting, ...)'
+    t = re.sub(r'[`*]+|(?<![A-Za-z0-9])_+|_+(?![A-Za-z0-9])', '', t).strip(' .;:-')  # markdown marks, not WORD_WORD
+    t = re.sub(r'\s+', ' ', t).replace(' > ', ' › ')
+    return None if not t or NO_SWITCH.match(t) else t[:120]
+
+
+def switch_info(builder_bodies, issue_body=None):
+    """(tweak id or None, how-to text or None). A shell tweak id anywhere wins (newest builder comment first, then the
+    body); otherwise the newest other Switch line, as words. 'Switch: none' lines count as no switch."""
+    bodies = [b for b in [*reversed([b for b in builder_bodies or [] if isinstance(b, str)]), issue_body] if isinstance(b, str)]
+    for body in bodies:
+        m = SWITCH_LINE.findall(body)
         if m:
-            return m[-1].lower()
-    return None
+            return m[-1].lower(), None
+    for body in bodies:
+        hows = [h for h in (_switch_how(x) for x in ANY_SWITCH_LINE.findall(body)) if h]
+        if hows:
+            return None, hows[-1]
+    return None, None
+
+
+def switch_of(builder_bodies, issue_body=None):
+    return switch_info(builder_bodies, issue_body)[0]
 
 
 def board_view(person, args):
@@ -2506,4 +2668,5 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == '__main__':
     secure_start()
+    threading.Thread(target=refresh_loop, daemon=True).start()
     ThreadingHTTPServer((os.environ.get('BIND', '0.0.0.0'), int(os.environ.get('PORT', '8799'))), Handler).serve_forever()

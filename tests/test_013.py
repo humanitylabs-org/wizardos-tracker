@@ -18,9 +18,13 @@ class GH(BaseHTTPRequestHandler):
     """github.com (device flow) and api.github.com in one mock."""
     users = {'tok_miguel_aaaaaaaaaaaaaaaaaaaaaa': 'mistermizel', 'tok_james_aaaaaaaaaaaaaaaaaaaaaaa': 'jdefleur',
              'tok_jan_aaaaaaaaaaaaaaaaaaaaaaaaa': 'JanMesaric', 'gho_agent_aaaaaaaaaaaaaaaaaaaaaaa': 'defleur-agents',
-             'gho_good_aaaaaaaaaaaaaaaaaaaaaaaa': 'hacalastudio'}
+             'gho_good_aaaaaaaaaaaaaaaaaaaaaaaa': 'hacalastudio', 'ghu_new1_aaaaaaaaaaaaaaaaaaaaaaaa': 'hacalastudio',
+             'ghu_new2_aaaaaaaaaaaaaaaaaaaaaaaa': 'hacalastudio'}
+    refresh_answers = []  # queue of refresh_token grant responses
+    refresh_seen = []     # (client_id, refresh_token, has client_secret)
     token_answers = []   # queue of access_token responses
     device_answer = None
+    device_asks = []
     issues = {}          # number -> {'user', 'labels': set, 'assignees', 'comments': [(login, body)]}
     calls = []
 
@@ -71,9 +75,15 @@ class GH(BaseHTTPRequestHandler):
         body = self._body()
         GH.calls.append(('POST', self.path, login))
         if self.path == '/login/device/code':
+            GH.device_asks.append(body)
+            if body.get('client_id') == 'Iv23liBROKENAPP01':
+                return self._send(400, {'error': 'device_flow_disabled'})
             return self._send(200, GH.device_answer or {'device_code': 'dev123', 'user_code': 'ABCD-1234', 'verification_uri': 'https://github.com/login/device',
                                                         'expires_in': 900, 'interval': 5})
         if self.path == '/login/oauth/access_token':
+            if body.get('grant_type') == 'refresh_token':
+                GH.refresh_seen.append((body.get('client_id'), body.get('refresh_token'), 'client_secret' in body))
+                return self._send(200, GH.refresh_answers.pop(0) if GH.refresh_answers else {'error': 'bad_refresh_token'})
             assert body.get('grant_type') == 'urn:ietf:params:oauth:grant-type:device_code', body
             return self._send(200, GH.token_answers.pop(0) if GH.token_answers else {'error': 'authorization_pending'})
         if self.path == '/graphql':
@@ -337,6 +347,23 @@ class TrySwitch(unittest.TestCase):
         self.assertIsNone(S.switch_of([], None))
         self.assertIsNone(S.switch_of(['Switch: ../etc/passwd'], ''))
 
+    def test_switches_that_are_not_shell_tweaks_are_still_found(self):
+        # wizard-messenger#133 and wizard-os#434: real hand-over lines
+        self.assertEqual(S.switch_info(['Merged #136.\n\nSwitch: Settings > Drafts at top (device setting, localStorage messenger.draftsFirst, absent = Off)\n\nWhat to check: ...']),
+                         (None, 'Settings › Drafts at top'))
+        self.assertEqual(S.switch_info(['Merged #435.\n\nSwitch: env `WIZARD_TRAIN_HOTFIX_LANE=1` (off by default)\n']),
+                         (None, 'env WIZARD_TRAIN_HOTFIX_LANE=1'))
+        self.assertEqual(S.switch_info(['Switch: miguel/send-and-go']), ('miguel/send-and-go', None))
+        self.assertEqual(S.switch_info(['Switch: wizard/wizardos-name (Settings > Tweaks / Try new features, off by default)']),
+                         ('wizard/wizardos-name', None))
+        self.assertEqual(S.switch_info(['Fixed. What to check: tap Send.'], 'Bug body.'), (None, None))
+        self.assertEqual(S.switch_info(['Switch: none']), (None, None))
+        self.assertEqual(S.switch_info(['Switch: none. #464 was merged switched on (bug fix).']), (None, None))
+        # wizard-os#436: an older comment names a shell tweak, the newest says none for its own slice: the tweak wins
+        self.assertEqual(S.switch_info(['Switch: wizard/wizardos-name (Settings > Tweaks, off by default)', 'Switch: none. Plain text fix.']),
+                         ('wizard/wizardos-name', None))
+        self.assertEqual(S.switch_info(['Switch it on in Settings.']), (None, None))
+
     def test_review_card_carries_the_switch(self):
         node = {'repository': {'nameWithOwner': 'humanitylabs-org/wizard-ux'}, 'number': 7, 'title': 't', 'url': 'u',
                 'author': {'login': 'mistermizel'}, 'labels': {'nodes': [{'name': 'bug'}, {'name': 'ready-to-test'}]},
@@ -352,7 +379,102 @@ class TrySwitch(unittest.TestCase):
 
 class BuiltInClientId(unittest.TestCase):
     def test_default_is_team_app(self):
-        self.assertEqual(S.DEFAULT_GITHUB_CLIENT_ID, 'Ov23liRmzoKiwejdVDOo')
+        self.assertEqual(S.LEGACY_OAUTH_CLIENT_ID, 'Ov23liRmzoKiwejdVDOo')
+        self.assertEqual(S.DEFAULT_GITHUB_CLIENT_ID, S.GITHUB_APP_CLIENT_ID or S.LEGACY_OAUTH_CLIENT_ID)
+        if S.GITHUB_APP_CLIENT_ID:
+            self.assertTrue(S.is_github_app_client(S.GITHUB_APP_CLIENT_ID))
+
+
+class GithubAppSignIn(unittest.TestCase):
+    """0.15: a GitHub App's device-flow token expires (8 h) and renews itself with its refresh token (no secret)."""
+    def setUp(self):
+        reset({'github_client_id': 'Iv23liTESTAPP0001'})
+        S._write('accounts.json', {'people': {}})
+        S._renamed.clear()
+        GH.token_answers[:] = []; GH.refresh_answers[:] = []; GH.refresh_seen[:] = []; GH.device_asks[:] = []
+        GH.device_answer = None
+
+    def sign_in(self, expires_in=28800):
+        orig = S.device_run
+        S.device_run = lambda flow: None
+        try:
+            S.device_start('p@x')
+        finally:
+            S.device_run = orig
+        flow = S._device['p@x']
+        GH.token_answers[:] = [{'access_token': 'gho_good_aaaaaaaaaaaaaaaaaaaaaaaa', 'expires_in': expires_in, 'refresh_token': 'ghr_one',
+                                'refresh_token_expires_in': 15897600, 'token_type': 'bearer', 'scope': ''}]
+        S.device_run(flow, sleep=lambda s: None)
+        self.assertEqual(flow['state'], 'done')
+        return S.accounts()['people']['p@x']
+
+    def test_github_app_asks_without_scope_and_keeps_refresh_token(self):
+        acct = self.sign_in()
+        self.assertNotIn('scope', GH.device_asks[-1])
+        self.assertEqual((acct['refresh_token'], acct['client_id']), ('ghr_one', 'Iv23liTESTAPP0001'))
+        self.assertAlmostEqual(acct['expires_at'], S.time.time() + 28800, delta=5)
+        self.assertTrue(S.status('p@x')['account']['renews'])
+        self.assertNotIn('ghr_one', json.dumps(S.status('p@x')))
+        self.assertEqual(S.client_id_info()['kind'], 'github-app')
+
+    def test_oauth_app_still_asks_for_scope(self):
+        reset({'github_client_id': 'Ov23liTESTCLIENT01'})
+        S._write('accounts.json', {'people': {}})
+        self.sign_in()
+        self.assertEqual(GH.device_asks[-1].get('scope'), 'repo read:org')
+
+    def test_broken_github_app_falls_back_to_oauth_app(self):
+        reset({'github_client_id': 'Iv23liBROKENAPP01'})
+        orig = S.device_run
+        S.device_run = lambda flow: None
+        try:
+            out = S.device_start('p@x')
+        finally:
+            S.device_run = orig
+        self.assertEqual(out['state'], 'pending')
+        self.assertEqual(S._device['p@x']['client_id'], S.LEGACY_OAUTH_CLIENT_ID)
+
+    def test_refreshes_before_expiry(self):
+        self.sign_in()
+        a = S.accounts(); a['people']['p@x']['expires_at'] = int(S.time.time()) + 60; S._write('accounts.json', a)  # due now
+        GH.refresh_answers[:] = [{'access_token': 'ghu_new1_aaaaaaaaaaaaaaaaaaaaaaaa', 'expires_in': 28800, 'refresh_token': 'ghr_two',
+                                  'refresh_token_expires_in': 15897600}]
+        _, acct = S.account_for('p@x')
+        self.assertEqual((acct['token'], acct['refresh_token']), ('ghu_new1_aaaaaaaaaaaaaaaaaaaaaaaa', 'ghr_two'))
+        self.assertEqual(GH.refresh_seen, [('Iv23liTESTAPP0001', 'ghr_one', False)], 'no client secret is sent')
+        self.assertEqual(S.accounts()['people']['p@x']['token'], 'ghu_new1_aaaaaaaaaaaaaaaaaaaaaaaa')
+        S.account_for('p@x')  # fresh now: nothing more is spent
+        self.assertEqual(len(GH.refresh_seen), 1)
+
+    def test_401_refreshes_once_and_retries(self):
+        self.sign_in()
+        a = S.accounts(); a['people']['p@x']['token'] = 'ghu_expired_aaaaaaaaaaaaaaaaaaaaa'; S._write('accounts.json', a)
+        GH.refresh_answers[:] = [{'access_token': 'ghu_new2_aaaaaaaaaaaaaaaaaaaaaaaa', 'expires_in': 28800, 'refresh_token': 'ghr_three'}]
+        me = S.gh('ghu_expired_aaaaaaaaaaaaaaaaaaaaa', 'GET', '/user', cache=False)
+        self.assertEqual(me['login'], 'hacalastudio')
+        self.assertEqual(S.accounts()['people']['p@x']['refresh_token'], 'ghr_three')
+        # a request still holding the old token uses the new one without another refresh
+        self.assertEqual(S.gh('ghu_expired_aaaaaaaaaaaaaaaaaaaaa', 'GET', '/user', cache=False)['login'], 'hacalastudio')
+        self.assertEqual(len(GH.refresh_seen), 1)
+
+    def test_dead_refresh_token_asks_to_sign_in_again(self):
+        self.sign_in()
+        a = S.accounts(); a['people']['p@x']['token'] = 'ghu_expired_aaaaaaaaaaaaaaaaaaaaa'; S._write('accounts.json', a)
+        GH.refresh_answers[:] = [{'error': 'bad_refresh_token'}]
+        with self.assertRaises(S.Problem) as e:
+            S.gh('ghu_expired_aaaaaaaaaaaaaaaaaaaaa', 'GET', '/user', cache=False)
+        self.assertEqual(e.exception.reason, 'token_dead')
+        self.assertNotIn('refresh_token', S.accounts()['people']['p@x'])
+        st = S.status('p@x')
+        self.assertFalse(st['connected'])
+        self.assertIn('Sign in again', st['notice'])
+
+    def test_background_loop_renews_due_tokens(self):
+        self.sign_in()
+        a = S.accounts(); a['people']['p@x']['expires_at'] = int(S.time.time()) + 30; S._write('accounts.json', a)
+        GH.refresh_answers[:] = [{'access_token': 'ghu_new1_aaaaaaaaaaaaaaaaaaaaaaaa', 'expires_in': 28800, 'refresh_token': 'ghr_two'}]
+        S.refresh_loop(sleep=lambda s: None, rounds=1)
+        self.assertEqual(S.accounts()['people']['p@x']['token'], 'ghu_new1_aaaaaaaaaaaaaaaaaaaaaaaa')
 
 
 class AppIdentity(unittest.TestCase):

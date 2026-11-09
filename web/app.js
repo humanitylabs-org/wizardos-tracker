@@ -651,12 +651,18 @@ function loadSwitches() {
 }
 const UPDATE_NOTE = 'Update to try this';
 function tryWhy(i) {
-  if (!i.switch) return 'This change has nothing to switch on.';
+  if (!i.switch) return LIVE_NOTE;
   if (!box) return 'Checking this Wizard…';
   if (!box.ok) return box.update ? UPDATE_NOTE : 'Open the Tracker inside your Wizard to try this.';
   if (box.locked) return 'Switch to For testers in Settings to try this';
   if (!box.switches[i.switch]) return UPDATE_NOTE;   // not in this box's catalog yet
   return '';
+}
+// 0.15: bug fixes ship live, not behind a switch; a Switch line that isn't a shell tweak (a device setting, an env knob)
+// can't be flipped from here, so both get a plain line saying how to try it instead of a dead switch.
+const LIVE_NOTE = 'Live once your Wizard has the update';
+function howToTry(i) {
+  return i.switch_how ? `Turn on: ${i.switch_how}, once your Wizard has the update` : LIVE_NOTE;
 }
 function trySwitch(i) {
   const live = i.group === 'test' || (i.group == null && (i.labels || []).some(l => String(l).toLowerCase() === 'ready-to-test'));  // Human review only
@@ -719,7 +725,7 @@ function row(i, kind) {
   a.append(meta);
   if (i.group === 'airev') a.append(make('span', 'bd-aiwho', 'AI check: ' + (i.ai_reviewer || 'the opener’s agent')));
   wrap.append(a);
-  if (i.group !== 'done') wrap.append(trySwitch(i));   // 0.9: no Try it on Done rows
+  if (i.group !== 'done' && i.switch) wrap.append(trySwitch(i));   // 0.9: no Try it on Done rows; 0.15: only switched changes
   return wrap;
 }
 
@@ -757,9 +763,10 @@ function testCard(t, kind) {
   const c = make('article', 'bd-card');
   const top = make('div', 'bd-card-top');
   const h = tapTarget('bd-title', () => openDetail(t)); h.textContent = t.title;
-  top.append(h, ...(kind === 'goals' ? [ownerChips(t)] : []), trySwitch(t)); c.append(top);
+  top.append(h, ...(kind === 'goals' ? [ownerChips(t)] : []), ...(t.switch ? [trySwitch(t)] : [])); c.append(top);
   if (kind === 'goals' && (t.assignees || []).length > 1) top.classList.add('multi');
   if (t.check) c.append(make('p', 'bd-check' + (kind !== 'goals' ? ' one' : ''), t.check));
+  if (!t.switch) c.append(make('p', 'bd-how', howToTry(t)));   // 0.15: fixes ship live; nothing to switch on
   c.append(make('p', 'bd-hint', [repoName(t.repo), t.mine ? 'you' : nameOf(t.author) || t.opener || '', kind !== 'goals' ? age(t.created_at) : '', `${t.comments || 0} comments`].filter(Boolean).join(' · ')));
   const rv = t.reviews || { done: 0, need: 1, by: [] };
   if (rv.need > 1) {  // 0.13: a second, different human reviews it too

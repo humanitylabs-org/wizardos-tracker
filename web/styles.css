@@ -49,6 +49,7 @@ a.bd-title { text-decoration: none; }
 a.bd-title:hover { text-decoration: underline; }
 .bd-check { margin: 0; font-size: var(--wz-text-md); line-height: 1.45; color: var(--ink-2); overflow-wrap: anywhere; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .bd-hint { margin: 0; font-size: 12px; color: var(--ink-3); }
+.bd-how { margin: 0; font-size: var(--wz-text-sm); color: var(--ink-2); overflow-wrap: anywhere; }
 .bd-btns { display: grid; grid-template-columns: 1fr 1fr; gap: var(--wz-space-2); margin-top: 2px; }
 .bd-btns .wz-button { min-height: 48px; font-weight: 700; }
 .bd-fail { display: grid; gap: var(--wz-space-2); }
