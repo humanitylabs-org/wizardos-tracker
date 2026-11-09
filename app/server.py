@@ -26,8 +26,10 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Path(os.environ.get('APP_ROOT', '.')).resolve()
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
+SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
 VERSION = '0.16.1'
+USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
 TOKEN_URL = 'https://github.com/settings/personal-access-tokens/new'
@@ -283,7 +285,7 @@ _no_redirect = urllib.request.build_opener(_NoRedirect)
 def _gh_code(token, path):
     """(status, json or None) for one GET, no redirects followed, nothing cached. Network trouble -> (0, None)."""
     req = urllib.request.Request(GITHUB + path, headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json',
-                                                         'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'wizardos-tracker/' + VERSION})
+                                                         'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': USER_AGENT})
     try:
         with _no_redirect.open(req, timeout=15) as r:
             raw = r.read(1 << 20)
@@ -299,7 +301,7 @@ def _gql_member(token):
     Works for fine-grained tokens, which REST treats as outsiders without the org Members permission."""
     req = urllib.request.Request(GITHUB + '/graphql', data=json.dumps({'query': 'query($o: String!) { organization(login: $o) { viewerIsAMember } }',
                                                                        'variables': {'o': TEAM_ORG}}).encode(), method='POST',
-                                 headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'User-Agent': 'wizardos-tracker/' + VERSION})
+                                 headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json', 'User-Agent': USER_AGENT})
     try:
         with _no_redirect.open(req, timeout=15) as r:
             out = json.loads(r.read(1 << 20) or b'{}')
@@ -419,7 +421,7 @@ def gh(token, method, path, body=None, cache=True, accept='application/vnd.githu
             return hit[1]
     data = None if body is None else json.dumps(body).encode()
     headers = {'Authorization': 'Bearer ' + token, 'Accept': accept,
-               'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': 'wizardos-tracker/' + VERSION}
+               'X-GitHub-Api-Version': '2022-11-28', 'User-Agent': USER_AGENT}
     if data is not None:
         headers['Content-Type'] = 'application/json'
     req = urllib.request.Request(url, data=data, method='POST' if method == 'GRAPHQL' else method, headers=headers)
@@ -472,7 +474,7 @@ def connect(person, args, via='token', client_id=None):
         raise Problem(400, 'Paste a GitHub personal access token (it starts with github_pat_ or ghp_).')
     token = token.strip()
     req = urllib.request.Request(GITHUB + '/user', headers={'Authorization': 'Bearer ' + token, 'Accept': 'application/vnd.github+json',
-                                                            'User-Agent': 'wizardos-tracker/' + VERSION, 'X-GitHub-Api-Version': '2022-11-28'})
+                                                            'User-Agent': USER_AGENT, 'X-GitHub-Api-Version': '2022-11-28'})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             user = json.loads(r.read(1 << 20))
@@ -566,7 +568,7 @@ def _gh_form(url, fields):
     """POST a form to github.com (device flow endpoints), JSON back. -> (status, dict or None)."""
     req = urllib.request.Request(url, data=urlencode(fields).encode(), method='POST',
                                  headers={'Accept': 'application/json', 'Content-Type': 'application/x-www-form-urlencoded',
-                                          'User-Agent': 'wizardos-tracker/' + VERSION})
+                                          'User-Agent': USER_AGENT})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             return r.status, json.loads(r.read(1 << 16) or b'{}')
@@ -1149,7 +1151,7 @@ def avatar(person):
     if hit and time.time() - hit[0] < 3600:
         return hit[1], hit[2]
     try:
-        with urllib.request.urlopen(urllib.request.Request(url + ('&' if '?' in url else '?') + 's=96', headers={'User-Agent': 'wizardos-tracker'}), timeout=10) as r:
+        with urllib.request.urlopen(urllib.request.Request(url + ('&' if '?' in url else '?') + 's=96', headers={'User-Agent': USER_AGENT}), timeout=10) as r:
             data, kind = r.read(512 * 1024), r.headers.get('Content-Type', '')
     except (urllib.error.URLError, OSError):
         raise Problem(502, 'No picture.') from None
@@ -1464,7 +1466,7 @@ def release_commit(manifest, repo):
 def store_listing(repo):
     def get():
         try:
-            req = urllib.request.Request(f'{STORE_INDEX}/v1/apps/{repo}', headers={'User-Agent': 'wizardos-tracker/' + VERSION})
+            req = urllib.request.Request(f'{STORE_INDEX}/v1/apps/{repo}', headers={'User-Agent': USER_AGENT})
             with urllib.request.urlopen(req, timeout=8) as r:
                 d = json.loads(r.read(1024 * 1024) or b'{}')
         except (OSError, ValueError):
