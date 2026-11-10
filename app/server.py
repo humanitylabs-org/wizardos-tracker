@@ -33,7 +33,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.21.0'
+VERSION = '0.21.1'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -468,7 +468,29 @@ def gh(token, method, path, body=None, cache=True, accept='application/vnd.githu
 
 
 def graphql(token, query, variables, cache=True):
-    return gh(token, 'GRAPHQL', '/graphql', {'query': query, 'variables': variables}, cache=cache)
+    return refiled(gh(token, 'GRAPHQL', '/graphql', {'query': query, 'variables': variables}, cache=cache))
+
+
+# 0.21: a report the builder's triage step had to copy (GitHub can't transfer an issue from the private wizard-os to a
+# public repo) is opened by the builder with one line `Filed by @<login> with Report or request`. The Tracker treats
+# that person as its author everywhere (who checks it, Your turn, filters), as if the issue had been transferred.
+REFILED = re.compile(r'^Filed by @([A-Za-z0-9](?:[A-Za-z0-9-]{0,38})) with Report or request\b', re.M)
+
+
+def refiled(data):
+    stack = [data]
+    while stack:
+        x = stack.pop()
+        if isinstance(x, dict):
+            a = x.get('author')
+            if isinstance(a, dict) and (a.get('login') or '').lower() == BUILDER and isinstance(x.get('body'), str):
+                m = REFILED.search(x['body'])
+                if m:
+                    x['author'] = {**a, 'login': m.group(1)}
+            stack.extend(v for v in x.values() if isinstance(v, (dict, list)))
+        elif isinstance(x, list):
+            stack.extend(v for v in x if isinstance(v, (dict, list)))
+    return data
 
 
 # ---------- account ----------
