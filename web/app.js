@@ -916,7 +916,10 @@ const appSw = {};   // app id -> {at, ok, status, switches, busy}
 const SW_PATHS = ['/api/switches', '/api/view/switches'];
 const appSwWhere = {};   // app id -> the path that answered
 async function appSwitchApi(id, data) {
-  const init = { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } };
+  // 0.24.2: the read carries X-Wizard-Switch: 1 too. Calendar (and any app checking the owner the contract's way) answers
+  // its switch list only with it (403 owner_only without), which hid every Calendar Try it once the box catalog lacked
+  // app rows (an App Manager older than the one-catalog release).
+  const init = { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json', 'X-Wizard-Switch': '1' } };
   if (data) Object.assign(init, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Wizard-Switch': '1' }, body: JSON.stringify(data) });
   let r = null;
   for (const p of appSwWhere[id] ? [appSwWhere[id]] : SW_PATHS) {
@@ -937,13 +940,32 @@ function loadAppSwitches(id, force) {
     .catch(e => { appSw[id] = { at: Date.now(), ok: false, status: e.status || 0, switches: [] }; })
     .then(() => { if (cache[view] && !typing() && !el('appmodal').open) render(cache[view]); if (el('settings').open) tryList(); });
 }
-function appSwitchFor(i, app) {
+function appSwitchFor(i, app, byIssueOnly) {
   const st = appSw[app.id];
   if (!st) { loadAppSwitches(app.id); return null; }
   if (!st.ok) return null;
   const id = String(i.id || '').toLowerCase(), how = String(i.switch_how || '').toLowerCase();
   return st.switches.find(x => (x.issues || []).some(r => String(r).toLowerCase() === id))
-    || st.switches.find(x => x.name && how.includes(String(x.name).toLowerCase())) || null;
+    || (!byIssueOnly && st.switches.find(x => x.name && how.includes(String(x.name).toLowerCase()))) || null;
+}
+// 0.24.2: why an app's Try it can't be flipped right now (greyed, never hidden)
+function appWhy(i, app, pl) {
+  if (!app) return `Install ${repoName((pl && pl.repo) || i.repo)} first`;
+  const st = appSw[app.id];
+  if (!st || (st.busy && !st.at)) return `Checking ${app.name}…`;
+  if (!st.ok) return st.status === 404 ? `Update ${app.name} first` : st.status === 403 || st.status === 401 ? `Open ${app.name} once, then try again` : `Can’t reach ${app.name} right now`;
+  return `Update ${app.name} first`;   // it answers, but doesn't list this item's switch yet
+}
+// 0.24.2: a Try it that can't be flipped right now: greyed, the reason in its label and on tap (Miguel: never hidden)
+function greyTry(name, why, on) {
+  const b = make('button', 'bd-try'); b.type = 'button'; b.setAttribute('role', 'switch');
+  b.setAttribute('aria-disabled', 'true'); b.setAttribute('aria-label', `Try it: ${name || ''} (${why})`); b.title = why;
+  b.dataset.tryWhy = why;
+  b.append(make('i')); tryFace(b, !!on);
+  const stop = e => e.stopPropagation();
+  b.addEventListener('keydown', stop); b.addEventListener('pointerdown', stop);
+  b.onclick = e => { e.preventDefault(); e.stopPropagation(); pop(b, '', why); };
+  return b;
 }
 function appToggle(i, app, sw) {
   const b = make('button', 'bd-try bd-try-app'); b.type = 'button'; b.setAttribute('role', 'switch');
@@ -1044,7 +1066,7 @@ function modalBar() {
   d.classList.toggle('bd-has-item', !!it);
   if (!it) return;
   const tg = tryToggle(it);
-  if (tg) tw.append(tg);
+  if (tg) { tw.append(tg); const why = tryState(it).why; if (why) tw.append(make('span', 'bd-why-s bd-try-why', why)); }
   if (it.group === 'test') acts.append(verdictBtns(it, el('appmodal-bar'), tryState(it).wait));
 }
 // The live item behind the pop-up (a refresh may have replaced the object the button carried)
@@ -1311,21 +1333,38 @@ function tryState(i) {
   const ob = onboxOf(i);
   // 0.21.3: an app that already serves this item's switch has the change, whatever the release records say
   const pl = i.switch_place || null;
-  const swApp = pl && pl.kind === 'app' ? appForRepo(pl.repo) : null;
-  const hit = (i.switch_adopted && box && box.ok && box.switches[i.switch]) || (swApp ? appSwitchFor(i, swApp) : null);
+  let swApp = pl && pl.kind === 'app' ? appForRepo(pl.repo) : null;
+  let hit = (i.switch_adopted && box && box.ok && box.switches[i.switch]) || (swApp ? appSwitchFor(i, swApp) : null);
+  // 0.24.2: no Switch line, but the item's own app serves a switch naming its issue: that is its switch
+  if (!hit && !i.switch && !swApp && i.group === 'test') { const a = appForRepo(i.repo); const h = a && appSwitchFor(i, a, true); if (h) { hit = h; swApp = a; } }
   const run = updRunFor(i, ob);
   let wait = '';
   if (run) { if (run.state !== 'done') wait = run.state === 'failed' ? 'Update first: this change isn’t on your Wizard yet.' : 'Updating your Wizard…'; }
   else if (ob && ob.state === 'no' && !hit) wait = 'Update first: this change isn’t on your Wizard yet.';
-  return { ob, pl, swApp, hit, run, wait, app: swApp || appForRepo(i.repo) };
+  // 0.24.2 (Miguel): an item with a switch, core or app, ALWAYS shows Try it; when it can't be flipped now, `why` says
+  // why next to the greyed toggle ('Update Calendar first'), on the card and in the pop-up bar.
+  const has = !!(i.switch || hit || (pl && pl.kind === 'app'));
+  let why = '';
+  if (has) {
+    if (wait) {
+      const fix = (ob && ob.fix) || '';
+      why = run && run.state !== 'failed' ? `Updating ${run.name || 'your Wizard'}…`
+        : run ? `Update ${run.name || 'your Wizard'} first` : /^Update /.test(fix) ? fix + ' first' : fix || 'Update first';
+    } else if (i.switch) why = tryWhy(i);
+    else if (!hit) why = appWhy(i, swApp, pl);
+  }
+  return { ob, pl, swApp, hit, run, wait, has, why, app: swApp || appForRepo(i.repo) };
 }
-// 0.23.1: the item's Try it toggle on its own (the same state as the card's), or null when there is nothing to flip here
+// 0.23.1: the item's Try it toggle on its own (the same state as the card's). 0.24.2: never null for an item with a
+// switch: greyed (with tryState().why) when it can't be flipped right now. Null only when there is no switch at all.
 function tryToggle(i) {
   const t = tryState(i);
-  if (t.wait) return null;
-  if (i.switch) return trySwitch(i);
-  if (t.pl && t.pl.kind === 'app' && t.hit && t.swApp) return appToggle(i, t.swApp, t.hit);
-  return null;
+  if (!t.has) return null;
+  const name = (t.hit && (t.hit.name || t.hit.id)) || (box && box.ok && i.switch && box.switches[i.switch] && box.switches[i.switch].name) || i.switch || i.switch_how || '';
+  if (t.wait) return greyTry(name, t.why, t.hit && t.hit.on);
+  if (i.switch) return trySwitch(i);   // greys itself (tryWhy) when the box can't flip it
+  if (t.hit && t.swApp) return appToggle(i, t.swApp, t.hit);
+  return greyTry(name, t.why || 'Not ready to try yet', false);
 }
 // Doesn't work always asks what's wrong (Miguel, 0.23.1): the note is required and goes into the issue comment
 const WRONG = { label: 'What’s wrong?', placeholder: 'e.g. Swiping feels choppy, it should glide one day at a time', send: 'Send' };
@@ -1368,11 +1407,12 @@ function actionArea(i, inDetail) {
       row.append(need);
     }
     // 0.22: the try flow, in order: Try it (switch it on) -> Open <app> -> Works / Doesn't work
+    // 0.24.2: Try it is always there when the item has a switch (greyed with the reason when it can't flip now)
     const grp = make('div', 'bd-trygrp');
     let why = '';
-    if (!wait && i.switch) { grp.append(trySwitch(i)); why = tryWhy(i); }
-    else if (!wait && pl && pl.kind === 'app') { if (hit) grp.append(appToggle(i, swApp, hit)); else why = `${swApp ? swApp.name : repoName(pl.repo)}: ${pl.text}`; }
-    else if (!wait && pl) grp.append(...placeBits(i));
+    const tg = tryToggle(i);
+    if (tg) { grp.append(tg); why = t.why; }
+    else if (!wait && pl && pl.kind !== 'app') grp.append(...placeBits(i));
     const app = t.app;
     if (app && app.id !== 'wizardos-tracker') grp.append(openKey(smallBtn(`Open ${app.name}`, b => openApp(app.id, app.name, b, i)), i));
     else if (pl && pl.kind === 'app' && !swApp) grp.append(openKey(smallBtn('Open', b => pop(b, '', `Open ${repoName(pl.repo)} on your Wizard, then ${pl.text}.`)), i));
@@ -2126,7 +2166,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.24.1';
+const PAGE_VERSION = '0.24.2';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2171,7 +2211,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.24.1' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.24.2' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

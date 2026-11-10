@@ -35,7 +35,7 @@ class OneCatalog(unittest.TestCase):
         self.assertIn("const SWITCH_API = '/wizard-os-home/store-install/_feature-switches'", JS)
 
     def test_an_adopted_switch_counts_as_on_the_box(self):
-        self.assertIn('const hit = (i.switch_adopted && box && box.ok && box.switches[i.switch])', JS)
+        self.assertIn('let hit = (i.switch_adopted && box && box.ok && box.switches[i.switch])', JS)
 
 
 if __name__ == '__main__':
