@@ -20,11 +20,11 @@ def fn(name):
 
 class Version(unittest.TestCase):
     def test_version(self):
-        self.assertEqual(S.VERSION, '0.23.1')
-        self.assertIn("PAGE_VERSION = '0.23.1'", JS)
-        self.assertIn("version: '0.23.1'", JS)
-        self.assertIn('version: 0.23.1', (ROOT / 'wizard.md').read_text())
-        self.assertIn('"version": "0.23.1"', (ROOT / 'runtipi' / 'config.json').read_text())
+        self.assertTrue(S.VERSION >= '0.23.1')
+        self.assertIn("PAGE_VERSION = '" + S.VERSION + "'", JS)
+        self.assertIn("version: '" + S.VERSION + "'", JS)
+        self.assertIn('version: ' + S.VERSION, (ROOT / 'wizard.md').read_text())
+        self.assertIn('"version": "' + S.VERSION + '"', (ROOT / 'runtipi' / 'config.json').read_text())
 
 
 class PopupBar(unittest.TestCase):
