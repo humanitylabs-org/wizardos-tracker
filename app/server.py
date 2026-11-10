@@ -33,7 +33,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.24.5'
+VERSION = '0.25.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1141,6 +1141,21 @@ ORG_REPOS_SECONDS = 3600
 _org_repos = {}
 
 
+APP_TOPIC = 'wizard-app'
+_app_repos = {}   # full name (lower) -> has the wizard-app topic, filled by org_repos
+
+
+def view_repos(token, org, view, base=None):
+    """0.25 (Miguel): the Repo filter lists only repos that can hold this view's items. Core: the core repos; App
+    features: Wizard app repos (topic wizard-app) that are not core; Bugs: every repo."""
+    names = org_repos(token, org)
+    if view == 'core':
+        return [r for r in names if is_core(r, base)]
+    if view == 'apps':
+        return [r for r in names if not is_core(r, base) and _app_repos.get(r.lower())]
+    return names
+
+
 def org_repos(token, org):
     """Every non-archived repo of the org (names, sorted), cached an hour per token/org. Used by the Bugs
     view's Repo chips so repos with no open bugs still show (dimmed). [] when GitHub refuses."""
@@ -1174,6 +1189,9 @@ def org_repos(token, org):
                     and not hidden_repo(r['full_name'])}, key=str.lower)
     with LOCK:
         _org_repos[key] = (time.time(), names)
+        # 0.25: remember which repos are Wizard apps (topic wizard-app) for the App features Repo filter
+        _app_repos.update({r['full_name'].lower(): APP_TOPIC in (r.get('topics') or []) for r in rows
+                           if isinstance(r, dict) and r.get('full_name')})
     return names
 
 
@@ -2008,6 +2026,50 @@ BUG_ACCEPT_SECONDS = 7 * 86400
 BUG_RULE_SINCE = '2026-11-10T00:00:00Z'
 
 
+def waiting_on(card, base=None):
+    """0.25 (Miguel, 10 Nov): who an open item waits on right now, so every card and stage answers "whose move is it?".
+    -> {'who': [names], 'kind': person | agent | builder | release, 'stuck': bool}."""
+    base = base or policy_base()
+    g, who_kind = card.get('group'), 'person'
+    if g == 'test':
+        opener = card.get('opener') or ''
+        on_team = any(t['name'].lower() == opener.lower() for t in base['team'])
+        who = [opener] if on_team else ['Anyone on the team']
+    elif g == 'james':
+        who = [str(n) for n in base.get('core_approvers') or POLICY_DEFAULT['core_approvers']]
+    elif g == 'show':
+        who = [t['name'] for t in base['team'] if t['name'].lower() in james_people(base)] or ['James']
+    elif g == 'airev':
+        r = card.get('ai_reviewer') or 'any team agent'
+        who, who_kind = (['Any team agent'] if r == 'any team agent' else r.split(' or ')), 'agent'
+    elif g in ('building', 'queued', 'sorting'):
+        if card.get('blocked'):
+            who = ['Oscar']   # builder:blocked: the builder gave up and left a note; Oscar unsticks the builder
+        elif card.get('wait_reason') == 'Oscar builds this one':
+            who = ['Oscar']
+        else:
+            who, who_kind = [base['builder']['name']], 'builder'
+    elif g == 'shipping':
+        who, who_kind = ['Release'], 'release'
+    else:
+        who = []
+    return {'who': who, 'kind': who_kind, 'stuck': bool(card.get('blocked'))}
+
+
+def waiting_summary(groups):
+    """0.25: per stage, how many items wait on whom (most first) and how many are stuck: the bottleneck line."""
+    out = {}
+    for g, items in groups.items():
+        by = {}
+        for i in items:
+            name = ' or '.join((i.get('waiting_on') or {}).get('who') or [])   # 'James or Miguel' is one entry
+            if name:
+                by[name] = by.get(name, 0) + 1
+        out[g] = {'n': len(items), 'stuck': sum(1 for i in items if (i.get('waiting_on') or {}).get('stuck')),
+                  'by': sorted(([k, v] for k, v in by.items()), key=lambda kv: (-kv[1], kv[0].lower()))}
+    return out
+
+
 def queue_reason(repo):
     """Why a queued item waits: the builder takes it next, or Oscar builds it himself (the builder skips the repo)."""
     return 'Oscar builds this one' if (repo or '').split('/')[-1].lower() in BUILDER_SKIPS else 'Next for the builder'
@@ -2157,6 +2219,7 @@ def board_split(person, args):
         card.update(group=group, category=cat, kind='bug' if cat == 'bug' else 'feature', mine=same_person(author, login, base),
                     can_close=same_person(author, login, base), opener=person_of(author, base), created_at=n.get('createdAt'),
                     labels=names, blocked=any(str(l).lower().startswith('builder:blocked') for l in names), **extra)
+        card['waiting_on'] = waiting_on(card, base)
         groups[group].append(card)
     have = {i['id'] for g in groups.values() for i in g}
     for _, _, it in made:
@@ -2169,6 +2232,7 @@ def board_split(person, args):
                 groups[g].insert(0, {**it, 'group': g, 'category': cat, 'mine': own, 'can_close': own, 'can_james': ok, 'turn': ok,
                                      'wait_reason': queue_reason(it['repo']) if g == 'queued' else SORTING_NOTE if g == 'sorting' else None,
                                      'james_rule': '' if ok else JAMES_RULE['approve'], 'opener': person_of(it.get('author') or '', base)})
+                groups[g][0]['waiting_on'] = waiting_on(groups[g][0], base)
     stats = view_stats(acct['token'], org, view, cached_only=not args.get('with_stats')) or {'pending': True, 'items': [], 'done': None}
     repos_wanted = _repo_list(args.get('repos'))
     if repos_wanted:
@@ -2177,7 +2241,8 @@ def board_split(person, args):
         stats = _filter_stats(stats, keep)
     shown = sum(len(g) for g in groups.values())
     return {**common, 'steps': steps_for(sview, base), 'groups': groups, 'human_reviews': 1,
-            'repos': org_repos(acct['token'], org),
+            'repos': view_repos(acct['token'], org, view, base),
+            'waiting': waiting_summary(groups),
             'counts': {k: len(v) for k, v in groups.items()}, 'done': stats.get('done', 0),
             'stats': {**stats, 'summary': None if stats.get('pending') else summarize(stats.get('items', []))},
             'total': total, 'shown': shown, 'more': total > len(nodes),
