@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.24.4
+version: 0.24.5
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -75,6 +75,8 @@ Built from the hello-wizard template (stdlib Python, vanilla view, shared Wizard
 
 Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the change's real **feature switch on the Wizard you are looking from** — the same state as Settings › Appearance › Try new features (one shared state, `Pages/wizard-look/look.json` `tweaks`). The Tracker's page runs inside the owner's Wizard, on the shell's origin, so the browser calls the shell's owner-only same-origin route `GET/POST /wizard-os-home/store-install/_feature-switches` (wizard-app-manager `StoreHandler`, owner Tailscale login; POST also sends `X-Wizard-Store: 1`; body `{"id": "<author>/<id>", "on": bool}`). No app key, no container networking, nothing to install. Messages: on For everyone (`locked`, or a 409) "Switch to For testers in Settings to try this"; the switch is not in this box's catalog, or the box's App Manager has no route yet (404) "Update to try this"; opened outside a Wizard (no JSON answer) "Open the Tracker inside your Wizard to try this."; no switch named "This change has nothing to switch on.".
 **`Switch:` convention (builder hand-over):** the builder's "What to check" comment (the one that hands the item to AI review / Human review) ends with one line `Switch: <author>/<id>` naming the shell tweak id the change sits behind (e.g. `Switch: miguel/send-and-go`; the id in wizard-ux `wizard-os-home/tweaks/catalog.json`). The newest builder comment with such a line wins; a `Switch:` line in the issue body is the fallback; no line = nothing to switch. The server parses it (`switch_of()`, `SWITCH_LINE`) and serves it as `switch` on Human/AI review cards; Markdown emphasis or backticks around it are fine. The server-side `GET/POST /api/try` and MCP `try_status`/`try_set` still only record a per-person wish (mock-up); the view no longer calls them.
+
+**0.24.5** When an update is what blocks a Human review item, the Update button sits right next to that blocker text on every card (also items someone else reviews, the detail, the app pop-up's bar), and becomes the update's progress panel while it runs. A `Switch: <app>:<id>` line counts from any comment on the issue, not only the builder's.
 
 **0.24.4** A `Switch: <app>:<id>` line (the catalog's own id form, e.g. Movies #14 `movies:friendly-phone`) is an app switch too: a real Try it when the box catalog or the app lists it, otherwise greyed with the reason. Reasons say what is true: 'Update <app> first' only when the Store has a newer one; otherwise '<app> <version> doesn't list this switch yet' or '<app> has no switches to flip yet'.
 

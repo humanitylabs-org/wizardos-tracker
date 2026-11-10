@@ -894,3 +894,8 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 .bd-selfupd .bd-upd { flex: 1 1 100%; margin: 0; }
 /* 0.24.2: why a greyed Try it cannot be flipped right now, next to it in the pop-up bar */
 .bd-appmodal-try .bd-try-why { margin: 0; max-width: 14rem; white-space: normal; line-height: 1.2; }
+
+/* 0.24.5: an update that blocks an item: its words and the Update button side by side, on every card */
+.bd-blocker { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1 1 100%; min-width: 0; }
+.bd-blocker .bd-why-s { display: inline; margin: 0; flex: 0 1 auto; }
+.bd-blocker .bd-mini { min-height: 44px; }

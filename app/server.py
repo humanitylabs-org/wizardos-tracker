@@ -33,7 +33,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.24.4'
+VERSION = '0.24.5'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1328,6 +1328,12 @@ def _card(node, tab):
         out['check'] = re.sub(r'^(ready (to|for) test(ing)?)[.:!\s—-]*', '', _plain(said[-1]['body'], 320), flags=re.I) if said else ''
         out['check_from'] = 'builder' if said else ''
         out['switch'], out['switch_how'] = switch_info([c.get('body') for c in said], node.get('body'))
+        # 0.24.5: an app switch named the catalog way ('Switch: <app>:<id>') counts from any comment (the owner's agent
+        # links an existing app switch to its issue); the newest such line wins over the builder's words.
+        if not out['switch']:
+            named = app_switch_line([c.get('body') for c in (node.get('comments') or {}).get('nodes') or []])
+            if named:
+                out['switch_how'] = named
         out['switch_place'] = None if out['switch'] else switch_place(out['switch_how'], [c.get('body') for c in said] + [node.get('body')], repo)
         if not said:  # first real line of the description (not a "Part of #13" link line)
             lines = [_plain(x, 220) for x in re.split(r'\n\s*\n|\r?\n', node.get('body') or '')]
@@ -1401,6 +1407,19 @@ def switch_place(how, bodies, repo):
     if how.lower().startswith('settings'):
         return {'kind': 'settings', 'text': f'In Wizard: {how}.'}
     return {'kind': 'other', 'text': how}
+
+
+APP_SWITCH_LINE = re.compile(r'^[ \t>*_`-]*switch[*_`]*\s*:[\s*_`]*([a-z0-9][a-z0-9-]{0,63}:[a-z0-9][a-z0-9-]{0,63})[*_`]*[ \t]*(?:\([^\n]*\))?\s*\.?\s*$',
+                             re.I | re.M)
+
+
+def app_switch_line(bodies):
+    """0.24.5: the newest 'Switch: <app>:<switch>' line in any of these comment bodies (oldest first), lower-cased."""
+    for body in reversed([b for b in bodies or [] if isinstance(b, str)]):
+        m = APP_SWITCH_LINE.findall(body)
+        if m:
+            return m[-1].lower()
+    return None
 
 
 def switch_of(builder_bodies, issue_body=None):
