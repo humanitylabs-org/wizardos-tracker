@@ -590,7 +590,7 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
 .bd-strip .bd-bin-w { display: inline-flex; align-items: center; justify-content: center; gap: 1px; text-align: center; }
 .bd-i-s { width: 16px; height: 16px; margin: 0; }
 .bd-i-s svg { width: 11px; height: 11px; }
-.bd-goalsview .bd-strip, .bd-goalsview .bd-stats-tg, .bd-goalsview #stats, .bd-goalsview #sort-btn, .bd-goalsview #filter-btn { display: none; }
+.bd-goalsview .bd-strip, .bd-goalsview .bd-waitline, .bd-goalsview .bd-stats-tg, .bd-goalsview #stats, .bd-goalsview #sort-btn, .bd-goalsview #filter-btn { display: none; }
 .bd-goalsview .bd-tools:not(:has(> :not([hidden]):not(#sort-btn):not(#filter-btn))) { display: none; }
 .bd-bin[data-step="test"].on, .bd-bin[data-step="james"].on, .bd-bin[data-step="show"].on { border-color: var(--accent); }
 .bd-bin[data-step="test"].on .bd-bin-n { color: var(--accent); }
@@ -899,3 +899,10 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 .bd-blocker { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; flex: 1 1 100%; min-width: 0; }
 .bd-blocker .bd-why-s { display: inline; margin: 0; flex: 0 1 auto; }
 .bd-blocker .bd-mini { min-height: 44px; }
+
+/* 0.25: whose move it is (stage headings, the line under the strip) */
+.bd-sec-who { font-weight: 500; letter-spacing: 0; text-transform: none; color: var(--ink-2); }
+.bd-waitline { margin: var(--wz-space-2) 0 0; padding: 0 4px; font-size: var(--wz-text-sm); color: var(--ink-2); line-height: 1.5; }
+.bd-waitline b { color: var(--ink); font-weight: 650; }
+.bd-wait-k { color: var(--ink-3); }
+.bd-wait-p.warn { color: var(--bd-warn); }

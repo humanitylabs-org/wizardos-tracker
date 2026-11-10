@@ -399,6 +399,7 @@ function render(d) {
   const bins = binsOf(d.view);
   strip(d, bins, groups);
   flow(d, groups, doneN, st, hist);
+  waitLine(d.view, groups);
   const only = stage[d.view];
   const bin = bins.find(b => b.key === only);
   const showing = g => !only ? g !== 'done' : (bin ? bin.groups.includes(g) : false);
@@ -421,6 +422,8 @@ function render(d) {
     any = true;
     const s = make('section', 'bd-sec'); s.id = 'sec-' + g;
     const h = make('h2', 'bd-sec-h', title + ' '); h.append(make('span', 'bd-n', String(list.length)));
+    const wo = whoWaits(list);   // 0.25: whose move it is, right on the stage heading
+    if (wo) h.append(make('span', 'bd-sec-who', '· waiting on ' + wo));
     const l = make('div', 'bd-list'); l.replaceChildren(...list.map(itemCard));
     s.append(h, l); secs.push(s);
   }
@@ -434,6 +437,34 @@ function render(d) {
   if (only === 'done' && !groups.done) { el('empty').hidden = false; el('empty').textContent = dc.error || 'Loading…'; return; }
   el('empty').textContent = only ? `Nothing in ${(bin || {}).word || ''} here${whoSet.size || chosen.size ? ' with this filter' : ''}.`
     : whoSet.size || chosen.size ? 'Nothing here with this filter.' : EMPTY[d.view];
+}
+// 0.25 (Miguel, 10 Nov): every tab answers "who has it for action?" and "where is it stuck?" in one line under the strip.
+const WAIT_VERB = { test: 'to check', james: 'to approve', show: 'show-and-tell', airev: 'AI check', building: 'building', queued: 'queued', sorting: 'sorting' };
+function whoWaits(list) {
+  const by = new Map();
+  for (const i of list) { const w = ((i.waiting_on || {}).who || []).join(' or '); if (w) by.set(w, (by.get(w) || 0) + 1); }
+  const names = [...by.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  if (!names.length) return '';
+  return names.length === 1 ? names[0][0] : names.map(([w, n]) => `${w} ${n}`).join(', ');
+}
+function waitLine(v, groups) {
+  const p = el('waitline'); if (!p) return;
+  const people = new Map();   // who -> [[stage, n, stuck]]
+  for (const g of Object.keys(WAIT_VERB)) for (const i of groups[g] || []) {
+    const wo = i.waiting_on || {};
+    for (const w of [(wo.who || []).join(' or ')].filter(Boolean)) {   // 'James or Miguel' is one entry, not two
+      const key = wo.stuck ? 'stuck' : (v === 'bugs' && g === 'airev' ? 'airev' : g);
+      const m = people.get(w) || new Map(); m.set(key, (m.get(key) || 0) + 1); people.set(w, m);
+    }
+  }
+  const verb = k => k === 'stuck' ? 'stuck (builder gave up)' : WAIT_VERB[k];
+  const rows = [...people.entries()].map(([w, m]) => [w, [...m.values()].reduce((a, b) => a + b, 0), m]).sort((a, b) => b[1] - a[1]);
+  p.hidden = !rows.length;
+  p.replaceChildren(make('span', 'bd-wait-k', 'Waiting on '), ...rows.flatMap(([w, , m], n) => {
+    const bit = make('span', 'bd-wait-p' + (m.has('stuck') ? ' warn' : ''));
+    bit.append(make('b', '', w), document.createTextNode(' ' + [...m.entries()].map(([k, c]) => `${c} ${verb(k)}`).join(', ')));
+    return n ? [document.createTextNode(' · '), bit] : [bit];
+  }));
 }
 // 0.17: 'Filtered: Jan · wizard-ux ×' only when a filter is set; × clears it.
 function filteredLine(whoSet, chosen, people, repos) {
@@ -654,7 +685,7 @@ function binsOf(v) {
   const tail = [{ key: 'airev', word: 'AI review', groups: ['airev'] }, { key: 'test', word: 'Human review', groups: ['test'] }];
   const end = [{ key: 'shipping', word: 'Shipping', groups: ['shipping'] }, { key: 'done', word: 'Done', groups: ['done'] }];
   if (v === 'core') return [{ key: 'james', word: 'Waiting for approval', groups: ['sorting', 'james'], tip: 'James or Miguel approves before the builder starts' },
-    { key: 'building', word: 'Building', groups: ['queued', 'building'], info: 'corebuild' }, ...tail,
+    { key: 'building', word: 'Build queue', groups: ['queued', 'building'], info: 'corebuild' }, ...tail,
     { key: 'show', word: 'Show-and-tell', groups: ['show'] }, ...end];
   // 0.20 (Miguel): shipping never waits on humans. Shipped = merged, on its way (AI check running); Human check = the filer's
   // sanity check, any time after Shipped; Checked = they said Works, or 7 days with no Doesn't work. Release is shown apart.
@@ -1297,8 +1328,9 @@ function bugLine(i) {
   const g = i.group;
   const rel = g === 'shipping' || g === 'done' ? (i.ship ? i.ship.text : '') : ((onboxOf(i) || {}).release || {}).text;
   const ship = shippedText(rel);
-  if (g === 'test') return i.can_review ? [ship + ' · Your turn: check it', 'turn'] : [ship + ' · Human check pending', ''];
-  if (g === 'airev') return [ship + ' · Human check pending', ''];
+  const by = ((i.waiting_on || {}).who || []).join(' or ');
+  if (g === 'test') return i.can_review ? [ship + ' · Your turn: check it', 'turn'] : [ship + ' · Waiting for ' + (by || i.opener || 'the filer') + ' to check it', ''];
+  if (g === 'airev') return [ship + ' · ' + (by && by !== 'Any team agent' ? by + '’s AI check' : 'AI check') + ', then ' + (i.opener || 'the filer') + ' checks it', ''];
   const ck = i.checked ? i.checked.text : 'Checked';
   return [ship + ' · ' + ck, g === 'done' ? 'done' : ''];
 }
@@ -1314,7 +1346,8 @@ function whereLine(i) {
   if (g === 'show') return i.can_james ? ['Your turn: show-and-tell', 'turn'] : ['Waiting for James’ show-and-tell', ''];
   if (g === 'james') return i.can_james ? ['Your turn: approve or decline', 'turn'] : ['Waiting for James or Miguel to approve', ''];
   if (g === 'airev') return [i.ai_reviewer && i.ai_reviewer !== 'any team agent' ? `Waiting for ${i.ai_reviewer}’s AI check` : 'Waiting for an AI check', ''];
-  if (g === 'building') return i.blocked ? ['The builder is stuck: needs a human', 'warn'] : ['The builder is on it', ''];
+  if (i.blocked && (g === 'building' || g === 'queued')) return ['Stuck: the builder gave up · waiting for Oscar', 'warn'];
+  if (g === 'building') return ['The builder is on it', ''];
   if (g === 'queued') return [(i.category === 'core' ? 'Approved · ' : 'Queued · ') + (i.wait_reason || 'Next for the builder'), i.wait_reason === 'Oscar builds this one' ? 'oscar' : ''];
   if (g === 'sorting') return ['Sorting… the builder files it in the right place in a minute or two', ''];
   if (g === 'shipping') return [(i.kind === 'bug' && i.closed_at ? 'Fixed · ' : '') + (i.ship ? i.ship.text : 'Approved · checking releases…'), ''];
@@ -2232,7 +2265,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.24.5';
+const PAGE_VERSION = '0.25.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2277,7 +2310,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.24.5' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.25.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
