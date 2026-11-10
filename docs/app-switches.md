@@ -1,38 +1,22 @@
 # App switches (`wizard.app-switches/1`)
 
-Tracker 0.21. How an app lets the WizardOS Tracker's **Try it** toggle (a Human review card) switch one of the app's own
-feature switches for the box owner, without "open Settings and find it".
+The full contract lives in wizard-os `docs/APP_SWITCHES.md`. This page is the Tracker's side.
 
-## The app
-1. Keeps each switch's state **on the box, per owner** (not per device / not only in `localStorage`), so the card, the
-   app's own Settings and the owner's agent all see one state. Off by default.
-2. Serves, on its own same-origin path (`https://<box>:8444/<app-id>/`):
-   - `GET  /<app-id>/api/switches` →
-     ```json
-     {"contract": "wizard.app-switches/1",
-      "switches": [{"id": "drafts-first", "name": "Drafts at top",
-                    "description": "Chats with a waiting draft lead the Inbox.",
-                    "on": false, "default": false,
-                    "issues": ["humanitylabs-org/wizard-messenger#133"]}]}
-     ```
-   - `POST /<app-id>/api/switches` with `Content-Type: application/json`, header `X-Wizard-Switch: 1`, the box's own
-     `Origin`, body `{"id": "drafts-first", "on": true}` → the same listing (200). Unknown id 404, not the owner 403,
-     bad body 400. Errors are JSON `{"error": "…"}`.
-   - An app whose owner pages already live under `api/view/` (Messenger) may serve the same at
-     `/<app-id>/api/view/switches` instead; the Tracker tries `api/switches` first, then `api/view/switches`.
-   - Owner only: the same identity check the app already uses for its owner pages (Tailscale identity / owner session).
-     No agent key, no container networking. The Tracker calls it from the same origin with the browser's own
-     cookies (`credentials: same-origin`), so an app's owner session cookie works as is.
-3. Optionally lists them in `wizard.md` (`switches:` with `id`, `name`, `issues`) so tools can see them without asking.
-4. The app's agent tools may expose the same switches (e.g. `<app>_switches` / `<app>_switch_set`).
+Tracker 0.23 (Miguel, 10 Nov 2026): **one catalog**. The box's App Manager (`_feature-switches`) lists the WizardOS core
+switches AND the switches of every installed app that declares `switches:` in its `wizard.md` (ids `<app>:<switch>`,
+`kind: "app"`, each with the `issues` it delivers). Flipping an app switch goes to the App Manager, which calls the app
+server-side with the owner's authority (the platform owner proof, or the box's own Tailscale Serve), so it works the
+same in every browser and never depends on an app cookie in the viewer's browser.
 
 ## The Tracker
-- For a Human review item whose hand-over `Switch:` line points into an app (`switch_place.kind == 'app'`), the page
-  fetches `/<app-id>/api/switches` (same origin, cached 60 s). It picks the switch whose `issues` contains the item
-  (`owner/repo#N`), else the one whose `name` appears in the Switch line. Found: a real toggle on the card and in
-  Settings › Try changes. Not served yet: the place in words plus **Open <app>**.
-- After **Open <app>** closes, it re-reads that app's switches (the owner may have flipped it inside the app).
+- Every Human review item whose issue (`owner/repo#N`) a catalog switch names gets a real **Try it** toggle on its card,
+  in the detail and in Settings › Try changes (core or app alike). An item's own `Switch: <author>/<id>` line still wins.
+- An app switch is never locked by the box channel (For everyone / For testers); a core one is.
+- Fallback (a box whose App Manager predates 0.23's catalog, or an app the App Manager can't reach): the 0.21 browser
+  path, `/<app-id>/api/switches` then `/<app-id>/api/view/switches`, same origin; else the place in words + **Open <app>**.
 
-## The builder
-A feature in an app repo is built behind a switch served this way; the hand-over keeps the plain `Switch:` line
-(`Switch: Settings > Drafts at top`) and the switch's `issues` names the issue.
+## The app (summary)
+- `wizard.md`: `switches: {contract: wizard.app-switches/1, path: /api/switches}` (or `/api/view/switches`).
+- `GET <path>` → `{"contract": "wizard.app-switches/1", "switches": [{"id", "name", "description", "on", "default",
+  "issues": ["owner/repo#N"]}]}`; `POST <path>` with JSON `{"id", "on"}`, header `X-Wizard-Switch: 1` and the box's
+  `Origin` → the same listing. Owner only; state on the box; off by default.

@@ -359,6 +359,8 @@ function reposOf(d, keepWho) {
 }
 function render(d) {
   if (d.view !== view) return;
+  for (const g of Object.values(d.groups || {})) for (const i of g || []) adoptSwitch(i);
+  for (const i of (d.items || [])) adoptSwitch(i);
   // 0.17: person and repo filters live in the Filter sheet (every list view); one small 'Filtered: …' line says what is set
   const whoSet = pickedWho[d.view], chosen = picked[d.view];
   const allPeople = new Set(authorsOf(d).map(([p]) => p.toLowerCase()));
@@ -810,9 +812,27 @@ function ownerChips(i) {
 // state as Settings › Appearance › Try new features). Live only in Human review; never opens the row.
 const SWITCH_API = '/wizard-os-home/store-install/_feature-switches';
 let box = null;   // null: not asked yet; {ok, update, locked, switches: {id: {on, locked}}}
+// 0.23: ONE catalog for core and apps. The box's App Manager merges every installed app's own switches
+// (wizard.app-switches/1, ids '<app>:<switch>', kind 'app') with the core ones, and flips an app's switch server-side
+// with the owner's authority, so a card works the same in every browser. A Human review item whose issue a catalog
+// switch names gets a real Try it toggle, core or app.
 function takeSwitches(r) {
-  box = { ok: true, locked: !!r.locked, switches: Object.fromEntries((r.switches || []).filter(x => x && x.id).map(x => [x.id, x])) };
+  const rows = (r.switches || []).filter(x => x && x.id);
+  const byIssue = {};
+  for (const x of rows) for (const ref of (x.issues || [])) { const k = String(ref).toLowerCase(); if (!byIssue[k]) byIssue[k] = x.id; }
+  box = { ok: true, locked: !!r.locked, switches: Object.fromEntries(rows.map(x => [x.id, x])), byIssue };
+  for (const v of Object.keys(cache)) for (const g of Object.values((cache[v] || {}).groups || {})) for (const i of g || []) adoptSwitch(i);
+  for (const v of Object.keys(cache)) for (const i of ((cache[v] || {}).items || [])) adoptSwitch(i);
 }
+// An item without a 'Switch:' line takes the catalog switch that names its issue (an app's own switch, usually).
+function adoptSwitch(i) {
+  if (!i || !box || !box.ok || (i.switch && !i.switch_adopted)) return i;
+  const id = box.byIssue[String(i.id || '').toLowerCase()];
+  if (id) { i.switch = id; i.switch_adopted = true; }
+  return i;
+}
+// A core switch is locked on For everyone; an app's own switch follows the app (never locked by the channel).
+const swLocked = sw => !!(sw && (sw.kind === 'app' ? sw.locked : (box.locked || sw.locked)));
 async function switchApi(data) {
   const init = { credentials: 'same-origin', cache: 'no-store' };
   if (data) Object.assign(init, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Wizard-Store': '1' }, body: JSON.stringify(data) });
@@ -836,8 +856,8 @@ function tryWhy(i) {
   if (!box) return 'Checking this Wizard…';
   if (!box.ok && switchTry < 3) setTimeout(loadSwitches, 4000 * switchTry);   // 0.17: a slow first answer no longer greys it for good
   if (!box.ok) return box.update ? UPDATE_NOTE : 'Open the Tracker inside your Wizard to try this.';
-  if (box.locked) return 'Switch to For testers in Settings to try this';
   if (!box.switches[i.switch]) return 'Your Wizard doesn’t have this switch yet: update WizardOS';   // not in this box's catalog yet
+  if (swLocked(box.switches[i.switch])) return 'Switch to For testers in Settings to try this';
   return '';
 }
 // 0.17: the switch, said in words on the status line (and why it's greyed out, in place, not only on tap)
@@ -846,7 +866,7 @@ function switchWords(i) {
   const why = tryWhy(i);
   if (why) return make('span', 'bd-sw-why', why);
   const sw = box.switches[i.switch];
-  return make('span', 'bd-sw-name', `${sw.name || i.switch}: ${sw.on && !box.locked ? 'on' : 'off'}`);
+  return make('span', 'bd-sw-name', `${sw.name || i.switch}: ${sw.on && !swLocked(sw) ? 'on' : 'off'}`);
 }
 // 0.17: a switch the Tracker can't flip: the exact place, with a button that opens it when there is one.
 function placeBits(i) {
@@ -1034,7 +1054,7 @@ function tryFace(b, on) {
 function trySwitch(i) {
   const live = i.group === 'test' || i.group === 'show' || (i.group == null && (i.labels || []).some(l => String(l).toLowerCase() === 'ready-to-test'));  // Human review only
   const sw = live && box && box.ok && i.switch ? box.switches[i.switch] : null;
-  const on = !!(sw && sw.on && !box.locked);
+  const on = !!(sw && sw.on && !swLocked(sw));
   const b = make('button', 'bd-try'); b.type = 'button'; b.setAttribute('role', 'switch');
   b.setAttribute('aria-label', 'Try it: ' + ((sw && sw.name) || i.switch || '') + (live && tryWhy(i) ? ' (' + tryWhy(i) + ')' : ''));
   if (i.switch) { b.dataset.switch = i.switch; b.title = (sw && sw.name) || i.switch; }
@@ -1269,7 +1289,7 @@ function actionArea(i, inDetail) {
     // 0.21.3: an app that already serves this item's switch has the change, whatever the release records say
     const pl = i.switch_place || null;
     const swApp = pl && pl.kind === 'app' ? appForRepo(pl.repo) : null;
-    const hit = swApp ? appSwitchFor(i, swApp) : null;
+    const hit = (i.switch_adopted && box && box.ok && box.switches[i.switch]) || (swApp ? appSwitchFor(i, swApp) : null);
     const run = updRunFor(i, ob);
     if (run) {
       row.append(updPanel(run, i));   // 0.22: Update shows its progress in place, then 'On your Wizard ✓'
@@ -2033,7 +2053,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.22.0';
+const PAGE_VERSION = '0.23.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2056,7 +2076,7 @@ setTimeout(checkVersion, 5000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.22.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.23.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

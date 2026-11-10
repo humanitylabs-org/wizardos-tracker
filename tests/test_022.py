@@ -129,8 +129,8 @@ class TryFirst(unittest.TestCase):
 
 class Version(unittest.TestCase):
     def test_version(self):
-        self.assertEqual(S.VERSION, '0.22.0')
-        self.assertIn("const PAGE_VERSION = '0.22.0'", JS)
+        self.assertTrue(S.VERSION >= '0.22.0')
+        self.assertIn("const PAGE_VERSION = '" + S.VERSION + "'", JS)
 
     @unittest.skipUnless(shutil.which('node'), 'node not installed')
     def test_js_parses(self):
