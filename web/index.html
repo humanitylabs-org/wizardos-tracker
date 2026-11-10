@@ -131,7 +131,7 @@
       <div class="bd-chips" id="c-repo" role="group" aria-label="Repo"></div>
       <p class="bd-d-foot"><button type="button" class="wz-button secondary" id="filter-clear">Clear</button> <button type="button" class="wz-button" id="filter-done">Done</button></p>
     </dialog>
-    <!-- 0.20 WizardOS Reporter (web/report.js + app/report.py + /api/report): one short form, three steps -->
+    <!-- 0.21 WizardOS Reporter (web/report.js + app/report.py + /api/report): two steps; the builder sorts it -->
     <dialog id="report" class="wz-sheet bd-report" aria-labelledby="report-h">
       <form id="rr-form" class="rr" autocomplete="off" novalidate>
         <h2 id="report-h">Report or request</h2>
@@ -140,27 +140,31 @@
           <div class="rr-kinds" id="rr-kinds" role="radiogroup" aria-label="What’s up?"></div>
         </fieldset>
         <fieldset class="rr-step" id="rr-s2" hidden>
-          <legend class="rr-q">What’s it about?</legend>
-          <p class="rr-sub">WizardOS</p>
-          <div class="rr-picks" id="rr-core" role="radiogroup" aria-label="WizardOS"></div>
-          <p class="rr-sub" id="rr-apps-h" hidden>Your apps</p>
-          <div class="rr-picks" id="rr-apps" role="radiogroup" aria-label="Your apps" hidden></div>
-          <div class="rr-picks rr-unsure" id="rr-unsure"></div>
-        </fieldset>
-        <fieldset class="rr-step" id="rr-s3" hidden>
           <legend class="rr-q" id="rr-ask">What happened, and what should happen?</legend>
           <p class="rr-warn" id="rr-warn" hidden></p>
-          <textarea id="rr-text" class="wz-input rr-text" rows="5" maxlength="8000" aria-labelledby="rr-ask"></textarea>
+          <textarea id="rr-text" class="wz-input rr-text" rows="8" maxlength="8000" aria-labelledby="rr-ask"></textarea>
+          <div class="rr-shot" id="rr-shot-row" hidden>
+            <label class="bd-mini rr-shot-pick" id="rr-shot-l">Add a screenshot <input type="file" id="rr-shot" accept="image/png,image/jpeg,image/webp,image/gif" hidden></label>
+            <span class="rr-shot-on" id="rr-shot-on" hidden><img id="rr-shot-img" alt="Screenshot to send"> <button type="button" class="bd-mini" id="rr-shot-x">Remove</button></span>
+          </div>
           <p class="rr-auto" id="rr-auto"></p>
         </fieldset>
         <p class="wz-status" id="rr-status" role="status" aria-live="polite"></p>
         <p class="bd-d-foot rr-foot"><button type="button" class="wz-button secondary" id="rr-cancel">Cancel</button> <button type="submit" class="wz-button" id="rr-go" disabled>Send</button></p>
       </form>
       <div class="rr rr-done" id="rr-done" hidden>
-        <h2>Thanks</h2>
         <p class="rr-landed" id="rr-landed" role="status"></p>
-        <p class="bd-d-foot"><a class="bd-link" id="rr-link" href="#" target="_blank" rel="noopener noreferrer">Open on GitHub ↗</a> <button type="button" class="wz-button" id="rr-close">Done</button></p>
+        <p class="bd-d-foot"><a class="bd-link" id="rr-link" href="#" target="_blank" rel="noopener noreferrer">GitHub ↗</a> <button type="button" class="wz-button" id="rr-close">Done</button></p>
       </div>
+    </dialog>
+    <!-- 0.21 Open <app>: the app in a large sheet over the Tracker (same-origin iframe); closing returns to where you were -->
+    <dialog id="appmodal" class="bd-appmodal" aria-labelledby="appmodal-h">
+      <div class="bd-appmodal-bar">
+        <h2 id="appmodal-h" class="bd-appmodal-h"></h2>
+        <a class="bd-link" id="appmodal-tab" href="#" target="_blank" rel="noopener">New tab ↗</a>
+        <button type="button" class="wz-button secondary" id="appmodal-x">Close</button>
+      </div>
+      <iframe id="appmodal-f" class="bd-appmodal-f" title="App"></iframe>
     </dialog>
     <dialog id="settings" class="wz-sheet bd-settings" aria-labelledby="settings-h">
       <h2 id="settings-h">Tracker settings</h2>

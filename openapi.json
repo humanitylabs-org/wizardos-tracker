@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "WizardOS Tracker",
-    "version": "0.20.0",
+    "version": "0.21.0",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged. 0.13: two-step review (Queued → Building → AI review [label ai-review] → Human review [label ready-to-test] → Done; AI review is agents-only via MCP ai_review_pass / ai_review_fail; policy human_reviews 1|2) and Sign in with GitHub via the OAuth device flow (no client secret).",
     "contact": {
       "name": "WizardOS Tracker",
@@ -1528,7 +1528,7 @@
     },
     "/api/report": {
       "get": {
-        "summary": "0.20 Report or request: the form's choices (kinds, WizardOS core topics, 'Not sure', prompts). Installed apps come from the owner's own Wizard.",
+        "summary": "0.21 Report or request: the form's choices (two kinds, prompts, the 'Sent' line, screenshots: whether the media repo is ready, shot_max).",
         "responses": {
           "200": {
             "description": "options"
@@ -1536,7 +1536,7 @@
         }
       },
       "post": {
-        "summary": "0.20 File a report or request (WizardOS Reporter). Body {kind: bug|feature, about: home|mac|updates|agent|app:<id>|unsure|<repo>, app_repo, app_name, app_version, apps: [{id,name,repo}] (for Not sure), text, wizard_version, device}. Files the GitHub issue (label bug or feature; core vs app follows from the repo) with the version and device appended; returns {landed: 'Filed as a bug in Messenger · the builder starts soon', url, repo, kind, area, view}.",
+        "summary": "0.21 File a report or request in two steps. Body {kind: bug|feature, text, screenshot?: {type: image/png|jpeg|webp|gif, data: base64 (4 MB max)}, wizard_version, device}. Files it in <org>/wizard-os with labels triage + bug/feature (version, device and the screenshot added); the WizardOS Builder's triage step moves it to the right repo and comments 'Filed in <repo> as a …'. Returns {sent: 'Sent. The builder files it in the right place in a minute or two.', url, repo, kind, view, warning}.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1551,7 +1551,7 @@
             "description": "filed"
           },
           "400": {
-            "description": "missing kind, pick or text"
+            "description": "missing kind or text, or a bad screenshot"
           }
         }
       }

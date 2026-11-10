@@ -1,19 +1,19 @@
 'use strict';
-// WizardOS Reporter 0.20: the one 'Report or request' form. Its own module (with app/report.py and /api/report) so it
-// can become a standalone app any owner uses. Step 1: Something's broken / I'd like something new. Step 2: What's it
-// about? (WizardOS itself in plain names, then each app installed on this Wizard by name, or Not sure; the server maps
-// the pick to a repo). Step 3: one text box with the right prompt, plus an 'update first' warning for bugs when this
-// Wizard isn't on the latest WizardOS. Send files it (version and device filled in) and says where it landed.
+// WizardOS Reporter 0.21: the one 'Report or request' form, two steps (Miguel). Step 1: Something's broken / I'd like
+// something new. Step 2: one big text box (optional screenshot), Send. No 'what's it about', no confirm: the server files
+// it in wizard-os with labels triage + bug/feature (version and device filled in), and the WizardOS Builder's triage
+// step moves it to the right repo. Its own module (with app/report.py and /api/report) so it can become its own app.
 // Host hooks: WizardReporter.onFiled(result) and WizardReporter.onUpdate(button) (optional).
 (() => {
   const $ = id => document.getElementById(id);
   const mk = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
-  const STORE_DATA = '/wizard-os-home/store-data/', UPDATES = '/wizard-os-home/store-install/_updates';
+  const UPDATES = '/wizard-os-home/store-install/_updates';
   const KINDS = [['bug', 'Something’s broken'], ['feature', 'I’d like something new']];
-  let opts = null, apps = [], updates = null, kind = null, about = null, busy = false;
+  const SENT = 'Sent. The builder files it in the right place in a minute or two.';
+  let opts = null, updates = null, kind = null, busy = false, shot = null;
   const getJSON = u => fetch(u, { credentials: 'same-origin', cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)));
 
-  // 'Mac · Chrome', 'iPhone · Safari', plus 'in the Wizard app' when hosted by the shell
+  // 'Mac · Chrome', 'iPhone · Safari'
   function device() {
     const ua = navigator.userAgent || '';
     const os = /iPhone/.test(ua) ? 'iPhone' : /iPad/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1) ? 'iPad'
@@ -25,60 +25,53 @@
   const wizardVersion = () => updates && updates.installed ? updates.installed + (channel(updates) ? ` (${channel(updates)})` : '') : '';
   const newest = u => u.latest_for_channel || (u.channel === 'latest' ? u.latest : u.stable);
 
-  function picks(box, items, current, onPick) {
-    box.replaceChildren(...items.map(([key, name]) => {
-      const b = mk('button', 'rr-pick', name); b.type = 'button'; b.setAttribute('role', 'radio');
-      b.setAttribute('aria-checked', String(key === current)); b.dataset.key = key;
-      b.onclick = () => onPick(key);
-      return b;
-    }));
-  }
-  function appOf(key) { return key && key.startsWith('app:') ? apps.find(a => 'app:' + a.id === key) : null; }
-
   function paint() {
     const p = (opts && opts.prompts) || {};
-    picks($('rr-kinds'), KINDS, kind, k => { kind = k; paint(); $('rr-s2').hidden || (about && $('rr-text').focus()); });
-    $('rr-kinds').querySelectorAll('.rr-pick').forEach(b => b.classList.add('rr-kind'));
+    const box = $('rr-kinds');
+    box.replaceChildren(...KINDS.map(([key, name]) => {
+      const b = mk('button', 'rr-pick rr-kind', name); b.type = 'button'; b.setAttribute('role', 'radio');
+      b.setAttribute('aria-checked', String(key === kind)); b.dataset.key = key;
+      b.onclick = () => { const first = !kind; kind = key; paint(); if (first) $('rr-text').focus(); };
+      return b;
+    }));
     $('rr-s2').hidden = !kind;
-    const core = ((opts && opts.core) || []).map(t => [t.key, t.name]);
-    picks($('rr-core'), core, about, pick);
-    $('rr-apps-h').hidden = $('rr-apps').hidden = !apps.length;
-    picks($('rr-apps'), apps.map(a => ['app:' + a.id, a.name]), about, pick);
-    picks($('rr-unsure'), [['unsure', 'Not sure']], about, pick);
-    $('rr-s3').hidden = !(kind && about);
     const pr = p[kind] || {};
-    $('rr-ask').textContent = pr.label || 'Tell us';
-    $('rr-text').placeholder = pr.placeholder || '';
+    $('rr-ask').textContent = pr.label || (kind === 'feature' ? 'What would you like, and why?' : 'What happened, and what should happen?');
+    $('rr-text').placeholder = (pr.placeholder || '') + (kind ? ' If it’s about one app, name it.' : '');
     const w = $('rr-warn');
     w.hidden = !(kind === 'bug' && updates && updates.update_available);
     if (!w.hidden) {
       w.replaceChildren(document.createTextNode(`This Wizard runs WizardOS ${updates.installed}; ${newest(updates)} is out. Update first: it may already be fixed. `));
       if (typeof api.onUpdate === 'function') { const b = mk('button', 'bd-mini', 'Update'); b.type = 'button'; b.onclick = () => api.onUpdate(b); w.append(b); }
     }
-    const a = appOf(about);
-    $('rr-auto').textContent = 'Adds: ' + [wizardVersion() && 'WizardOS ' + wizardVersion(), a && a.version && `${a.name} ${a.version}`, device()].filter(Boolean).join(' · ');
-    $('rr-go').disabled = busy || !(kind && about && $('rr-text').value.trim().length >= 8);
-    $('rr-go').textContent = kind === 'feature' ? 'Send request' : kind === 'bug' ? 'Send report' : 'Send';
+    $('rr-shot-row').hidden = !(opts && opts.screenshots);
+    $('rr-shot-l').hidden = !!shot; $('rr-shot-on').hidden = !shot;
+    if (shot) $('rr-shot-img').src = shot.url;
+    $('rr-auto').textContent = 'Adds: ' + [wizardVersion() && 'WizardOS ' + wizardVersion(), device()].filter(Boolean).join(' · ');
+    $('rr-go').disabled = busy || !(kind && $('rr-text').value.trim().length >= 8);
+    $('rr-go').textContent = 'Send';
   }
-  function pick(k) { const first = !about; about = k; paint(); if (first) $('rr-text').focus(); }
 
   async function load() {
-    const [o, inst, up] = await Promise.allSettled([getJSON('api/report'), getJSON(STORE_DATA + 'wizard/v1/installed-apps'), getJSON(UPDATES)]);
+    const [o, up] = await Promise.allSettled([getJSON('api/report'), getJSON(UPDATES)]);
     if (o.status === 'fulfilled') opts = o.value;
     if (up.status === 'fulfilled') updates = up.value;
-    const core = new Set(((opts && opts.core_repos) || []).map(r => String(r).toLowerCase()));
-    if (inst.status === 'fulfilled') {
-      const seen = new Set();
-      apps = (inst.value.wam || []).filter(w => w && w.id && w.name && !core.has(String(w.repo || '').split('/').pop().toLowerCase()) && !seen.has(w.id) && seen.add(w.id))
-        .map(w => ({ id: w.id, name: w.name, repo: w.repo || '', version: w.version || '' }))
-        .sort((a, b) => a.name.localeCompare(b.name));
-    }
     paint();
   }
 
+  function takeShot(file) {
+    if (!file) return;
+    const max = (opts && opts.shot_max) || 4 * 1024 * 1024;
+    if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) { $('rr-status').textContent = 'Use a PNG, JPEG, WebP or GIF image.'; return; }
+    if (file.size > max) { $('rr-status').textContent = 'That screenshot is too big (4 MB max).'; return; }
+    const r = new FileReader();
+    r.onload = () => { shot = { type: file.type, url: String(r.result) }; $('rr-status').textContent = ''; paint(); };
+    r.readAsDataURL(file);
+  }
+
   function open() {
-    kind = null; about = null; busy = false;
-    $('rr-text').value = ''; $('rr-status').textContent = '';
+    kind = null; busy = false; shot = null;
+    $('rr-text').value = ''; $('rr-status').textContent = ''; $('rr-shot').value = '';
     $('rr-form').hidden = false; $('rr-done').hidden = true;
     paint();
     WzSheet.open($('report'));
@@ -90,17 +83,15 @@
     e.preventDefault();
     if (busy) return;
     const text = $('rr-text').value.trim();
-    if (!kind || !about || text.length < 8) { $('rr-status').textContent = text.length < 8 ? 'Say a little more (a sentence is enough).' : 'Pick both choices above.'; return; }
+    if (!kind || text.length < 8) { $('rr-status').textContent = 'Say a little more (a sentence is enough).'; return; }
     busy = true; paint(); $('rr-status').textContent = 'Sending…';
-    const a = appOf(about);
-    const body = { kind, about, text, device: device(), wizard_version: wizardVersion(),
-      app_repo: a ? a.repo : undefined, app_name: a ? a.name : undefined, app_version: a ? a.version : undefined,
-      apps: about === 'unsure' ? apps.map(x => ({ id: x.id, name: x.name, repo: x.repo })) : undefined };
+    const body = { kind, text, device: device(), wizard_version: wizardVersion(),
+      screenshot: shot ? { type: shot.type, data: shot.url.split(',', 2)[1] } : undefined };
     try {
       const r = await fetch('api/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const out = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(out.error || 'Something went wrong. Try again.');
-      $('rr-landed').textContent = out.landed + (out.warning ? '. ' + out.warning : '');
+      $('rr-landed').textContent = (out.sent || SENT) + (out.warning ? ' ' + out.warning : '');
       $('rr-link').href = out.url || '#';
       $('rr-form').hidden = true; $('rr-done').hidden = false; $('rr-close').focus();
       if (typeof api.onFiled === 'function') try { api.onFiled(out); } catch (_) {}
@@ -113,6 +104,12 @@
   const wire = () => {
     $('rr-form').addEventListener('submit', send);
     $('rr-text').addEventListener('input', paint);
+    $('rr-text').addEventListener('paste', e => {   // paste a screenshot straight into the box
+      const f = [...((e.clipboardData && e.clipboardData.files) || [])].find(x => /^image\//.test(x.type));
+      if (f && opts && opts.screenshots) { e.preventDefault(); takeShot(f); }
+    });
+    $('rr-shot').addEventListener('change', e => takeShot(e.target.files && e.target.files[0]));
+    $('rr-shot-x').onclick = () => { shot = null; $('rr-shot').value = ''; paint(); };
     $('rr-cancel').onclick = () => WzSheet.close($('report'));
     $('rr-close').onclick = () => WzSheet.close($('report'));
     const b = $('report-open'); if (b) b.onclick = () => open();

@@ -5,14 +5,22 @@ logic: what the owner can pick ('What's it about?'), where each pick goes (core 
 it files (title from the first sentence, version and device filled in), and the plain 'where it landed' line.
 The host app supplies GitHub access (create an issue) and its own rules (is a repo core, who builds it).
 
+0.21 (Miguel): two steps, no 'what's it about', no confirm.
 Step 1: kind = 'bug' (Something's broken) or 'feature' (I'd like something new).
-Step 2: about = a core topic key, 'app:<id>' (an installed app, with its repo as a hint) or 'unsure'.
-Step 3: text = one box. Bug: what happened, what should happen. Feature: what you want and why.
+Step 2: text = one big box (optional screenshot), Send.
+The Tracker files it in <org>/wizard-os with labels `triage` + bug/feature (version and device filled in); the WizardOS
+Builder's triage step (builder-tick, slot 1, first each tick) moves it to the right repo and says where in one comment.
+The 0.20 topic/app pickers (resolve, guess) stay for agents that name a repo directly.
 """
 import re
 
 KINDS = {'bug': "Something's broken", 'feature': "I'd like something new"}
 LABELS = {'bug': 'bug', 'feature': 'feature'}
+TRIAGE_REPO = 'wizard-os'      # where every report lands first; the builder moves it
+TRIAGE_LABEL = 'triage'
+SENT = 'Sent. The builder files it in the right place in a minute or two.'
+SHOT_TYPES = {'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif'}
+SHOT_MAX = 4 * 1024 * 1024     # bytes, after base64 decoding
 
 # WizardOS itself, in plain names. Each maps to its core repo (inside the team org).
 CORE_TOPICS = [
@@ -39,8 +47,8 @@ class ReportError(ValueError):
 
 
 def options():
-    """What the form shows before the owner picks anything (the installed apps come from the owner's own Wizard)."""
-    return {'kinds': [{'key': k, 'name': v} for k, v in KINDS.items()],
+    """What the form shows: the two kinds, the prompt for each, limits."""
+    return {'kinds': [{'key': k, 'name': v} for k, v in KINDS.items()], 'sent': SENT, 'shot_max': SHOT_MAX,
             'core': [{'key': t['key'], 'name': t['name']} for t in CORE_TOPICS],
             'unsure': {'key': 'unsure', 'name': 'Not sure'},
             'prompts': PROMPTS, 'max_text': 8000}
@@ -159,6 +167,40 @@ def footer(args, where):
 
 def body_of(kind, text, args, where):
     return text + footer(args, where)
+
+
+def triage_where(org):
+    return {'repo': f'{org}/{TRIAGE_REPO}', 'name': 'WizardOS', 'area': 'core', 'picked': False}
+
+
+def triage_body(kind, text, args, shot_url=None):
+    """The issue text for a two-step report: the owner's words, the screenshot, then the auto-filled facts."""
+    shot = f'\n\n![Screenshot]({shot_url})' if shot_url else ''
+    return text + shot + footer(args, {'area': 'core', 'name': 'WizardOS', 'picked': False}).replace(
+        'Filed with Report or request', 'Filed with Report or request · waiting for the builder to sort it (label triage)')
+
+
+def screenshot(v):
+    """Check an optional screenshot {type, data (base64)} -> (bytes, ext) or None. Raises ReportError."""
+    import base64
+    import binascii
+    if not v:
+        return None
+    if not isinstance(v, dict) or v.get('type') not in SHOT_TYPES or not isinstance(v.get('data'), str):
+        raise ReportError('The screenshot must be a PNG, JPEG, WebP or GIF image.')
+    data = v['data'].split(',', 1)[-1] if v['data'].startswith('data:') else v['data']
+    if len(data) > SHOT_MAX * 4 // 3 + 8:
+        raise ReportError('The screenshot is too big (4 MB max).')
+    try:
+        raw = base64.b64decode(data, validate=True)
+    except (binascii.Error, ValueError):
+        raise ReportError('The screenshot could not be read.') from None
+    sig = {'png': raw[:8] == b'\x89PNG\r\n\x1a\n', 'jpg': raw[:3] == b'\xff\xd8\xff', 'gif': raw[:4] == b'GIF8',
+           'webp': raw[:4] == b'RIFF' and raw[8:12] == b'WEBP'}
+    ext = SHOT_TYPES[v['type']]
+    if not raw or len(raw) > SHOT_MAX or not sig[ext]:
+        raise ReportError('The screenshot must be a PNG, JPEG, WebP or GIF image (4 MB max).')
+    return raw, ext
 
 
 def landed(kind, where, next_step):
