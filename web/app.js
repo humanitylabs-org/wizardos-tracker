@@ -132,6 +132,7 @@ const sheetOpen = () => ['detail', 'filter', 'settings', 'report', 'appmodal'].s
 
 // ---------- one small anchored popover (bins, Builder, Try it); tap outside or Esc closes it ----------
 let popFor = null;
+let refocus = null;   // 0.21: {key, x, y} after an app sheet closes (backTo)
 function pop(anchor, title, text) {
   const p = el('pop');
   if (popFor === anchor && !p.hidden) return unpop();
@@ -424,6 +425,7 @@ function render(d) {
   // 0.16: in the background, cached. 0.20: shipped bugs in their AI check too (their line names the release)
   const askOn = [...(d.groups.test || []), ...(d.view === 'bugs' ? d.groups.airev || [] : [])];
   if (askOn.length) setTimeout(() => checkOnBox(askOn), 0);
+  if (refocus) backTo();   // 0.21: just closed an app sheet: stay on the same card and button through repaints
   el('empty').hidden = any;
   if (only === 'done' && !groups.done) { el('empty').hidden = false; el('empty').textContent = dc.error || 'Loading…'; return; }
   el('empty').textContent = only ? `Nothing in ${(bin || {}).word || ''} here${whoSet.size || chosen.size ? ' with this filter' : ''}.`
@@ -855,7 +857,7 @@ function placeBits(i) {
     const hit = app && appSwitchFor(i, app);
     if (hit) out.push(appToggle(i, app, hit), make('span', 'bd-sw-name', `${hit.name || hit.id}: ${hit.on ? 'on' : 'off'}`));
     else out.push(make('span', 'bd-sw-why', `${app ? app.name : repoName(pl.repo)}: ${pl.text}`));
-    out.push(smallBtn(app ? `Open ${app.name}` : 'Open', b => app ? openApp(app.id, app.name, b) : pop(b, '', `Open ${repoName(pl.repo)} on your Wizard, then ${pl.text}.`)));
+    out.push(openKey(smallBtn(app ? `Open ${app.name}` : 'Open', b => app ? openApp(app.id, app.name, b) : pop(b, '', `Open ${repoName(pl.repo)} on your Wizard, then ${pl.text}.`)), i));
   } else out.push(make('span', 'bd-sw-why', 'Turn on: ' + pl.text));
   return out;
 }
@@ -940,6 +942,15 @@ function appToggle(i, app, sw) {
 // Same-origin path /<app id>/ in an iframe. An app that refuses framing (X-Frame-Options DENY, CSP frame-ancestors
 // without this origin) opens in a new tab instead, and says so.
 let appBack = null;
+// Each Open button carries its item, so focus can return to the same button after a re-render replaced it.
+function openKey(b, i) { b.dataset.openKey = i.id; return b; }
+function backTo() {
+  if (!refocus) return;
+  const { key, x, y } = refocus;
+  const b = [...document.querySelectorAll('[data-open-key]')].find(n => n.dataset.openKey === key && n.offsetParent);
+  scrollTo(x, y);
+  if (b) b.focus({ preventScroll: true });
+}
 async function frameRefusal(path) {
   try {
     const ctl = new AbortController();
@@ -968,7 +979,7 @@ async function openApp(id, name, btn) {
   const why = await frameRefusal(path);
   if (why) return newTab(path, name, btn, why);
   unpop();
-  appBack = { focus: btn || document.activeElement, x: scrollX, y: scrollY, id };
+  appBack = { focus: btn || document.activeElement, x: scrollX, y: scrollY, id, key: btn && btn.dataset.openKey };
   const d = el('appmodal'), f = el('appmodal-f');
   el('appmodal-h').textContent = name; el('appmodal-tab').href = path; f.title = name;
   f.onload = () => {
@@ -987,7 +998,9 @@ el('appmodal').addEventListener('close', () => {
   if (!back) return;
   scrollTo(back.x, back.y);
   if (back.focus && back.focus.isConnected) back.focus.focus({ preventScroll: true });
-  loadAppSwitches(back.id, true);   // the owner may have flipped it inside the app
+  refocus = back.key ? { key: back.key, x: back.x, y: back.y } : null;
+  setTimeout(() => { refocus = null; }, 8000);
+  loadAppSwitches(back.id, true);   // the owner may have flipped it inside the app (backTo() keeps the place after the repaint)
 });
 // 0.15: bug fixes ship live, not behind a switch; a Switch line that isn't a shell tweak (a device setting, an env knob)
 // can't be flipped from here, so both get a plain line saying how to try it instead of a dead switch.
@@ -1241,7 +1254,7 @@ function actionArea(i, inDetail) {
     } else if (!wait && i.switch_place) row.append(...placeBits(i));
     // 0.21: Open <app> for any change to an installed app (the app in a sheet over the Tracker)
     const app = appForRepo(i.repo);
-    if (app && app.id !== 'wizardos-tracker' && !(i.switch_place && i.switch_place.kind === 'app' && !wait)) row.append(smallBtn(`Open ${app.name}`, b => openApp(app.id, app.name, b)));
+    if (app && app.id !== 'wizardos-tracker' && !(i.switch_place && i.switch_place.kind === 'app' && !wait)) row.append(openKey(smallBtn(`Open ${app.name}`, b => openApp(app.id, app.name, b)), i));
     const yes = wait ? greyBtn('Works', wait, 'bd-mini bd-mini-go') : smallBtn('Works', b => askPop(b, i.category === 'core' ? 'Mark as works? It goes to James’ show-and-tell.' : i.shipped ? 'Mark as works? It closes as fixed.' : 'Mark as works? It ships with the next release.', 'Works', () => tested(i, true, '', b)));
     if (!wait) yes.classList.add('bd-mini-go');
     const no = wait ? greyBtn('Doesn’t work', wait) : smallBtn('Doesn’t work', b => noteAsk(row, 'What went wrong? (optional)', 'Send back', note => tested(i, false, note, b)));
