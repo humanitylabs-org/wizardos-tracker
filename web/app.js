@@ -192,7 +192,8 @@ function show(s) {
   if (s.refused && !s.connected) return refuse(s.refused.reason, s.refused.message);
   const on = !!s.connected;
   el('refused').hidden = true;
-  el('signin').hidden = on; el('board').hidden = !on; el('loading').hidden = true; el('report-open').hidden = !on;
+  el('signin').hidden = on; el('board').hidden = !on; el('loading').hidden = true;
+  for (const x of [el('report-open'), el('goals-btn'), el('builder'), document.querySelector('.bd-switch')]) x.hidden = !on;   // 0.22: the header row's board controls
   if (!on && s.notice) say(s.notice, 'error');
   signinMode(s);
   if (!on && s.oauth && !devTimer) api('api/device').then(r => { if (r.state === 'pending') showCode(r); }).catch(() => {});
@@ -378,7 +379,7 @@ function render(d) {
   filteredLine(whoSet, chosen, people, repos);
   const goals = d.view === 'goals';
   el('lists').classList.toggle('bd-goalsview', goals);
-  el('sort-btn').textContent = 'Sort: ' + (SORTS.find(([k]) => k === sortBy[d.view]) || SORTS[0])[1];
+  el('sort-btn').replaceChildren(make('span', 'bd-sort-k', 'Sort: '), (SORTS.find(([k]) => k === sortBy[d.view]) || SORTS[0])[1]);   // 0.22: phones drop 'Sort: '
   el('sort-btn').hidden = stage[d.view] === 'done';   // Done lists newest closed first
   const keep = i => byWho(i) && byRepo(i);
   const order = SORT_FN[sortBy[d.view]];
@@ -690,6 +691,12 @@ function strip(d, bins, groups) {
   });
   el('strip').replaceChildren(...out);
   el('strip').parentNode.style.gridTemplateColumns = bins.map(() => 'minmax(0, 1fr)').join(' var(--ga) ');
+  // 0.22: on a phone the strip scrolls sideways (one line, never wraps); keep the chosen stage in view
+  const sel = only && el('strip').querySelector('.bd-binx.sel'), sc = el('strip').parentNode;
+  if (sel && sc.scrollWidth > sc.clientWidth) {
+    const r = sel.getBoundingClientRect(), o = sc.getBoundingClientRect();
+    sc.scrollLeft = Math.max(0, sc.scrollLeft + r.left - o.left - (o.width - r.width) / 2);
+  }
 }
 
 // ---------- 0.10: edit a step's target (shared, the same for everyone; permissions later) ----------
@@ -919,21 +926,21 @@ function appSwitchFor(i, app) {
 }
 function appToggle(i, app, sw) {
   const b = make('button', 'bd-try bd-try-app'); b.type = 'button'; b.setAttribute('role', 'switch');
-  b.setAttribute('aria-checked', String(!!sw.on)); b.setAttribute('aria-label', `Try it: ${sw.name || sw.id} in ${app.name}`);
+  b.setAttribute('aria-label', `Try it: ${sw.name || sw.id} in ${app.name}`); b.title = `${sw.name || sw.id} (${app.name})`;
   b.dataset.appSwitch = app.id + ':' + sw.id;
-  b.append(make('i'));
+  b.append(make('i')); tryFace(b, !!sw.on);
   const stop = e => e.stopPropagation();
   b.addEventListener('keydown', stop); b.addEventListener('pointerdown', stop);
   b.onclick = async e => {
     e.preventDefault(); e.stopPropagation();
     const next = b.getAttribute('aria-checked') !== 'true';
-    b.setAttribute('aria-checked', String(next)); b.disabled = true;
+    tryFace(b, next); b.disabled = true;
     try {
       const j = await appSwitchApi(app.id, { id: sw.id, on: next });
       appSw[app.id] = { at: Date.now(), ok: true, status: 200, switches: j.switches.filter(x => x && x.id) };
-      if (next) pop(b, '', `On in ${app.name}. Open ${app.name} to try it; switch it off here.`); else unpop();
+      if (next) pop(b, '', `On in ${app.name}. Now open ${app.name} and try it; switch it off here.`); else unpop();
     } catch (err) {
-      b.setAttribute('aria-checked', String(!next));
+      tryFace(b, !next);
       pop(b, '', err.status === 403 ? `Only this Wizard’s owner can switch ${app.name}.` : err.status === 401 ? `Open ${app.name} once, then try again.` : `${app.name} didn’t switch (${err.message || 'HTTP ' + (err.status || 'error')}).`);
     } finally { b.disabled = false; if (cache[view] && !typing()) setTimeout(() => render(cache[view]), 0); }
   };
@@ -946,11 +953,14 @@ function appToggle(i, app, sw) {
 let appBack = null;
 // Each Open button carries its item, so focus can return to the same button after a re-render replaced it.
 function openKey(b, i) { b.dataset.openKey = i.id; return b; }
+// 0.22: the list scrolls in #scroll (not the window): keep both, so Close lands exactly where you were
+const place = () => ({ x: scrollX, y: scrollY, top: el('scroll').scrollTop });
+function goPlace(p) { if (!p) return; scrollTo(p.x, p.y); el('scroll').scrollTop = p.top; }
 function backTo() {
   if (!refocus) return;
-  const { key, x, y } = refocus;
+  const { key } = refocus;
   const b = [...document.querySelectorAll('[data-open-key]')].find(n => n.dataset.openKey === key && n.offsetParent);
-  scrollTo(x, y);
+  goPlace(refocus.at);
   if (b) b.focus({ preventScroll: true });
 }
 async function frameRefusal(path) {
@@ -981,7 +991,7 @@ async function openApp(id, name, btn) {
   const why = await frameRefusal(path);
   if (why) return newTab(path, name, btn, why);
   unpop();
-  appBack = { focus: btn || document.activeElement, x: scrollX, y: scrollY, id, key: btn && btn.dataset.openKey };
+  appBack = { focus: btn || document.activeElement, at: place(), id, key: btn && btn.dataset.openKey };
   const d = el('appmodal'), f = el('appmodal-f');
   el('appmodal-h').textContent = name; el('appmodal-tab').href = path; f.title = name;
   f.onload = () => {
@@ -990,32 +1000,46 @@ async function openApp(id, name, btn) {
     if (!ok && d.open && f.getAttribute('src') !== 'about:blank') { d.close(); newTab(path, name, appBack && appBack.focus, 'it refused to be framed'); }
   };
   f.src = path;
-  d.showModal();
-  el('appmodal-x').focus();
+  if (typeof d.showModal === 'function') d.showModal(); else d.setAttribute('open', '');   // older phone webviews
+  document.documentElement.classList.add('bd-modal-on');   // the list underneath stays put (no scroll-through)
+  // 0.22: the phone's Back closes it, like the sheets (WizardApp.back; the shell asks the app first)
+  const B = window.WizardApp && window.WizardApp.back;
+  if (!d.__back && B && typeof B.push === 'function') { try { d.__back = B.push(() => { closeApp(); return true; }); } catch (_) {} }
+  el('appmodal-x').focus({ preventScroll: true });
 }
-el('appmodal-x').onclick = () => el('appmodal').close();
+function closeApp() { const d = el('appmodal'); if (typeof d.close === 'function' && d.open) d.close(); else if (d.hasAttribute('open')) { d.removeAttribute('open'); d.dispatchEvent(new Event('close')); } }
+el('appmodal-x').onclick = closeApp;
 el('appmodal').addEventListener('close', () => {
-  const f = el('appmodal-f'); f.onload = null; f.setAttribute('src', 'about:blank');
+  const d = el('appmodal'), f = el('appmodal-f'); f.onload = null; f.setAttribute('src', 'about:blank');
+  document.documentElement.classList.remove('bd-modal-on');
+  if (d.__back) { try { d.__back.release(); } catch (_) {} d.__back = null; }
   const back = appBack; appBack = null;
   if (!back) return;
-  scrollTo(back.x, back.y);
+  goPlace(back.at);
   if (back.focus && back.focus.isConnected) back.focus.focus({ preventScroll: true });
-  refocus = back.key ? { key: back.key, x: back.x, y: back.y } : null;
+  refocus = back.key ? { key: back.key, at: back.at } : null;
   setTimeout(() => { refocus = null; }, 8000);
   loadAppSwitches(back.id, true);   // the owner may have flipped it inside the app (backTo() keeps the place after the repaint)
 });
 // 0.15: bug fixes ship live, not behind a switch; a Switch line that isn't a shell tweak (a device setting, an env knob)
 // can't be flipped from here, so both get a plain line saying how to try it instead of a dead switch.
 const LIVE_NOTE = 'Live once your Wizard has the update';
+// 0.22: every Try toggle says what it is and where it stands: 'Try it' and On or Off, next to its switch
+function tryFace(b, on) {
+  b.classList.add('bd-try-pill');
+  if (!b.querySelector('.bd-try-l')) b.append(make('span', 'bd-try-l', 'Try it'), make('span', 'bd-try-s'));
+  b.querySelector('.bd-try-s').textContent = on ? 'On' : 'Off';
+  b.setAttribute('aria-checked', String(!!on));
+}
 function trySwitch(i) {
   const live = i.group === 'test' || i.group === 'show' || (i.group == null && (i.labels || []).some(l => String(l).toLowerCase() === 'ready-to-test'));  // Human review only
   const sw = live && box && box.ok && i.switch ? box.switches[i.switch] : null;
   const on = !!(sw && sw.on && !box.locked);
   const b = make('button', 'bd-try'); b.type = 'button'; b.setAttribute('role', 'switch');
-  b.setAttribute('aria-checked', String(on)); b.setAttribute('aria-label', 'Try it: ' + (i.switch || '') + (live && tryWhy(i) ? ' (' + tryWhy(i) + ')' : ''));
-  if (i.switch) b.dataset.switch = i.switch;
+  b.setAttribute('aria-label', 'Try it: ' + ((sw && sw.name) || i.switch || '') + (live && tryWhy(i) ? ' (' + tryWhy(i) + ')' : ''));
+  if (i.switch) { b.dataset.switch = i.switch; b.title = (sw && sw.name) || i.switch; }
   if (!live || tryWhy(i)) b.setAttribute('aria-disabled', 'true');
-  b.append(make('i'));
+  b.append(make('i')); tryFace(b, on);
   const stop = e => e.stopPropagation();
   b.addEventListener('keydown', stop); b.addEventListener('pointerdown', stop);
   b.onclick = async e => {
@@ -1024,7 +1048,7 @@ function trySwitch(i) {
     const why = tryWhy(i);
     if (why) return pop(b, '', why);
     const next = b.getAttribute('aria-checked') !== 'true';
-    b.setAttribute('aria-checked', String(next)); b.disabled = true;
+    tryFace(b, next); b.disabled = true;
     try {
       takeSwitches(await switchApi({ id: i.switch, on: next }));
       if (next) pop(b, '', 'On in this Wizard. It shows within a few seconds; switch it off here or in Settings.'); else unpop();
@@ -1032,7 +1056,7 @@ function trySwitch(i) {
       if (el('settings').open) tryList();
       if (openId === i.id) detailSwitch(i);
     } catch (err) {
-      b.setAttribute('aria-checked', String(!next));
+      tryFace(b, !next);
       if (err.status === 409) { box.locked = true; return pop(b, '', 'Switch to For testers in Settings to try this'); }
       if (err.status === 404 && err.json) return pop(b, '', UPDATE_NOTE);
       pop(b, '', err.message || 'Couldn’t reach this Wizard. Try again.');
@@ -1243,23 +1267,32 @@ function actionArea(i, inDetail) {
     const ob = onboxOf(i);
     let wait = '';
     // 0.21.3: an app that already serves this item's switch has the change, whatever the release records say
-    const swApp = i.switch_place && i.switch_place.kind === 'app' ? appForRepo(i.switch_place.repo) : null;
-    const served = !!(swApp && appSwitchFor(i, swApp));
-    if (ob && ob.state === 'no' && !served) {
-      const u = updateFor(ob);
-      row.append(make('span', 'bd-act-l', ob.fix || 'Not on your Wizard yet'));
-      if (u) row.append(u);
+    const pl = i.switch_place || null;
+    const swApp = pl && pl.kind === 'app' ? appForRepo(pl.repo) : null;
+    const hit = swApp ? appSwitchFor(i, swApp) : null;
+    const run = updRunFor(i, ob);
+    if (run) {
+      row.append(updPanel(run, i));   // 0.22: Update shows its progress in place, then 'On your Wizard ✓'
+      if (run.state !== 'done') wait = run.state === 'failed' ? 'Update first: this change isn’t on your Wizard yet.' : 'Updating your Wizard…';
+    } else if (ob && ob.state === 'no' && !hit) {
+      const u = updateFor(ob, i);
+      const need = make('div', 'bd-need');
+      need.append(make('span', 'bd-act-l', ob.fix || 'Not on your Wizard yet'));
+      if (u) need.append(u);
+      row.append(need);
       wait = 'Update first: this change isn’t on your Wizard yet.';
-    } else if (!ob && ((i.delivers || []).length || i.open_prs)) wait = '';
-    if (!wait && i.switch) {
-      const sw = box && box.ok && box.switches[i.switch];
-      const why = tryWhy(i);
-      const lab = make('span', 'bd-act-l', why ? why : `${(sw && sw.name) || 'Switch'}: ${sw && sw.on && !box.locked ? 'on' : 'off'}`);
-      row.append(trySwitch(i), lab);
-    } else if (!wait && i.switch_place) row.append(...placeBits(i));
-    // 0.21: Open <app> for any change to an installed app (the app in a sheet over the Tracker)
-    const app = appForRepo(i.repo);
-    if (app && app.id !== 'wizardos-tracker' && !(i.switch_place && i.switch_place.kind === 'app' && !wait)) row.append(openKey(smallBtn(`Open ${app.name}`, b => openApp(app.id, app.name, b)), i));
+    }
+    // 0.22: the try flow, in order: Try it (switch it on) -> Open <app> -> Works / Doesn't work
+    const grp = make('div', 'bd-trygrp');
+    let why = '';
+    if (!wait && i.switch) { grp.append(trySwitch(i)); why = tryWhy(i); }
+    else if (!wait && pl && pl.kind === 'app') { if (hit) grp.append(appToggle(i, swApp, hit)); else why = `${swApp ? swApp.name : repoName(pl.repo)}: ${pl.text}`; }
+    else if (!wait && pl) grp.append(...placeBits(i));
+    const app = swApp || appForRepo(i.repo);
+    if (app && app.id !== 'wizardos-tracker') grp.append(openKey(smallBtn(`Open ${app.name}`, b => openApp(app.id, app.name, b)), i));
+    else if (pl && pl.kind === 'app' && !swApp) grp.append(openKey(smallBtn('Open', b => pop(b, '', `Open ${repoName(pl.repo)} on your Wizard, then ${pl.text}.`)), i));
+    if (grp.childNodes.length) row.append(grp);
+    if (why) row.append(make('span', 'bd-why-s', why));
     const yes = wait ? greyBtn('Works', wait, 'bd-mini bd-mini-go') : smallBtn('Works', b => askPop(b, i.category === 'core' ? 'Mark as works? It goes to James’ show-and-tell.' : i.shipped ? 'Mark as works? It closes as fixed.' : 'Mark as works? It ships with the next release.', 'Works', () => tested(i, true, '', b)));
     if (!wait) yes.classList.add('bd-mini-go');
     const no = wait ? greyBtn('Doesn’t work', wait) : smallBtn('Doesn’t work', b => noteAsk(row, 'What went wrong? (optional)', 'Send back', note => tested(i, false, note, b)));
@@ -1277,7 +1310,7 @@ function actionArea(i, inDetail) {
   }
   if (g === 'show') {
     if (!i.can_james) { row.append(greyBtn('Approve', i.james_rule), make('span', 'bd-why-s', i.james_rule)); return row; }
-    if (i.switch) row.append(trySwitch(i), make('span', 'bd-act-l', 'Try it'));
+    if (i.switch) { const grp = make('div', 'bd-trygrp'); grp.append(trySwitch(i)); row.append(grp); }
     const yes = smallBtn('Approve', b => askPop(b, 'Approve after the show-and-tell? The switch goes away (on for everyone) and it ships.', 'Approve', () => showOk(i, b)));
     yes.classList.add('bd-mini-go');
     row.append(yes); return row;
@@ -1337,13 +1370,13 @@ function releaseLine(i) {
   p.hidden = !t; p.textContent = t ? 'Release: ' + t : '';
 }
 // 0.18: Update performs the update in place (the box's own App Manager routes), no separate panel.
-function updateFor(v) {
+function updateFor(v, i) {
   const fix = v.fix || '';
-  if (/^Update WizardOS/.test(fix)) return smallBtn('Update', b => updateWizardOS(b));
+  if (/^Update WizardOS/.test(fix)) return smallBtn('Update', b => updateWizardOS(b, i));
   const m = /^Update (.+)$/.exec(fix);
   if (m) {
     const id = (v.apps || [])[0] || (appsByName().get(m[1].toLowerCase()) || {}).id;
-    return smallBtn('Update', b => id ? updateApp(id, b) : pop(b, '', 'Update it in Settings › Updates.'));
+    return smallBtn('Update', b => id ? updateApp(id, b, i) : pop(b, '', 'Update it in Settings › Updates.'));
   }
   if (fix === 'Needs the Mac app update') return smallBtn('How', b => pop(b, '', 'In the Mac app: Wizard menu › Check for Updates…'));
   if (/For testers/.test(fix)) return smallBtn('How', b => pop(b, '', 'Settings › Updates › For testers.'));
@@ -1739,30 +1772,131 @@ function appForRepo(repo) {
   const r = String(repo || '').toLowerCase();
   return ((catalog && catalog.apps) || []).find(a => String(a.repo || '').toLowerCase() === r) || null;
 }
-async function updateApp(id, btn) {
+// ---------- 0.22 Update progress, in place (on the card, in the detail and in Settings) ----------
+// API gap: the App Manager's install job reports only state (installing / installed / failed), started, finished and
+// error, and WizardOS's _updates only installing / failed / failure_reason / quick. Neither names a step or an ETA, so
+// the Tracker shows its own steps: Starting (asked) -> Installing (the job runs) -> Restarting (polled on the app's
+// /healthz version, or WizardOS's installed release) -> Done. A step the job does name (step, phase, message) is shown.
+const UPD_STEPS = ['Starting', 'Installing', 'Restarting', 'Done'];
+const runs = new Map();   // 'os' | app id -> { key, name, to, at, end, step, detail, state, reason, quick, items, retry }
+const took = store.get('board.updtook') || {};   // key -> the last few update durations (seconds) on this device
+function usually(r) {
+  const xs = (took[r.key] || []).slice(-5).sort((a, b) => a - b);
+  const sec = xs.length ? xs[Math.floor(xs.length / 2)] : r.key === 'os' ? (r.quick ? 150 : 480) : 90;
+  const m = Math.max(1, Math.round(sec / 60));
+  return `usually about ${m} minute${m === 1 ? '' : 's'}`;
+}
+const clock = sec => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+function runKeyOf(v) {
+  const fix = (v && v.fix) || '';
+  if (/^Update WizardOS/.test(fix)) return 'os';
+  const m = /^Update (.+)$/.exec(fix);
+  return m ? (v.apps || [])[0] || (appsByName().get(m[1].toLowerCase()) || {}).id || null : null;
+}
+function updRunFor(i, ob) {
+  for (const r of runs.values()) if (r.items.has(i.id)) return r;
+  const r = ob && ob.state === 'no' ? runs.get(runKeyOf(ob)) : null;
+  return r && r.state === 'running' ? r : null;
+}
+function newRun(key, name, to, item, retry, quick) {
+  const was = runs.get(key);
+  const r = { key, name, to, at: Date.now(), end: 0, step: 'Starting', detail: '', state: 'running', reason: '', quick: !!quick,
+              items: new Set(was ? was.items : []), retry };
+  if (item) r.items.add(item.id);
+  runs.set(key, r); repaintRuns();
+  return r;
+}
+function runStep(r, step, detail) {
+  if (r.step === step && r.detail === (detail || '')) return;
+  r.step = step; r.detail = detail || '';
+  if (r.key !== 'os') wizBusy.set(r.key, step + '…');
+  repaintRuns();
+}
+function runEnd(r, ok, reason) {
+  r.state = ok ? 'done' : 'failed'; r.end = Date.now(); r.reason = reason || '';
+  if (ok) { r.step = 'Done'; (took[r.key] = (took[r.key] || []).concat(Math.round((r.end - r.at) / 1000)).slice(-5)); store.set('board.updtook', took); }
+  setTimeout(() => { if (runs.get(r.key) === r && r.state !== 'running') { runs.delete(r.key); repaintRuns(); } }, ok ? 180000 : 600000);
+  repaintRuns();
+}
+// The job's own words for its step, when it gives any (a newer App Manager may)
+const jobDetail = j => { const x = j && (j.step || j.phase || j.message); return typeof x === 'string' ? x.slice(0, 80) : ''; };
+function updPanel(r, i) {
+  const box = make('div', 'bd-upd ' + r.state); box.dataset.upd = r.key;
+  box.setAttribute('role', 'status'); box.setAttribute('aria-live', 'polite');
+  const head = make('p', 'bd-upd-h'), t = make('span', 'bd-upd-t');
+  const to = r.to ? ' to ' + r.to : '';
+  head.append(make('i', 'bd-upd-dot', r.state === 'done' ? '✓' : r.state === 'failed' ? '!' : ''),
+    make('b', '', r.state === 'running' ? `Updating ${r.name}${to}` : r.state === 'failed' ? `${r.name} didn’t update` : `${r.name} updated${to}`), t);
+  box.append(head);
+  const ol = make('ol', 'bd-upd-steps'), n = UPD_STEPS.indexOf(r.step);
+  UPD_STEPS.forEach((w, k) => {
+    const li = make('li', r.state === 'done' || k < n ? 'ok' : k === n ? (r.state === 'failed' ? 'bad' : 'now') : '', w);
+    if (k === n && r.state === 'running') li.setAttribute('aria-current', 'step');
+    ol.append(li);
+  });
+  box.append(ol);
+  if (r.state === 'running') box.append(make('p', 'bd-upd-note', [r.detail, cap(usually(r))].filter(Boolean).join(' · ')));
+  if (r.state === 'failed') {
+    const why = make('p', 'bd-upd-why', r.reason || 'No reason given.');
+    if (r.retry) why.append(document.createTextNode(' '), smallBtn('Try again', b => r.retry(b)));
+    box.append(why);
+  }
+  if (r.state === 'done') {
+    const v = i ? onboxOf(i) : null;
+    box.append(make('p', 'bd-upd-ok' + (v && v.state === 'yes' ? ' yes' : ''), !i ? 'Done.' : !v ? 'Checking your Wizard…' : v.state === 'yes' ? ONBOX_TEXT.yes
+      : v.state === 'no' ? `Updated, but this change isn’t in it yet${v.fix ? ' · ' + v.fix : ''}` : ONBOX_TEXT.unknown));
+  }
+  tickText(t, r);
+  return box;
+}
+function tickText(t, r) { const sec = Math.max(0, ((r.state === 'running' ? Date.now() : r.end) - r.at) / 1000); t.textContent = r.state === 'running' ? clock(sec) : 'took ' + clock(sec); }
+setInterval(() => { for (const b of document.querySelectorAll('.bd-upd.running')) { const r = runs.get(b.dataset.upd), t = b.querySelector('.bd-upd-t'); if (r && t) tickText(t, r); } }, 1000);
+function repaintRuns() {
+  if (cache[view] && !typing() && !document.querySelector('.bd-confirm')) render(cache[view]);
+  if (openItem && el('detail').open) detailAct(openItem);
+  paintWizards();
+}
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+// Restarting: wait until the app answers its health check with a version other than the one it had (the new one)
+async function backUp(url, want, had, name, seconds) {
+  let last = null;
+  for (const end = Date.now() + seconds * 1000; Date.now() < end; await sleep(2000)) {
+    try { const h = await getJSON(url); last = h && h.version; if (last && (last === want || (had && last !== had))) return last; } catch (_) {}
+  }
+  throw new Error(last ? `${name} restarted but still runs ${last}.` : `${name} didn’t come back within ${Math.round(seconds / 60)} minutes.`);
+}
+async function updateApp(id, btn, item) {
   await loadCatalog();
   const a = ((catalog && catalog.apps) || []).find(x => x.id === id);
   if (!a || !a.release) return btn && pop(btn, '', 'The Store has no newer release of this app for this Wizard. Update in Settings › Apps.');
   if (!a.update) return btn && pop(btn, '', a.pinned ? `${a.name} updates with WizardOS.` : `${a.name} is already the latest (${a.version}).`);
-  if (wizBusy.has(id)) return;
+  if (runs.get(id) && runs.get(id).state === 'running') return;
   const sel = { source: a.release.source, repo: a.release.repo, commit: a.release.commit, operation: 'update' };
-  wizBusy.set(id, 'Updating…'); paintWizards();
-  if (btn) { btn.disabled = true; btn.textContent = 'Updating…'; }
+  const self = id === 'wizardos-tracker';
+  wizBusy.set(id, 'Starting…');
+  const r = newRun(id, a.name, a.latest, item, b => updateApp(id, b, item));
   try {
     const url = STORE_INSTALL + encodeURIComponent(id);
     let j = await getJSON(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Wizard-Store': '1' }, body: JSON.stringify(sel) });
-    for (let n = 0; j && j.state === 'installing' && n < 240; n++) { await new Promise(r => setTimeout(r, 2500)); j = await getJSON(url).catch(() => ({ state: 'installing' })); }
+    for (let n = 0; j && j.state === 'installing' && n < 360; n++) {
+      runStep(r, 'Installing', jobDetail(j));
+      await sleep(2500); j = await getJSON(url).catch(() => ({ state: 'installing' }));
+    }
     if (!j || j.state !== 'installed') throw new Error((j && j.error) || 'The App Manager didn’t finish. Refresh to check.');
-    delete wizFail[id]; toast(`${a.name} updated to ${a.latest}.`);
+    runStep(r, 'Restarting', jobDetail(j));
+    const v = await backUp(self ? 'healthz' : '/' + encodeURIComponent(id) + '/healthz', a.latest, self ? me && me.version : a.version, a.name, 150);
+    facts.apps[id] = v;
+    delete wizFail[id]; runEnd(r, true);
   } catch (e) {
-    wizFail[id] = { at: Date.now(), name: a.name, to: a.latest, reason: e.status === 404 ? 'This Wizard’s App Manager can’t update apps from here yet. Update in Settings › Apps.' : e.message };
-    toast(`${a.name}: ${wizFail[id].reason}`);
+    const reason = e.status === 404 ? 'This Wizard’s App Manager can’t update apps from here yet. Update in Settings › Apps.' : e.message;
+    wizFail[id] = { at: Date.now(), name: a.name, to: a.latest, reason };
+    runEnd(r, false, reason);
   } finally {
     store.set('board.wizfail', wizFail);
     wizBusy.delete(id); catalog = null; onbox.clear();
-    if (id === 'wizardos-tracker' && !wizFail[id]) { toast('The Tracker updated: reloading…'); setTimeout(() => location.reload(), 1500); return; }
-    await loadCatalog(true); if (el('settings').open) paintWizards();
-    if (cache[view]) render(cache[view]);
+    if (self && !wizFail[id]) { toast('The Tracker updated: reloading…'); setTimeout(() => location.reload(), 1500); return; }
+    await loadCatalog(true); paintWizards();
+    if (cache[view]) { render(cache[view]); checkOnBox([...((cache[view].groups || {}).test || [])]); }
   }
 }
 async function updateAll(btn) {
@@ -1770,15 +1904,49 @@ async function updateAll(btn) {
   if (!list.length) return pop(btn, '', 'Every app is up to date.');
   askPop(btn, `Update ${list.length} app${list.length === 1 ? '' : 's'}? Each one restarts for a moment.`, 'Update all', async () => { for (const a of list) await updateApp(a.id); });
 }
-async function updateWizardOS(btn) {
+async function updateWizardOS(btn, item) {
   try {
     const u = updates || await getJSON(UPDATES_API);
+    const target = u && (u.latest_for_channel || (u.channel === 'latest' ? u.latest : u.stable));
     if (!u || !u.update_available) return btn && pop(btn, '', `WizardOS ${u && u.installed ? u.installed : ''} is the latest on ${u && u.channel === 'latest' ? 'For testers' : 'Stable'}.`);
-    if (btn && !btn.dataset.sure) return askPop(btn, `Update WizardOS ${u.installed} → ${u.latest_for_channel || (u.channel === 'latest' ? u.latest : u.stable)}? Wizard restarts for a moment.`, 'Update', () => { btn.dataset.sure = '1'; updateWizardOS(btn).finally(() => { delete btn.dataset.sure; }); });
-    const r = await getJSON(UPDATES_API, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Wizard-Store': '1' }, body: JSON.stringify({ action: 'apply' }) });
-    toast(r && r.started ? 'WizardOS is updating. Wizard restarts in a minute.' : (r && r.error) || 'Update asked.');
+    if (runs.get('os') && runs.get('os').state === 'running') return;
+    if (btn && !btn.dataset.sure) return askPop(btn, `Update WizardOS ${u.installed} → ${target}? Wizard restarts for a moment.`, 'Update', () => { btn.dataset.sure = '1'; updateWizardOS(btn, item).finally(() => { delete btn.dataset.sure; }); });
+    const r = newRun('os', 'WizardOS', target, item, b => updateWizardOS(b, item), u.quick);
+    try {
+      const a = await getJSON(UPDATES_API, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Wizard-Store': '1' }, body: JSON.stringify({ action: 'apply' }) });
+      if (a && a.error) throw new Error(a.error);
+      store.set('board.osrun', { to: target, from: u.installed, at: r.at, item: item ? item.id : null });
+      await followOS(r, u.installed);
+    } catch (e) { runEnd(r, false, e.status === 404 ? 'Update in Settings › Updates.' : e.message); store.set('board.osrun', null); }
   } catch (e) { if (btn) pop(btn, '', e.status === 404 ? 'Update in Settings › Updates.' : e.message); }
 }
+// Installing while _updates says installing; Restarting while Wizard is away (or back but not yet on the release);
+// Done once _updates reports the target installed; failed with its failure_reason.
+async function followOS(r, from) {
+  let away = false;
+  for (const end = r.at + 25 * 60000; Date.now() < end; await sleep(3000)) {
+    let u = null;
+    try { u = await getJSON(UPDATES_API); } catch (_) { away = true; runStep(r, 'Restarting', 'Wizard is restarting'); continue; }
+    updates = u; r.quick = !!u.quick;
+    if (u.installed && (u.installed === r.to || (from && u.installed !== from && !u.installing))) {
+      store.set('board.osrun', null); facts.release = u.installed; factsReady = null; onbox.clear(); runEnd(r, true);
+      if (cache[view]) checkOnBox([...((cache[view].groups || {}).test || [])]);
+      return;
+    }
+    if (u.failed || u.interrupted) throw new Error(u.failure_reason || 'The WizardOS update stopped.');
+    runStep(r, u.installing ? 'Installing' : away ? 'Restarting' : 'Installing', u.installing ? (u.quick ? 'Swapping the Wizard image' : '') : '');
+  }
+  throw new Error('Still not done after 25 minutes. Check Settings › Updates.');
+}
+// A WizardOS update restarts Wizard, which may reload this page: pick the progress back up
+(() => {
+  const o = store.get('board.osrun');
+  if (!o || !o.to || Date.now() - o.at > 30 * 60000) return;
+  const r = { key: 'os', name: 'WizardOS', to: o.to, at: o.at, end: 0, step: 'Restarting', detail: '', state: 'running', reason: '', quick: false,
+              items: new Set(o.item ? [o.item] : []), retry: b => updateWizardOS(b) };
+  runs.set('os', r);
+  followOS(r, o.from).catch(e => { runEnd(r, false, e.message); store.set('board.osrun', null); });
+})();
 // 0.18: the Update manager lives in Settings only (no separate view or header button). openUM opens Settings at an app.
 let umFocus = null;
 function openUM(focusId) {
@@ -1808,8 +1976,10 @@ function paintWizards() {
   const os = make('p', 'bd-onbox ' + (u.update_available ? 'no' : 'yes'));
   const ch = u.channel === 'latest' ? 'For testers' : u.channel === 'stable' ? 'Stable' : '—';
   os.append(make('b', '', 'WizardOS ' + (u.installed || '?')), document.createTextNode(` · ${ch}` + (u.update_available ? ` · ${u.latest_for_channel || (u.channel === 'latest' ? u.latest : u.stable)} available ` : ' · latest ✓')));
-  if (u.update_available) os.append(smallBtn(u.installing ? 'Updating…' : 'Update', b => updateWizardOS(b)));
+  const osRun = runs.get('os');
+  if (u.update_available && !osRun) os.append(smallBtn(u.installing ? 'Updating…' : 'Update', b => updateWizardOS(b)));
   card.append(os);
+  if (osRun) card.append(updPanel(osRun, null));
   if (u.failed || u.interrupted) card.append(make('p', 'bd-why', `Last WizardOS update failed${u.retry_target ? ' (' + u.retry_target + ')' : ''}: ${u.failure_reason || 'no reason given'}.`));
   const apps = (catalog.apps || []).map(a => a.id === 'wizardos-tracker' && me && me.version ? runningSelf(a) : a);
   const n = apps.filter(a => a.update).length;
@@ -1863,7 +2033,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.21.3';
+const PAGE_VERSION = '0.22.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -1886,7 +2056,7 @@ setTimeout(checkVersion, 5000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.21.3' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.22.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

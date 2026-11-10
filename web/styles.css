@@ -719,3 +719,142 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
 .bd-appmodal-f { flex: 1; width: 100%; border: 0; background: var(--wz-base); }
 @media (max-width: 640px) { .bd-appmodal { width: 100vw; height: 100%; max-height: 100%; border-radius: 0; margin: 0; } }
 .bd-try-app { margin-right: 2px; }
+
+
+/* ======================= 0.22 mobile first =======================
+   One header row; the stage strip on one line (scrolls sideways on narrow phones, never wraps); full-width cards;
+   44px tap targets; sheets are full-height bottom sheets with safe-area padding; Report or request is the round '+'. */
+html, body { overflow-x: hidden; }
+.bd-scroll { overflow-x: hidden; }
+.bd-scroll.wz-scroll { padding-top: calc(var(--wz-space-2) + env(safe-area-inset-top, 0px)); }
+.bd-hbar { display: flex; align-items: center; gap: 6px; max-width: 680px; margin: 0 auto var(--wz-space-3); min-height: 44px; }
+.bd-hbar > .bd-goals-btn, .bd-hbar > .bd-toggle, .bd-hbar > .bd-rr, .bd-hbar > .bd-gear { flex: none; }
+.bd-hbar > .bd-switch { flex: 0 1 auto; min-width: 0; width: auto; margin: 0; grid-template-columns: repeat(3, auto); }
+.bd-hbar > .bd-toggle { margin-left: auto; }
+.bd-hbar .bd-switch button { min-height: 40px; white-space: nowrap; }
+.bd-tab-l { display: none; }   /* one row everywhere: Core · Apps · Bugs (the full names stay as labels) */
+
+.bd-gear { display: inline-grid; place-items: center; width: 44px; height: 44px; margin-left: auto; border: 0; border-radius: 50%; background: none; color: var(--ink-3); cursor: pointer; }
+.bd-hbar > .bd-switch:not([hidden]) ~ .bd-gear { margin-left: 0; }
+.bd-gear:focus-visible, .bd-rr:focus-visible, .bd-appmodal-x:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (hover: hover) { .bd-gear:hover { color: var(--ink); background: var(--fill); } }
+.bd-hbar .bd-toggle { min-height: 44px; }
+.bd-hbar .bd-goals-btn { min-height: 44px; }
+/* Report or request: never a tab. Wide: a compact '+ Report' pill at the right of the row. */
+.bd-rr { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 14px 0 10px; border: 0; border-radius: var(--r-pill); background: var(--accent); color: var(--on-accent); font: inherit; font-size: .875rem; font-weight: 700; cursor: pointer; box-shadow: 0 1px 2px color-mix(in srgb, #000 18%, transparent); }
+.bd-rr svg { width: 18px; height: 18px; }
+.bd-rr:active { transform: scale(.97); }
+/* Tools row: Filter · Sort · Show stats · freshness ⟳ on one line */
+.bd-tools { flex-wrap: nowrap; min-width: 0; }
+.bd-tools .bd-tool { flex: none; min-height: 36px; white-space: nowrap; }
+.bd-tools .bd-tool-link { margin-left: auto; }
+.bd-tools .bd-fresh { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .75rem; }
+.bd-tools .bd-reload { flex: none; width: 36px; min-height: 36px; }
+.wz-sheet .bd-acct { justify-content: space-between; margin: -4px 0 var(--wz-space-3); font-size: var(--wz-text-sm); }
+.wz-sheet .bd-acct-act { min-height: 44px; }
+/* Try it: a labelled switch with its own On / Off, first control, beside Open <app> */
+.bd-trygrp { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.bd-try.bd-try-pill { display: inline-flex; align-items: center; gap: 8px; width: auto; height: auto; min-height: 44px; padding: 0 12px 0 8px; border: 1px solid var(--line-2); border-radius: var(--r-pill); background: var(--fill); color: var(--ink); font: inherit; font-size: .85rem; font-weight: 650; cursor: pointer; }
+.bd-try.bd-try-pill > i { position: relative; flex: none; display: block; width: 34px; height: 20px; border-radius: 10px; background: var(--fill-2); border: 1px solid var(--line-2); transition: background var(--wz-motion-fast) var(--wz-ease); }
+.bd-try.bd-try-pill > i::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: var(--ink-3); transition: transform var(--wz-motion-fast) var(--wz-ease); }
+.bd-try.bd-try-pill[aria-checked="true"] { border-color: var(--accent); }
+.bd-try.bd-try-pill[aria-checked="true"] > i { background: var(--accent); border-color: var(--accent); }
+.bd-try.bd-try-pill[aria-checked="true"] > i::after { transform: translateX(14px); background: var(--on-accent); }
+.bd-try-s { min-width: 2.2em; font-size: .75rem; font-weight: 700; color: var(--ink-3); text-transform: uppercase; letter-spacing: .04em; }
+.bd-try-pill[aria-checked="true"] .bd-try-s { color: var(--accent); }
+.bd-try-pill[aria-disabled="true"] { opacity: .55; cursor: default; }
+.bd-try-pill:disabled { opacity: .7; }
+.bd-try-pill::before, .bd-try-pill::after { content: none !important; }
+.bd-trygrp .bd-mini { min-height: 44px; }
+.bd-act-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+.bd-act-btns .bd-mini { min-height: 44px; }
+.bd-why-s { display: block; font-size: .78rem; color: var(--ink-3); }
+/* Update progress, in place */
+.bd-upd { display: grid; gap: 8px; width: 100%; padding: 12px; border: 1px solid var(--line-2); border-radius: var(--r-tile); background: var(--fill); box-sizing: border-box; }
+.bd-upd.done { border-color: color-mix(in srgb, var(--accent) 55%, var(--line-2)); }
+.bd-upd.failed { border-color: var(--wz-danger); }
+.bd-upd-h { display: flex; align-items: center; gap: 8px; margin: 0; font-size: .9rem; color: var(--ink); }
+.bd-upd-h b { flex: 1; min-width: 0; font-weight: 650; overflow-wrap: anywhere; }
+.bd-upd-t { flex: none; font-size: .78rem; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.bd-upd-dot { flex: none; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-style: normal; font-size: 11px; font-weight: 800; }
+.bd-upd.running .bd-upd-dot { border: 2px solid var(--line-2); border-top-color: var(--accent); animation: bd-spin .9s linear infinite; box-sizing: border-box; }
+.bd-upd.done .bd-upd-dot { background: var(--accent); color: var(--on-accent); }
+.bd-upd.failed .bd-upd-dot { background: var(--wz-danger); color: var(--wz-base); }
+@media (prefers-reduced-motion: reduce) { .bd-upd.running .bd-upd-dot { animation-duration: 2.4s; } }
+.bd-upd-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; margin: 0; padding: 0; list-style: none; }
+.bd-upd-steps li { position: relative; padding-top: 8px; font-size: .72rem; font-weight: 600; color: var(--ink-3); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.bd-upd-steps li::before { content: ""; position: absolute; top: 0; left: 0; right: 0; height: 4px; border-radius: 2px; background: var(--fill-2); }
+.bd-upd-steps li.ok { color: var(--ink-2); } .bd-upd-steps li.ok::before { background: var(--accent); }
+.bd-upd-steps li.now { color: var(--ink); } .bd-upd-steps li.now::before { background: linear-gradient(90deg, var(--accent) 50%, var(--fill-2) 50%); background-size: 200% 100%; animation: bd-updbar 1.4s linear infinite; }
+.bd-upd-steps li.bad { color: var(--wz-danger); } .bd-upd-steps li.bad::before { background: var(--wz-danger); }
+@keyframes bd-updbar { from { background-position: 100% 0; } to { background-position: 0 0; } }
+.bd-upd-note, .bd-upd-why, .bd-upd-ok { margin: 0; font-size: .8rem; color: var(--ink-2); overflow-wrap: anywhere; }
+.bd-upd-why { color: var(--ink); }
+.bd-upd-ok.yes { color: var(--ink); font-weight: 650; }
+.bd-upd-why .bd-mini { margin-left: 4px; }
+/* The app sheet: a clear Close first, the page underneath stays put */
+html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
+.bd-appmodal-x { display: inline-flex; align-items: center; gap: 6px; flex: none; min-height: 44px; padding: 0 14px 0 10px; border: 1px solid var(--line-2); border-radius: var(--r-pill); background: var(--fill); color: var(--ink); font: inherit; font-size: .9rem; font-weight: 700; cursor: pointer; }
+.bd-appmodal-bar { display: flex; align-items: center; gap: 10px; }
+.bd-appmodal-h { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bd-appmodal-tab { flex: none; display: inline-flex; align-items: center; min-height: 44px; }
+
+@media (max-width: 599px) {
+  /* header: Goals ◎ | Core Apps Bugs | ● Builder | ⚙ — on one row */
+  .bd-hbar { gap: 4px; margin-bottom: var(--wz-space-2); }
+  .bd-hbar .bd-switch button { padding: 0 8px; font-size: .82rem; min-height: 44px; }
+  .bd-hbar .bd-switch { padding: 2px; }
+  .bd-hbar .bd-goals-btn { padding: 0 8px; gap: 4px; }
+  .bd-hbar .bd-goals-t { display: none; }
+  .bd-hbar .bd-toggle { padding: 0 4px; gap: 4px; }
+  .bd-hbar .bd-toggle .bd-ctl-state { display: none; }
+  .bd-hbar .bd-toggle .bd-ctl-name { font-size: .78rem; }
+  .bd-gear { width: 40px; }
+  /* Report or request: the round floating '+' bottom right, clear of the home bar */
+  .bd-rr { position: fixed; z-index: 25; right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+           width: 56px; height: 56px; padding: 0; justify-content: center; border-radius: 50%; box-shadow: 0 6px 18px color-mix(in srgb, #000 30%, transparent); }
+  .bd-rr svg { width: 26px; height: 26px; }
+  .bd-rr-t { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .bd-scroll { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+  /* stage strip: one line; scrolls sideways if it must, never wraps */
+  .bd-strip { display: block !important; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; scroll-snap-type: x proximity; }
+  .bd-strip .bd-i { display: none; }
+  .bd-strip { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); padding-right: 28px; }
+  .bd-strip::-webkit-scrollbar { display: none; }
+  .bd-strip .bd-steps { display: flex; gap: 6px; margin: 0; padding: 0; }
+  .bd-strip .bd-stepli { flex: none; scroll-snap-align: start; }
+  .bd-strip .bd-arrow { display: none; }
+  .bd-strip .bd-binx { flex-direction: row; gap: 5px; min-height: 44px; padding: 0 11px; box-sizing: border-box; align-items: center; }
+  .bd-strip .bd-bin-n { font-size: 1.15rem; }
+  .bd-strip .bd-bin-w { font-size: .78rem; white-space: nowrap; }
+  /* tools: compact; 'Sort: ' and long freshness drop */
+  .bd-sort-k { display: none; }
+  .bd-tools { gap: 4px; }
+  .bd-tools .bd-tool { min-height: 44px; padding: 0 12px; }
+  .bd-tools .bd-fresh { display: none; }
+  .bd-tools .bd-fresh.stale + .bd-reload { color: var(--warn, #b26a00); }
+  .bd-tools .bd-reload { width: 44px; min-height: 44px; }
+  .bd-tools .bd-tool-link { padding: 0 4px; }
+  /* cards and rows run full width */
+  .bd-board { max-width: none; }
+  .bd-card, .bd-list.rows { border-radius: var(--r-tile); }
+  .bd-act { flex-wrap: wrap; }
+  .bd-trygrp { width: 100%; }
+  .bd-act-btns { width: 100%; }
+  .bd-act-btns .bd-mini { flex: 1 1 0; justify-content: center; }
+  .bd-mini, .bd-chip, .bd-tool, .bd-menu-i, .bd-acct-act { min-height: 44px; }
+  .bd-x { min-width: 32px; min-height: 32px; }
+  .bd-i { min-width: 32px; min-height: 32px; }
+  /* every sheet: full-height bottom sheet with safe-area padding */
+  .wz-sheet, .wz-sheet.bd-report { width: 100%; max-width: 100%; margin: auto 0 0; max-height: calc(100dvh - 12px - env(safe-area-inset-top, 0px)); padding-bottom: calc(var(--wz-space-4) + env(safe-area-inset-bottom, 0px)); overscroll-behavior: contain; box-sizing: border-box; }
+  .wz-sheet.bd-sheet-tall, #report.wz-sheet, #detail.wz-sheet { height: calc(100dvh - 12px - env(safe-area-inset-top, 0px)); }
+  /* the Close stays put (sticky) but takes no room: the title keeps clear of it, everything else runs full width */
+  .wz-sheet-x { width: 44px; height: 44px; margin-bottom: -50px; }
+  .wz-sheet h2:first-of-type, .wz-sheet .bd-d-title { padding-right: 48px; }
+  /* the app opens full screen with Close at the top */
+  #appmodal.bd-appmodal { width: 100%; max-width: 100%; height: 100dvh; max-height: 100dvh; margin: 0; inset: 0; border: 0; border-radius: 0; padding: env(safe-area-inset-top, 0px) 0 0; box-sizing: border-box; }
+  #appmodal .bd-appmodal-bar { padding: 6px 10px; border-bottom: 1px solid var(--line); }
+  #appmodal .bd-appmodal-f { flex: 1; width: 100%; min-height: 0; border: 0; padding-bottom: env(safe-area-inset-bottom, 0px); }
+  #appmodal .bd-appmodal-tab { font-size: .82rem; }
+}
+@media (max-width: 360px) { .bd-hbar .bd-toggle .bd-ctl-name { display: none; } }
