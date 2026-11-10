@@ -33,7 +33,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.20.0'
+VERSION = '0.21.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -918,15 +918,19 @@ def _text(v, field, lo, hi):
 
 
 def _create(acct, full, title, body, label):
-    issue = gh(acct['token'], 'POST', f'/repos/{full}/issues', {'title': title, 'body': body, 'labels': [label]})
-    if label not in [l.get('name', '').lower() for l in issue.get('labels') or []]:
+    """Open one issue with `label` (0.21: or a list of labels; the first one is the one the board needs)."""
+    labels = list(label) if isinstance(label, (list, tuple)) else [label]
+    label = labels[0]
+    issue = gh(acct['token'], 'POST', f'/repos/{full}/issues', {'title': title, 'body': body, 'labels': labels})
+    have = [l.get('name', '').lower() for l in issue.get('labels') or []]
+    if any(x not in have for x in labels):
         # GitHub silently drops labels for people without write access; try once more, then say so.
         try:
-            gh(acct['token'], 'POST', f"/repos/{full}/issues/{issue['number']}/labels", {'labels': [label]})
+            gh(acct['token'], 'POST', f"/repos/{full}/issues/{issue['number']}/labels", {'labels': labels})
         except Problem:
             pass
     out = _read_issue(acct, full, issue['number'], True)
-    out['labelled'] = label in [l.lower() for l in out['labels']]
+    out['labelled'] = all(x in [l.lower() for l in out['labels']] for x in labels)
     if not out['labelled']:
         out['warning'] = f'GitHub dropped the {label} label (you may not have write access to this repo), so it will not show on the board.'
     return out
@@ -1177,6 +1181,8 @@ VIEW_FIELDS = (' number title url body createdAt updatedAt author { login } assi
                '  ... on ConnectedEvent { subject { __typename ... on PullRequest { number url state title merged mergeCommit { oid } baseRefName repository { nameWithOwner } } } }'
                ' } }')
 VIEW = 'query($q: String!) { search(query: $q, type: ISSUE, first: 80) { issueCount nodes { ... on Issue {' + VIEW_FIELDS + ' } } } }'
+# 0.21: one issue with the view's fields (a just-filed report shown at once; was referenced but never defined in 0.20)
+VIEW_ONE = 'query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { issue(number: $n) {' + VIEW_FIELDS + ' } } }'
 MAX_ITEMS = 300
 # Lists page through search: light rows (no timeline or comments) 100 at a time for Bugs; the heavy
 # fields (linked issues for goal progress, the builder's last comment for Ready to test) only where shown.
@@ -1909,7 +1915,8 @@ GOAL_FIELDS = (' number title url body createdAt updatedAt author { login } assi
                ' timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 100) { nodes { ... on CrossReferencedEvent { source { __typename'
                '  ... on Issue { number title url state stateReason repository { nameWithOwner } labels(first: 15) { nodes { name } } } } } } }')
 GOAL_PAGE = 'query($q: String!, $after: String) { ' + _PAGE % (30, GOAL_FIELDS) + ' }'
-OPEN_GROUPS = ('test', 'show', 'james', 'airev', 'building', 'queued', 'shipping')
+OPEN_GROUPS = ('test', 'show', 'james', 'airev', 'building', 'queued', 'sorting', 'shipping')
+TRIAGE_LABEL = 'triage'   # 0.21: a report waiting for the builder's triage step to move it to the right repo
 # 0.19: the builder never picks these up (Miguel, 9 Nov): Oscar builds them directly
 BUILDER_SKIPS = ('wizardos-tracker', 'wizardos-builder')
 # 0.19.1: the board never shows items of these repos at all (Oscar fixes them directly); filtered server-side, both in
@@ -1947,6 +1954,8 @@ def item_group(repo, labels, state='open', base=None):
     low = {str(l).lower() for l in labels or []}
     if state == 'closed':
         return 'closed'
+    if TRIAGE_LABEL in low:
+        return 'sorting'
     if HUMAN_LABEL in low:
         return 'test'
     if AI_LABEL in low:
@@ -2074,6 +2083,8 @@ def board_split(person, args):
                 extra['checked'] = checked_of(n, base)
         elif group == 'queued':
             extra = {'wait_reason': queue_reason(repo)}
+        elif group == 'sorting':
+            extra = {'wait_reason': SORTING_NOTE}
         if cat == 'bug' and group in ('airev', 'test'):   # 0.19: bugs are merged (on) before review: already shipping
             extra['shipped'] = True
             extra['can_fail'] = human_rule('bug', author, [], login, base)[0]
@@ -2089,10 +2100,10 @@ def board_split(person, args):
             cat = category(it['repo'], it.get('labels') or [], base)
             if (view == 'bugs') == (cat == 'bug'):
                 own = same_person(it.get('author') or '', login, base)
-                g = 'james' if cat == 'core' else 'queued'
+                g = 'sorting' if TRIAGE_LABEL in {str(x).lower() for x in it.get('labels') or []} else 'james' if cat == 'core' else 'queued'
                 ok = approver if g == 'james' else False
                 groups[g].insert(0, {**it, 'group': g, 'category': cat, 'mine': own, 'can_close': own, 'can_james': ok, 'turn': ok,
-                                     'wait_reason': queue_reason(it['repo']) if g == 'queued' else None,
+                                     'wait_reason': queue_reason(it['repo']) if g == 'queued' else SORTING_NOTE if g == 'sorting' else None,
                                      'james_rule': '' if ok else JAMES_RULE['approve'], 'opener': person_of(it.get('author') or '', base)})
     stats = view_stats(acct['token'], org, view, cached_only=not args.get('with_stats')) or {'pending': True, 'items': [], 'done': None}
     repos_wanted = _repo_list(args.get('repos'))
@@ -2107,7 +2118,7 @@ def board_split(person, args):
             'stats': {**stats, 'summary': None if stats.get('pending') else summarize(stats.get('items', []))},
             'total': total, 'shown': shown, 'more': total > len(nodes),
             # 0.3 shape, kept for older views and scripts
-            'test': groups['test'], 'doing': [i for g in ('show', 'james', 'airev', 'building', 'queued') for i in groups[g]]}
+            'test': groups['test'], 'doing': [i for g in ('show', 'james', 'airev', 'building', 'queued', 'sorting') for i in groups[g]]}
 
 
 # ---------- bottleneck stats (label history, cached 5 min per token/org/view) ----------
@@ -3441,38 +3452,73 @@ def report_next(kind, where, org, base=None):
 
 
 def report_options(person):
-    account_for(person)
-    return {**reporter.options(), 'core_repos': policy_base()['core_repos']}
+    _, acct = account_for(person)
+    return {**reporter.options(), 'core_repos': policy_base()['core_repos'],
+            'screenshots': bool(acct.get('token') and _media_ready(acct['token']))}
+
+
+SORTING_NOTE = 'Sorting… the builder files it in the right place in a minute or two'
+_labels_made = set()   # (repo, label) known to exist
+
+
+def _ensure_label(acct, full, name, color, desc):
+    """Create a label in a repo if it is missing (a 422 'already exists' is fine). Never fails the caller."""
+    if (full.lower(), name) in _labels_made:
+        return
+    try:
+        gh(acct['token'], 'POST', f'/repos/{full}/labels', {'name': name, 'color': color, 'description': desc})
+    except Problem:
+        pass
+    _labels_made.add((full.lower(), name))
+
+
+def _upload_shot(acct, raw, ext):
+    """0.21: put the screenshot in the team's media repo (MEDIA_REPO) as the filer -> a URL the issue shows."""
+    import base64
+    import secrets
+    path = time.strftime('reports/%Y/%m/', time.gmtime()) + secrets.token_hex(8) + '.' + ext
+    out = gh(acct['token'], 'PUT', f'/repos/{MEDIA_REPO}/contents/{path}',
+             {'message': 'Report or request screenshot', 'content': base64.b64encode(raw).decode()})
+    return ((out.get('content') or {}).get('html_url') or f'https://github.com/{MEDIA_REPO}/blob/main/{path}') + '?raw=true'
 
 
 def report_file(person, args, agent=False):
-    """File one report: label bug or feature (core vs app follows from the repo), version and device filled in."""
+    """0.21: file one two-step report in <org>/wizard-os with labels triage + bug/feature (version, device and an
+    optional screenshot filled in). The builder's triage step moves it to the right repo within a tick or two."""
     _, acct = account_for(person, agent)
-    base, org = policy_base(), settings()['org']
+    org = settings()['org']
     try:
         kind, text = reporter.compose(args)
-        where = reporter.resolve(args.get('about'), org, args.get('app_repo'), args.get('app_name'), text,
-                                 args.get('apps'), base['core_repos'])
+        shot = reporter.screenshot(args.get('screenshot'))
     except reporter.ReportError as e:
         raise Problem(400, str(e)) from None
-    made = _create(acct, where['repo'], reporter.title_of(text), reporter.body_of(kind, text, args, where), reporter.LABELS[kind])
+    where = reporter.triage_where(org)
+    warning = None
+    url = None
+    if shot:
+        try:
+            url = _upload_shot(acct, *shot)
+        except Problem as e:
+            warning = 'The screenshot could not be attached (' + e.message.rstrip('.') + ').'
+    _ensure_label(acct, where['repo'], reporter.TRIAGE_LABEL, 'fbca04', 'Report or request: the builder moves it to the right repo')
+    labels = [reporter.LABELS[kind], reporter.TRIAGE_LABEL]
+    made = _create(acct, where['repo'], reporter.title_of(text), reporter.triage_body(kind, text, args, url), labels)
     card = {'id': made['id'], 'repo': where['repo'], 'number': made['number'], 'title': made['title'], 'url': made['url'],
-            'author': made.get('author'), 'kind': kind, 'labels': made.get('labels') or []}
-    if made.get('labelled') and not hidden_repo(where['repo']):
+            'author': made.get('author'), 'kind': kind, 'labels': made.get('labels') or labels}
+    if made.get('labelled'):
         try:
             owner, name = where['repo'].split('/')
             node = ((graphql(acct['token'], VIEW_ONE, {'o': owner, 'r': name, 'n': made['number']}, cache=False).get('data') or {}).get('repository') or {}).get('issue')
             if node:
-                card = _card(node, 'issues')
-                with LOCK:
-                    _made[(_tid(acct['token']), card['id'])] = (time.time(), 'issues', card)
+                card = {**_card(node, 'issues'), 'labels': [l['name'] for l in (node.get('labels') or {}).get('nodes') or []]}
         except Problem:
             pass
-    cat = category(where['repo'], [reporter.LABELS[kind]], base)
-    view = 'bugs' if cat == 'bug' else 'core' if cat == 'core' else 'apps'
-    return {'item': card, 'url': made['url'], 'repo': where['repo'], 'kind': kind, 'area': where['area'], 'about': where['name'],
-            'picked': where['picked'], 'view': view, 'landed': reporter.landed(kind, where, report_next(kind, where, org, base)),
-            'warning': made.get('warning')}
+        with LOCK:
+            _made[(_tid(acct['token']), card['id'])] = (time.time(), 'issues', card)
+    view = 'bugs' if kind == 'bug' else 'core'
+    return {'item': card, 'url': made['url'], 'repo': where['repo'], 'kind': kind, 'area': 'triage', 'view': view,
+            'landed': reporter.SENT, 'sent': reporter.SENT, 'screenshot': url,
+            'warning': ' '.join(x for x in (warning, made.get('warning')) if x) or None}
 
 
 # ---------- MCP ----------
@@ -3489,7 +3535,7 @@ TOOLS = [
     {'name': 'board_get', 'description': 'Read one Goal or Bug: body, done-list, linked PRs and recent comments.', 'inputSchema': {'type': 'object', 'properties': ISSUE}},
     {'name': 'board_report_bug', 'description': 'Report a small, specific bug (label bug). Anyone on the team or their agent may report one; it is ready to work as soon as it is filed.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What happens, what should happen, how to see it.'}}, 'required': ['repo', 'title']}},
     {'name': 'board_report_feature', 'description': 'Add a feature or improvement to try (label feature). Anyone on the team may add one. The builder builds it behind an off-by-default switch; the team tries it with Try it in the Tracker and keeps or drops it.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string', 'minLength': 3, 'maxLength': 200}, 'body': {'type': 'string', 'description': 'What it should do, where, and why it is better.'}}, 'required': ['repo', 'title']}},
-    {'name': 'report_or_request', 'description': "File what an owner said is broken or wants, like the 'Report or request' form: kind bug (something's broken) or feature (something new), about = home (Home, Chats & Settings) | mac (Mac app) | updates (Updates & installing) | agent | an app's repo (e.g. wizard-messenger) | unsure (the Tracker picks from the words), text = the owner's words (bug: what happened, what should happen; feature: what and why). Labels and core vs app follow from the repo; returns where it landed.", 'inputSchema': {'type': 'object', 'properties': {'kind': {'type': 'string', 'enum': ['bug', 'feature']}, 'about': {'type': 'string'}, 'app_name': {'type': 'string'}, 'text': {'type': 'string', 'minLength': 8, 'maxLength': 8000}, 'wizard_version': {'type': 'string'}, 'device': {'type': 'string'}}, 'required': ['kind', 'text']}},
+    {'name': 'report_or_request', 'description': "File what an owner said is broken or wants, like the 'Report or request' form: kind bug (something's broken) or feature (something new), text = the owner's words (bug: what happened, what should happen; feature: what and why; name the app if it is about one). It lands in wizard-os with label triage; the builder moves it to the right repo within a few minutes and comments where.", 'inputSchema': {'type': 'object', 'properties': {'kind': {'type': 'string', 'enum': ['bug', 'feature']}, 'about': {'type': 'string'}, 'app_name': {'type': 'string'}, 'text': {'type': 'string', 'minLength': 8, 'maxLength': 8000}, 'wizard_version': {'type': 'string'}, 'device': {'type': 'string'}}, 'required': ['kind', 'text']}},
     {'name': 'board_comment', 'description': 'Add a comment to a Goal or Bug.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'body': {'type': 'string', 'minLength': 1}}, 'required': ['body']}},
     {'name': 'board_add_goal', 'description': 'HUMANS OPEN GOALS. Use only when a human explicitly asked you to add this goal for them; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string'}, 'done': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Done-list lines (1-20).'}, 'body': {'type': 'string'}, **ASKED}, 'required': ['repo', 'title', 'done', 'owner_request']}},
     {'name': 'board_close', 'description': 'Close a Bug when a human asked you to (pass their words). Goals are refused: only humans close goals, in the app.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'enum': ['completed', 'not_planned']}, **ASKED}, 'required': ['owner_request']}},
@@ -3680,7 +3726,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(415, {'error': 'Use application/json.'})
         try:
             size = int(self.headers.get('Content-Length', '0'))
-            if not 0 <= size <= 65536:
+            if not 0 <= size <= (6 * 1024 * 1024 if path == '/api/report' else 65536):   # 0.21: a screenshot rides along
                 return self.send(413, {'error': 'Request too large.'})
             body = json.loads(self.rfile.read(size))
             if path == '/mcp':

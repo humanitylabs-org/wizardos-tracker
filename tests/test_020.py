@@ -91,34 +91,7 @@ class Server(unittest.TestCase):
     def tearDown(self):
         S._create = self.saved
 
-    def test_bug_in_app(self):
-        r = S.report_file('owner', {'kind': 'bug', 'about': 'app:messenger', 'app_repo': 'humanitylabs-org/wizard-messenger', 'app_name': 'Messenger',
-                                    'text': 'Reacting jumps the chat to the top. It should stay where I was.', 'wizard_version': '0.3.149', 'device': 'Mac · Chrome'})
-        full, title, body, label = self.calls[0]
-        self.assertEqual((full, label), ('humanitylabs-org/wizard-messenger', 'bug'))
-        self.assertEqual(title, 'Reacting jumps the chat to the top')
-        self.assertIn('WizardOS 0.3.149 · Mac · Chrome', body)
-        self.assertEqual(r['landed'], 'Filed as a bug in Messenger · the builder starts soon')
-        self.assertEqual(r['view'], 'bugs')
-
-    def test_core_feature(self):
-        r = S.report_file('owner', {'kind': 'feature', 'about': 'home', 'text': 'Pin chats to the top so the ones I use stay handy.'})
-        self.assertEqual(self.calls[0][0], 'humanitylabs-org/wizard-ux')
-        self.assertEqual(self.calls[0][3], 'feature')
-        self.assertEqual(r['landed'], 'Filed as a core feature · waits for James or Miguel to approve')
-        self.assertEqual((r['view'], r['area']), ('core', 'core'))
-
-    def test_app_feature_and_skipped_repo(self):
-        r = S.report_file('owner', {'kind': 'feature', 'about': 'app:calendar', 'app_repo': 'wizard-calendar', 'app_name': 'Calendar', 'text': 'Show week numbers please.'})
-        self.assertEqual((r['view'], r['landed']), ('apps', 'Filed as a feature for Calendar · the builder starts soon'))
-        r = S.report_file('owner', {'kind': 'bug', 'about': 'wizardos-tracker', 'text': 'The sort menu forgets my pick.'})
-        self.assertTrue(r['landed'].endswith('Oscar builds this one'))
-
-    def test_bad_input(self):
-        with self.assertRaises(S.Problem) as e:
-            S.report_file('owner', {'kind': 'bug', 'about': 'home', 'text': 'no'})
-        self.assertEqual(e.exception.code, 400)
-        self.assertEqual(self.calls, [])
+    # 0.21: report_file files in wizard-os with label triage (tests/test_021.py); the 0.20 per-repo filing is gone.
 
     def test_options_and_mcp(self):
         o = S.report_options('owner')
@@ -212,10 +185,9 @@ class Form(unittest.TestCase):
         self.assertNotIn('Report a bug', HTML)
         self.assertNotIn("api('api/bugs'", JS)
 
-    def test_three_steps(self):
-        for word in ('Something’s broken', 'I’d like something new', 'Not sure', 'installed-apps', 'api/report', 'Update first'):
+    def test_three_steps(self):   # 0.21: two steps (test_021); the prompts stay
+        for word in ('Something’s broken', 'I’d like something new', 'api/report', 'Update first'):
             self.assertIn(word, RJS)
-        self.assertIn('What’s it about?', HTML)
         self.assertIn('src="report.js"', HTML)
         self.assertEqual(R.PROMPTS['bug']['label'], 'What happened, and what should happen?')
         self.assertEqual(R.PROMPTS['feature']['label'], 'What would you like, and why?')
@@ -225,7 +197,7 @@ class Form(unittest.TestCase):
         subprocess.run(['node', '--check', str(ROOT / 'web/report.js')], check=True)
 
     def test_version(self):
-        self.assertEqual(S.VERSION, '0.20.0')
+        self.assertGreaterEqual(tuple(map(int, S.VERSION.split('.'))), (0, 20, 0))
 
 
 if __name__ == '__main__':

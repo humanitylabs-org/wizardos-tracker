@@ -1,5 +1,7 @@
 'use strict';
-// WizardOS Tracker 0.20.0: one primary 'Report or request' button on top opens the WizardOS Reporter form (web/report.js,
+// WizardOS Tracker 0.21.0: Report or request is two steps (the builder's triage step files it; until then the card says
+// Sorting…); a Human review card flips an app's own switch (wizard.app-switches/1) and Open <app> shows the app in a
+// large sheet over the Tracker. 0.20.0: one primary 'Report or request' button on top opens the WizardOS Reporter form (web/report.js,
 // /api/report); items someone else checks say 'James checks this one (he filed it)', yours 'Your turn: check it';
 // one Sort for every tab (Your turn first by default), so your items lead Bugs (Shipped included) and App features.
 // WizardOS Tracker 0.19.1: the Goals number is every open goal; Human review / Shipping / Done cards and the detail
@@ -41,7 +43,7 @@ const el = id => document.getElementById(id);
 const make = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 const link = (cls, href) => { const a = make('a', cls); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; return a; };
 const EMPTY = { goals: 'No open goals.', core: 'No open core features.', apps: 'No open app features.', features: 'No open features.', bugs: 'No open bugs. Nice.' };
-const GROUPS = ['test', 'show', 'james', 'airev', 'building', 'queued', 'shipping'];
+const GROUPS = ['test', 'show', 'james', 'airev', 'building', 'queued', 'sorting', 'shipping'];
 const VIEWS = ['goals', 'core', 'apps', 'bugs'];
 const stage = { goals: null, core: null, apps: null, bugs: null, features: null };   // tap a bin: show only that stage (not remembered)
 const doneCache = {};   // view -> { at, items } recently closed, loaded when the Done bin is tapped
@@ -126,7 +128,7 @@ const repoName = r => (r || '').split('/').pop();
 // 0.10: GitHub login -> the name people know, from the policy roster (served as `names`).
 const nameOf = login => { const n = ((cache[view] || {}).names || {})[(login || '').toLowerCase()]; return n || login || ''; };
 const typing = () => !!document.querySelector('.bd-fail');
-const sheetOpen = () => ['detail', 'filter', 'settings', 'report'].some(x => el(x).open);
+const sheetOpen = () => ['detail', 'filter', 'settings', 'report', 'appmodal'].some(x => el(x).open);
 
 // ---------- one small anchored popover (bins, Builder, Try it); tap outside or Esc closes it ----------
 let popFor = null;
@@ -645,22 +647,22 @@ const STAGE_INFO = {
 function binsOf(v) {
   const tail = [{ key: 'airev', word: 'AI review', groups: ['airev'] }, { key: 'test', word: 'Human review', groups: ['test'] }];
   const end = [{ key: 'shipping', word: 'Shipping', groups: ['shipping'] }, { key: 'done', word: 'Done', groups: ['done'] }];
-  if (v === 'core') return [{ key: 'james', word: 'Waiting for approval', groups: ['james'], tip: 'James or Miguel approves before the builder starts' },
+  if (v === 'core') return [{ key: 'james', word: 'Waiting for approval', groups: ['sorting', 'james'], tip: 'James or Miguel approves before the builder starts' },
     { key: 'building', word: 'Building', groups: ['queued', 'building'], info: 'corebuild' }, ...tail,
     { key: 'show', word: 'Show-and-tell', groups: ['show'] }, ...end];
   // 0.20 (Miguel): shipping never waits on humans. Shipped = merged, on its way (AI check running); Human check = the filer's
   // sanity check, any time after Shipped; Checked = they said Works, or 7 days with no Doesn't work. Release is shown apart.
-  if (v === 'bugs') return [{ key: 'queued', word: 'Queued', groups: ['queued'] }, { key: 'building', word: 'Building', groups: ['building'] },
+  if (v === 'bugs') return [{ key: 'queued', word: 'Queued', groups: ['sorting', 'queued'] }, { key: 'building', word: 'Building', groups: ['building'] },
     { key: 'shipped', word: 'Shipped', groups: ['airev'], tip: 'Merged and on its way to everyone. Never waits on a human.' },
     { key: 'test', word: 'Human check', groups: ['test'], info: 'humancheck', tip: HUMAN_CHECK_TIP },
     { key: 'done', word: 'Checked', groups: ['shipping', 'done'], info: 'checked', tip: 'Whoever filed it said Works, or 7 days passed with no Doesn’t work' }];
-  return [{ key: 'queued', word: 'Queued', groups: ['queued'] }, { key: 'building', word: 'Building', groups: ['building'] }, ...tail, ...end];
+  return [{ key: 'queued', word: 'Queued', groups: ['sorting', 'queued'] }, { key: 'building', word: 'Building', groups: ['building'] }, ...tail, ...end];
 }
 function sectionsOf(v) {
-  if (v === 'bugs') return [['test', 'Human check'], ['airev', 'Shipped · AI check'], ['building', 'Building'], ['queued', 'Queued'],
+  if (v === 'bugs') return [['test', 'Human check'], ['airev', 'Shipped · AI check'], ['building', 'Building'], ['queued', 'Queued'], ['sorting', 'Sorting…'],
     ['shipping', 'Checked'], ['done', 'Checked · in a release for everyone']];
   return [['test', 'Human review'], ['show', 'Show-and-tell'], ['james', 'Waiting for approval'], ['airev', 'AI review'],
-    ['building', 'Building'], ['queued', v === 'core' ? 'Approved · waiting for the builder' : 'Queued'], ['shipping', 'Shipping'], ['done', 'Done']]
+    ['building', 'Building'], ['queued', v === 'core' ? 'Approved · waiting for the builder' : 'Queued'], ['sorting', 'Sorting…'], ['shipping', 'Shipping'], ['done', 'Done']]
     .filter(([g]) => v === 'core' || !['show', 'james'].includes(g));
 }
 function strip(d, bins, groups) {
@@ -850,8 +852,10 @@ function placeBits(i) {
     }));
   } else if (pl.kind === 'app') {
     const app = appForRepo(pl.repo);
-    out.push(make('span', 'bd-sw-why', `${app ? app.name : repoName(pl.repo)}: ${pl.text}`));
-    out.push(smallBtn(app ? `Open ${app.name}` : 'Open', b => app ? openApp(app.id) : pop(b, '', `Open ${repoName(pl.repo)} on your Wizard, then ${pl.text}.`)));
+    const hit = app && appSwitchFor(i, app);
+    if (hit) out.push(appToggle(i, app, hit), make('span', 'bd-sw-name', `${hit.name || hit.id}: ${hit.on ? 'on' : 'off'}`));
+    else out.push(make('span', 'bd-sw-why', `${app ? app.name : repoName(pl.repo)}: ${pl.text}`));
+    out.push(smallBtn(app ? `Open ${app.name}` : 'Open', b => app ? openApp(app.id, app.name, b) : pop(b, '', `Open ${repoName(pl.repo)} on your Wizard, then ${pl.text}.`)));
   } else out.push(make('span', 'bd-sw-why', 'Turn on: ' + pl.text));
   return out;
 }
@@ -870,10 +874,121 @@ function smallBtn(text, fn) {
   b.onclick = e => { e.preventDefault(); e.stopPropagation(); fn(b); };
   return b;
 }
-function openApp(id) {
-  try { if (parent !== window && typeof parent.WizOpenApp === 'function' && parent.WizOpenApp(id) !== false) return; } catch (_) {}
-  window.open('/' + encodeURIComponent(id) + '/', '_blank', 'noopener');
+// ---------- 0.21 app switches (wizard.app-switches/1, docs/app-switches.md) ----------
+// An app declares its own feature switches and serves them at its same-origin path: GET /<app>/api/switches ->
+// {contract: 'wizard.app-switches/1', switches: [{id, name, description, on, default, issues: ['owner/repo#N']}]};
+// POST the same path {id, on} (JSON, X-Wizard-Switch: 1, the Wizard's own origin) -> the same listing. The owner's
+// state lives in the app (per owner, not per device), so the card, the app's own Settings and its agent agree.
+// A card finds its switch by the issue it delivers (issues) or by the name in the hand-over's Switch: line.
+const APP_SWITCHES = 'wizard.app-switches/1';
+const appSw = {};   // app id -> {at, ok, status, switches, busy}
+// Path: /<app>/api/switches, or /<app>/api/view/switches for an app whose owner pages live under api/view (Messenger).
+const SW_PATHS = ['/api/switches', '/api/view/switches'];
+const appSwWhere = {};   // app id -> the path that answered
+async function appSwitchApi(id, data) {
+  const init = { credentials: 'same-origin', cache: 'no-store', headers: { Accept: 'application/json' } };
+  if (data) Object.assign(init, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-Wizard-Switch': '1' }, body: JSON.stringify(data) });
+  let r = null;
+  for (const p of appSwWhere[id] ? [appSwWhere[id]] : SW_PATHS) {
+    r = await fetch('/' + encodeURIComponent(id) + p, init);
+    if (r.status !== 404 || data) { if (r.ok) appSwWhere[id] = p; break; }
+  }
+  const json = /json/.test(r.headers.get('content-type') || '') ? await r.json().catch(() => null) : null;
+  if (!r.ok || !json || !Array.isArray(json.switches)) { const e = new Error((json && json.error) || ''); e.status = r.status; throw e; }
+  return json;
 }
+function loadAppSwitches(id, force) {
+  const cur = appSw[id];
+  if (cur && (cur.busy || (!force && Date.now() - cur.at < 60000))) return;
+  appSw[id] = { ...(cur || { switches: [] }), busy: true };
+  appSwitchApi(id).then(j => { appSw[id] = { at: Date.now(), ok: true, status: 200, switches: j.switches.filter(x => x && x.id) }; })
+    .catch(e => { appSw[id] = { at: Date.now(), ok: false, status: e.status || 0, switches: [] }; })
+    .then(() => { if (cache[view] && !typing() && !el('appmodal').open) render(cache[view]); if (el('settings').open) tryList(); });
+}
+function appSwitchFor(i, app) {
+  const st = appSw[app.id];
+  if (!st) { loadAppSwitches(app.id); return null; }
+  if (!st.ok) return null;
+  const id = String(i.id || '').toLowerCase(), how = String(i.switch_how || '').toLowerCase();
+  return st.switches.find(x => (x.issues || []).some(r => String(r).toLowerCase() === id))
+    || st.switches.find(x => x.name && how.includes(String(x.name).toLowerCase())) || null;
+}
+function appToggle(i, app, sw) {
+  const b = make('button', 'bd-try bd-try-app'); b.type = 'button'; b.setAttribute('role', 'switch');
+  b.setAttribute('aria-checked', String(!!sw.on)); b.setAttribute('aria-label', `Try it: ${sw.name || sw.id} in ${app.name}`);
+  b.dataset.appSwitch = app.id + ':' + sw.id;
+  b.append(make('i'));
+  const stop = e => e.stopPropagation();
+  b.addEventListener('keydown', stop); b.addEventListener('pointerdown', stop);
+  b.onclick = async e => {
+    e.preventDefault(); e.stopPropagation();
+    const next = b.getAttribute('aria-checked') !== 'true';
+    b.setAttribute('aria-checked', String(next)); b.disabled = true;
+    try {
+      const j = await appSwitchApi(app.id, { id: sw.id, on: next });
+      appSw[app.id] = { at: Date.now(), ok: true, status: 200, switches: j.switches.filter(x => x && x.id) };
+      if (next) pop(b, '', `On in ${app.name}. Open ${app.name} to try it; switch it off here.`); else unpop();
+    } catch (err) {
+      b.setAttribute('aria-checked', String(!next));
+      pop(b, '', err.status === 403 ? `Only this Wizard’s owner can switch ${app.name}.` : `${app.name} didn’t switch (${err.message || 'HTTP ' + (err.status || 'error')}).`);
+    } finally { b.disabled = false; if (cache[view] && !typing()) setTimeout(() => render(cache[view]), 0); }
+  };
+  return b;
+}
+
+// ---------- 0.21 Open <app>: the app in a large sheet over the Tracker; Close returns exactly where you were ----------
+// Same-origin path /<app id>/ in an iframe. An app that refuses framing (X-Frame-Options DENY, CSP frame-ancestors
+// without this origin) opens in a new tab instead, and says so.
+let appBack = null;
+async function frameRefusal(path) {
+  try {
+    const ctl = new AbortController();
+    const r = await fetch(path, { credentials: 'same-origin', cache: 'no-store', signal: ctl.signal });
+    const xfo = (r.headers.get('x-frame-options') || '').trim().toLowerCase();
+    const csp = r.headers.get('content-security-policy') || '';
+    ctl.abort();
+    if (xfo === 'deny') return 'X-Frame-Options: DENY';
+    if (xfo && xfo !== 'sameorigin') return 'X-Frame-Options: ' + xfo;
+    const fa = (csp.match(/frame-ancestors([^;]*)/i) || [])[1];
+    if (fa != null) {
+      const src = fa.trim().split(/\s+/).filter(Boolean);
+      const ok = src.some(x => x === "'self'" || x === '*' || x.replace(/\/$/, '') === location.origin);
+      if (!ok) return 'CSP frame-ancestors ' + (fa.trim() || "'none'");
+    }
+  } catch (_) {}
+  return '';
+}
+function newTab(path, name, btn, why) {
+  window.open(path, '_blank', 'noopener');
+  if (btn) pop(btn, '', `${name} doesn’t open inside the Tracker${why ? ' (' + why + ')' : ''}, so it opened in a new tab.`);
+}
+async function openApp(id, name, btn) {
+  name = name || id;
+  const path = '/' + encodeURIComponent(id) + '/';
+  const why = await frameRefusal(path);
+  if (why) return newTab(path, name, btn, why);
+  unpop();
+  appBack = { focus: btn || document.activeElement, x: scrollX, y: scrollY, id };
+  const d = el('appmodal'), f = el('appmodal-f');
+  el('appmodal-h').textContent = name; el('appmodal-tab').href = path; f.title = name;
+  f.onload = () => {
+    let ok = false;
+    try { const doc = f.contentDocument; ok = !!(doc && doc.location.href !== 'about:blank'); } catch (_) {}
+    if (!ok && d.open && f.getAttribute('src') !== 'about:blank') { d.close(); newTab(path, name, appBack && appBack.focus, 'it refused to be framed'); }
+  };
+  f.src = path;
+  d.showModal();
+  el('appmodal-x').focus();
+}
+el('appmodal-x').onclick = () => el('appmodal').close();
+el('appmodal').addEventListener('close', () => {
+  const f = el('appmodal-f'); f.onload = null; f.setAttribute('src', 'about:blank');
+  const back = appBack; appBack = null;
+  if (!back) return;
+  scrollTo(back.x, back.y);
+  if (back.focus && back.focus.isConnected) back.focus.focus({ preventScroll: true });
+  loadAppSwitches(back.id, true);   // the owner may have flipped it inside the app
+});
 // 0.15: bug fixes ship live, not behind a switch; a Switch line that isn't a shell tweak (a device setting, an env knob)
 // can't be flipped from here, so both get a plain line saying how to try it instead of a dead switch.
 const LIVE_NOTE = 'Live once your Wizard has the update';
@@ -1075,6 +1190,7 @@ function whereLine(i) {
   if (g === 'airev') return [i.ai_reviewer && i.ai_reviewer !== 'any team agent' ? `Waiting for ${i.ai_reviewer}’s AI check` : 'Waiting for an AI check', ''];
   if (g === 'building') return i.blocked ? ['The builder is stuck: needs a human', 'warn'] : ['The builder is on it', ''];
   if (g === 'queued') return [(i.category === 'core' ? 'Approved · ' : 'Queued · ') + (i.wait_reason || 'Next for the builder'), i.wait_reason === 'Oscar builds this one' ? 'oscar' : ''];
+  if (g === 'sorting') return ['Sorting… the builder files it in the right place in a minute or two', ''];
   if (g === 'shipping') return [(i.kind === 'bug' && i.closed_at ? 'Fixed · ' : '') + (i.ship ? i.ship.text : 'Approved · checking releases…'), ''];
   if (g === 'done') return [i.ship ? i.ship.text : 'Done', 'done'];
   return ['', ''];
@@ -1123,6 +1239,9 @@ function actionArea(i, inDetail) {
       const lab = make('span', 'bd-act-l', why ? why : `${(sw && sw.name) || 'Switch'}: ${sw && sw.on && !box.locked ? 'on' : 'off'}`);
       row.append(trySwitch(i), lab);
     } else if (!wait && i.switch_place) row.append(...placeBits(i));
+    // 0.21: Open <app> for any change to an installed app (the app in a sheet over the Tracker)
+    const app = appForRepo(i.repo);
+    if (app && app.id !== 'wizardos-tracker' && !(i.switch_place && i.switch_place.kind === 'app' && !wait)) row.append(smallBtn(`Open ${app.name}`, b => openApp(app.id, app.name, b)));
     const yes = wait ? greyBtn('Works', wait, 'bd-mini bd-mini-go') : smallBtn('Works', b => askPop(b, i.category === 'core' ? 'Mark as works? It goes to James’ show-and-tell.' : i.shipped ? 'Mark as works? It closes as fixed.' : 'Mark as works? It ships with the next release.', 'Works', () => tested(i, true, '', b)));
     if (!wait) yes.classList.add('bd-mini-go');
     const no = wait ? greyBtn('Doesn’t work', wait) : smallBtn('Doesn’t work', b => noteAsk(row, 'What went wrong? (optional)', 'Send back', note => tested(i, false, note, b)));
@@ -1216,7 +1335,7 @@ function updateFor(v) {
 // ---------- 0.18 Goals: the home tab. One larger card per goal: status light, the latest human status, owners,
 // linked bugs and features by stage, and Update status (the goal's owners or James; greyed for others) ----------
 const LIGHT = { green: 'On track', yellow: 'At risk', red: 'Blocked' };
-const STAGE_WORD = { test: 'human review', show: 'show-and-tell', james: 'waiting for approval', airev: 'AI review', building: 'building', queued: 'queued', shipping: 'shipping', done: 'done' };
+const STAGE_WORD = { sorting: 'sorting', test: 'human review', show: 'show-and-tell', james: 'waiting for approval', airev: 'AI review', building: 'building', queued: 'queued', shipping: 'shipping', done: 'done' };
 function renderGoals(d, keep, order) {
   const list = (d.groups.goals || []).filter(keep);
   if (order) list.sort(order);
@@ -1726,7 +1845,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.20.0';
+const PAGE_VERSION = '0.21.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -1749,7 +1868,7 @@ setTimeout(checkVersion, 5000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.20.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.21.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
