@@ -1074,7 +1074,7 @@ function modalBar() {
   d.classList.toggle('bd-has-item', !!it);
   if (!it) return;
   const tg = tryToggle(it);
-  if (tg) { tw.append(tg); const why = tryState(it).why; if (why) tw.append(make('span', 'bd-why-s bd-try-why', why)); }
+  if (tg) { tw.append(tg); const ts = tryState(it); if (ts.why) { const bits = ts.run ? [make('span', 'bd-why-s', ts.why)] : blockerBits(it, ts, ts.why); bits.forEach(x => (x.classList.contains('bd-why-s') ? x : x.querySelector('.bd-why-s') || x).classList.add('bd-try-why')); tw.append(...bits); } }
   if (it.group === 'test') acts.append(verdictBtns(it, el('appmodal-bar'), tryState(it).wait));
 }
 // The live item behind the pop-up (a refresh may have replaced the object the button carried)
@@ -1370,6 +1370,34 @@ function tryState(i) {
   }
   return { ob, pl, swApp, hit, run, wait, has, why, app: swApp || appForRepo(i.repo) };
 }
+// 0.24.5 (Miguel): whenever an update is what blocks an item, the Update button sits right next to that blocker text on
+// EVERY card (reviewer or not, card, detail, the app pop-up's bar and Settings), and becomes the in-place progress panel
+// once it runs. Which update: the item's own 'Update X' (onbox fix), 'Update <app> first' (the app's switch is newer in
+// the Store) or a core switch this WizardOS doesn't have yet.
+const reEsc = x => String(x).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+function blockUpd(i, t) {
+  const why = (t && t.why) || '', ob = t && t.ob;
+  if (ob && ob.state === 'no' && /^Update /.test(ob.fix || '') && (!t.hit || /^Updat/.test(why))) {
+    const k = runKeyOf(ob);
+    if (k) return { key: k, go: b => k === 'os' ? updateWizardOS(b, i) : updateApp(k, b, i) };
+  }
+  if (/update WizardOS|^Update WizardOS|^Update to try this$/i.test(why)) return { key: 'os', go: b => updateWizardOS(b, i) };
+  const app = t && (t.swApp || t.app);
+  if (app && app.update && new RegExp('^Updat(e|ing) ' + reEsc(app.name) + '\\b').test(why)) return { key: app.id, go: b => updateApp(app.id, b, i) };
+  return null;
+}
+// The blocker line: its words, then the Update button beside them, or the running update's progress instead.
+function blockerBits(i, t, text) {
+  if (!text) return [];
+  const u = blockUpd(i, t);
+  if (!u) return [make('span', 'bd-why-s', text)];
+  const r = runs.get(u.key);
+  if (r) return [updPanel(r, i)];
+  const line = make('span', 'bd-blocker');
+  line.dataset.blocker = u.key;
+  line.append(make('span', 'bd-why-s', text), smallBtn('Update', b => u.go(b)));
+  return [line];
+}
 // 0.23.1: the item's Try it toggle on its own (the same state as the card's). 0.24.2: never null for an item with a
 // switch: greyed (with tryState().why) when it can't be flipped right now. Null only when there is no switch at all.
 function tryToggle(i) {
@@ -1406,6 +1434,12 @@ function actionArea(i, inDetail) {
   }
   if (g === 'test') {
     if (!i.can_review) {
+      // 0.24.5: someone else gives the verdict, but anyone may try it on their own Wizard: Try it and the update
+      // blocker (with its Update button) show here too
+      const t0 = tryState(i), tg0 = tryToggle(i), r0 = t0.run;
+      if (r0) row.append(updPanel(r0, i));
+      if (tg0) { const grp = make('div', 'bd-trygrp'); grp.append(tg0); row.append(grp); }
+      if (!r0) row.append(...blockerBits(i, t0, t0.why || (t0.ob && t0.ob.state === 'no' && !t0.hit ? t0.ob.fix || ONBOX_TEXT.no : '')));
       row.append(greyBtn('Works', i.review_rule), greyBtn('Doesn’t work', i.review_rule));
       row.append(make('span', 'bd-why-s', i.review_rule));   // 0.20: 'James checks this one (he filed it)'
       return row;
@@ -1415,7 +1449,7 @@ function actionArea(i, inDetail) {
     let wait = t.wait;
     if (run) {
       row.append(updPanel(run, i));   // 0.22: Update shows its progress in place, then 'On your Wizard ✓'
-    } else if (ob && ob.state === 'no' && !hit) {
+    } else if (ob && ob.state === 'no' && !hit && !(t.has && blockUpd(i, t))) {
       const u = updateFor(ob, i);
       const need = make('div', 'bd-need');
       need.append(make('span', 'bd-act-l', ob.fix || 'Not on your Wizard yet'));
@@ -1433,7 +1467,7 @@ function actionArea(i, inDetail) {
     if (app && app.id !== 'wizardos-tracker') grp.append(openKey(smallBtn(`Open ${app.name}`, b => openApp(app.id, app.name, b, i)), i));
     else if (pl && pl.kind === 'app' && !swApp) grp.append(openKey(smallBtn('Open', b => pop(b, '', `Open ${repoName(pl.repo)} on your Wizard, then ${pl.text}.`)), i));
     if (grp.childNodes.length) row.append(grp);
-    if (why) row.append(make('span', 'bd-why-s', why));
+    if (why && !run) row.append(...blockerBits(i, t, why));
     row.append(verdictBtns(i, row, wait));
     if (wait && inDetail) row.append(make('span', 'bd-why-s', wait));
     return row;
@@ -2185,7 +2219,7 @@ function tryList() {
     const t = tapTarget('bd-item', () => { WzSheet.close(el('settings')); openDetail(i); });
     t.append(make('b', 'bd-title', i.title));
     const s = make('span', 'bd-meta');
-    if (i.switch) { const sw = box && box.ok && box.switches[i.switch]; s.textContent = `${(sw && sw.name) || i.switch} · ${repoName(i.repo)}`; const why = tryWhy(i); if (why) t.append(s, make('span', 'bd-why-s', why)); else t.append(s); }
+    if (i.switch) { const sw = box && box.ok && box.switches[i.switch]; s.textContent = `${(sw && sw.name) || i.switch} · ${repoName(i.repo)}`; const why = tryWhy(i); if (why) t.append(s, ...blockerBits(i, { why }, why)); else t.append(s); }
     else { s.textContent = `${repoName(i.repo)} · `; t.append(s); for (const x of placeBits(i)) s.append(x, document.createTextNode(' ')); }
     r.append(t);
     if (i.switch) r.append(trySwitch(i));
@@ -2198,7 +2232,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.24.4';
+const PAGE_VERSION = '0.24.5';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2243,7 +2277,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.24.4' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.24.5' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
