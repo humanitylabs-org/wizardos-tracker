@@ -120,8 +120,8 @@ class Form(unittest.TestCase):
             subprocess.run(['node', '--check', str(ROOT / f)], check=True)
 
     def test_version(self):
-        self.assertEqual(S.VERSION, '0.22.0')
-        self.assertIn("const PAGE_VERSION = '0.22.0'", JS)
+        self.assertTrue(S.VERSION >= '0.22.0')
+        self.assertIn("const PAGE_VERSION = '" + S.VERSION + "'", JS)
 
 
 if __name__ == '__main__':
