@@ -711,7 +711,7 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
 .rr-thumb { position: relative; display: inline-block; }
 .rr-thumb img { display: block; height: 56px; width: 72px; border-radius: 6px; border: 1px solid var(--line-2); object-fit: cover; }
 .rr-thumb-x { position: absolute; top: -8px; right: -8px; width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--line-2);
-  background: var(--bg, #fff); color: inherit; font-size: 15px; line-height: 1; cursor: pointer; padding: 0; }
+  background: var(--wz-base, var(--base)); color: inherit; font-size: 0.95rem; line-height: 1; cursor: pointer; padding: 0; }
 .bd-fail .rr-shot { margin: 6px 0; }
 /* 0.21 Open <app>: the app in a large sheet over the Tracker */
 .bd-appmodal { width: min(1100px, calc(100vw - 32px)); height: calc(100vh - 48px); max-width: none; max-height: none; padding: 0; border: 1px solid var(--line-2); border-radius: var(--r); background: var(--wz-panel); color: var(--ink); overflow: hidden; }
