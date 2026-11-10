@@ -18,10 +18,25 @@
 <body>
   <div class="wz-app bd-app">
     <main class="wz-scroll bd-scroll" id="scroll">
-      <!-- 0.20: one primary 'Report or request' at the very top (left); the tiny account control stays top right -->
-      <header class="bd-top">
-      <button type="button" class="wz-button bd-rr" id="report-open" aria-haspopup="dialog" hidden>Report or request</button>
-      <p class="bd-acct" id="acct"><span class="bd-fresh" id="fresh" aria-live="polite"></span><button type="button" class="bd-reload" id="reload" aria-label="Refresh now" title="Refresh now" hidden><svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"/></svg></button><span id="acct-name" hidden></span> <button type="button" class="bd-acct-act" id="acct-act">Sign in</button> <button type="button" class="bd-acct-act" id="settings-btn" aria-haspopup="dialog">Settings</button></p>
+      <!-- 0.22: one header row: Goals | Core · Apps · Bugs | Builder | + Report | Settings. Report or request is the one round
+           primary '+' (floating bottom right on phones, a compact '+ Report' top right on wide screens), never a tab. -->
+      <header class="bd-hbar" id="bar">
+        <button type="button" class="bd-goals-btn" id="goals-btn" data-view="goals" aria-pressed="false" aria-describedby="goals-n" hidden>
+          <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/></svg>
+          <span class="bd-goals-t">Goals</span><b class="bd-goals-n" id="goals-n" hidden></b>
+        </button>
+        <div class="bd-switch" role="tablist" aria-label="Show" hidden>
+          <button type="button" role="tab" data-view="core" aria-selected="true" aria-label="Core features"><span class="bd-tab-l">Core features</span><span class="bd-tab-s" aria-hidden="true">Core</span></button>
+          <button type="button" role="tab" data-view="apps" aria-selected="false" aria-label="App features"><span class="bd-tab-l">App features</span><span class="bd-tab-s" aria-hidden="true">Apps</span></button>
+          <button type="button" role="tab" data-view="bugs" aria-selected="false" aria-label="Bugs"><span class="bd-tab-l">Bugs</span><span class="bd-tab-s" aria-hidden="true">Bugs</span></button>
+        </div>
+        <button type="button" class="bd-toggle" id="builder" role="switch" aria-checked="false" aria-label="Builder" aria-describedby="builder-state" hidden>
+          <span class="bd-track" aria-hidden="true"><i></i></span>
+          <span class="bd-ctl-name" aria-hidden="true">Builder</span>
+          <span class="bd-ctl-state" id="builder-state">Paused</span>
+        </button>
+        <button type="button" class="bd-rr" id="report-open" aria-haspopup="dialog" aria-label="Report or request" title="Report or request" hidden><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg><span class="bd-rr-t">Report</span></button>
+        <button type="button" class="bd-gear" id="settings-btn" aria-haspopup="dialog" aria-label="Settings" title="Settings"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z"/><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.9 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 8.96 4.6H9a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15.1 4.6a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 8.96V9a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg></button>
       </header>
       <!-- Not signed in: one card, one field. -->
       <section id="signin" class="wz-card bd-signin" hidden>
@@ -53,30 +68,18 @@
       </section>
 
       <div id="board" class="bd-board" hidden>
-        <!-- 0.18.1: Goals is its own button on the left; three tabs (Core features | App features | Bugs); the small Builder switch on the right. -->
-        <div class="bd-head">
-          <button type="button" class="bd-goals-btn" id="goals-btn" data-view="goals" aria-pressed="false" aria-describedby="goals-n">
-            <svg viewBox="0 0 24 24" width="15" height="15" aria-hidden="true"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="12" cy="12" r="1.4" fill="currentColor"/></svg>
-            <span>Goals</span><b class="bd-goals-n" id="goals-n" hidden></b>
-          </button>
-          <div class="bd-switch" role="tablist" aria-label="Show">
-            <button type="button" role="tab" data-view="core" aria-selected="true">Core features</button>
-            <button type="button" role="tab" data-view="apps" aria-selected="false">App features</button>
-            <button type="button" role="tab" data-view="bugs" aria-selected="false">Bugs</button>
-          </div>
-          <button type="button" class="bd-toggle" id="builder" role="switch" aria-checked="false" aria-label="Builder" aria-describedby="builder-state">
-            <span class="bd-ctl-name" aria-hidden="true">Builder</span>
-            <span class="bd-track" aria-hidden="true"><i></i></span>
-            <span class="bd-ctl-state" id="builder-state">Paused</span>
-          </button>
-        </div>
-
         <!-- 0.17: a calm stage strip (count and name only; tap one to show just that stage). Timings, targets and the
              return arrows live in Stats. One Filter button (person, repo) and a small Sort menu. -->
         <div id="lists">
           <div class="bd-flow bd-strip" role="group" aria-label="How work moves"><ol class="bd-steps" id="strip"></ol></div>
           <!-- 0.17.1: stats expand inline under the strip (collapsed by default, remembered per device) -->
-          <p class="bd-stats-tg"><button type="button" class="bd-tool bd-tool-link" id="stats-btn" aria-expanded="false" aria-controls="stats">Show stats</button></p>
+          <!-- 0.22: one tools row: Filter, Sort, Stats, and the refresh (how fresh the list is) -->
+          <div class="bd-tools">
+            <button type="button" class="bd-tool" id="filter-btn" aria-haspopup="dialog">Filter</button>
+            <button type="button" class="bd-tool" id="sort-btn" aria-haspopup="menu">Sort: Your turn first</button>
+            <button type="button" class="bd-tool bd-tool-link" id="stats-btn" aria-expanded="false" aria-controls="stats">Show stats</button>
+            <span class="bd-fresh" id="fresh" aria-live="polite"></span><button type="button" class="bd-reload" id="reload" aria-label="Refresh now" title="Refresh now" hidden><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"/></svg></button>
+          </div>
           <div class="bd-statsx" id="stats" role="region" aria-label="Stats" inert>
             <div class="bd-statsx-in">
               <div class="bd-flow" id="flow" role="group" aria-label="How work moves">
@@ -87,10 +90,6 @@
               <p class="bd-meta" id="stats-note"></p>
               <p class="bd-meta bd-still-n" id="still-n" hidden></p>
             </div>
-          </div>
-          <div class="bd-tools">
-            <button type="button" class="bd-tool" id="filter-btn" aria-haspopup="dialog">Filter</button>
-            <button type="button" class="bd-tool" id="sort-btn" aria-haspopup="menu">Sort: Your turn first</button>
           </div>
           <p class="bd-filtered" id="filtered" hidden></p>
           <p class="bd-totals" id="totals" aria-live="polite"></p>
@@ -160,14 +159,16 @@
     <!-- 0.21 Open <app>: the app in a large sheet over the Tracker (same-origin iframe); closing returns to where you were -->
     <dialog id="appmodal" class="bd-appmodal" aria-labelledby="appmodal-h">
       <div class="bd-appmodal-bar">
+        <button type="button" class="bd-appmodal-x" id="appmodal-x"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>Close</button>
         <h2 id="appmodal-h" class="bd-appmodal-h"></h2>
-        <a class="bd-link" id="appmodal-tab" href="#" target="_blank" rel="noopener">New tab ↗</a>
-        <button type="button" class="wz-button secondary" id="appmodal-x">Close</button>
+        <a class="bd-link bd-appmodal-tab" id="appmodal-tab" href="#" target="_blank" rel="noopener" aria-label="Open in a new tab">New tab ↗</a>
       </div>
       <iframe id="appmodal-f" class="bd-appmodal-f" title="App"></iframe>
     </dialog>
     <dialog id="settings" class="wz-sheet bd-settings" aria-labelledby="settings-h">
       <h2 id="settings-h">Tracker settings</h2>
+      <!-- 0.22: the account line moved here from the header -->
+      <p class="bd-acct" id="acct"><span id="acct-name" hidden></span> <button type="button" class="bd-acct-act" id="acct-act">Sign in</button></p>
       <!-- 0.18: the Update manager lives here only (no separate view); cards show Update just in time -->
       <h3 class="bd-sec-h">Updates</h3>
       <div id="um-body"></div>

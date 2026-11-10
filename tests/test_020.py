@@ -178,9 +178,10 @@ console.log(JSON.stringify([lift('bugs', bugs), lift('apps', apps)]));"""
 class Form(unittest.TestCase):
     def test_one_button_on_top(self):
         self.assertIn('id="report-open"', HTML)
-        self.assertLess(HTML.index('id="report-open"'), HTML.index('id="acct"'))
-        self.assertLess(HTML.index('id="report-open"'), HTML.index('role="tablist"'))
-        self.assertIn('class="wz-button bd-rr"', HTML)
+        # 0.22: the round primary '+' in the one header row (floating on phones); test_022 checks the rest
+        bar = HTML[HTML.index('id="bar"'):HTML.index('</header>')]
+        self.assertIn('id="report-open"', bar)
+        self.assertIn('class="bd-rr"', HTML)
         self.assertNotIn('report-btn', HTML + JS)
         self.assertNotIn('Report a bug', HTML)
         self.assertNotIn("api('api/bugs'", JS)
