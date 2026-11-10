@@ -13,9 +13,9 @@ import server as S  # noqa: E402
 
 class Version(unittest.TestCase):
     def test_version(self):
-        self.assertEqual(S.VERSION, '0.23.0')
-        self.assertIn("version: '0.23.0'", JS)
-        self.assertIn("PAGE_VERSION = '0.23.0'", JS)
+        self.assertTrue(S.VERSION >= '0.23.0')
+        self.assertIn("version: '" + S.VERSION + "'", JS)
+        self.assertIn("PAGE_VERSION = '" + S.VERSION + "'", JS)
 
 
 class OneCatalog(unittest.TestCase):

@@ -156,12 +156,15 @@
         <p class="bd-d-foot"><a class="bd-link" id="rr-link" href="#" target="_blank" rel="noopener noreferrer">GitHub ↗</a> <button type="button" class="wz-button" id="rr-close">Done</button></p>
       </div>
     </dialog>
-    <!-- 0.21 Open <app>: the app in a large sheet over the Tracker (same-origin iframe); closing returns to where you were -->
+    <!-- 0.21 Open <app>: the app in a large sheet over the Tracker (same-origin iframe); closing returns to where you were.
+         0.23.1: a slim bar with the item's title, its Try it toggle (the card's state), Works / Doesn't work and Close -->
     <dialog id="appmodal" class="bd-appmodal" aria-labelledby="appmodal-h">
-      <div class="bd-appmodal-bar">
-        <button type="button" class="bd-appmodal-x" id="appmodal-x"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>Close</button>
+      <div class="bd-appmodal-bar" id="appmodal-bar">
         <h2 id="appmodal-h" class="bd-appmodal-h"></h2>
+        <span class="bd-appmodal-try" id="appmodal-try"></span>
+        <span class="bd-appmodal-acts" id="appmodal-acts"></span>
         <a class="bd-link bd-appmodal-tab" id="appmodal-tab" href="#" target="_blank" rel="noopener" aria-label="Open in a new tab">New tab ↗</a>
+        <button type="button" class="bd-appmodal-x" id="appmodal-x"><svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg>Close</button>
       </div>
       <iframe id="appmodal-f" class="bd-appmodal-f" title="App"></iframe>
     </dialog>

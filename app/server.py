@@ -33,7 +33,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.23.0'
+VERSION = '0.23.1'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -3201,6 +3201,14 @@ def tested(person, args, works):
     any point after the merge: in AI review, in their own check, or after it closed (it reopens to Building)."""
     _, acct = account_for(person)
     full, number = _target(args)
+    note = ''
+    if not works:   # 0.23.1 (Miguel): Doesn't work always says what's wrong; the note goes into the issue comment
+        raw = args.get('note')
+        note = raw.strip() if isinstance(raw, str) else ''
+        if not note:
+            raise Problem(400, 'Say what\u2019s wrong, so the builder knows what to fix.', 'note_required')
+        if len(note) > 4000:
+            raise Problem(400, 'What went wrong is too long (4000 characters max).')
     login = acct.get('login') or 'someone'
     base = policy_base()
     cur = _current(acct, full, number)
@@ -3223,10 +3231,7 @@ def tested(person, args, works):
     if works:
         body = f'Tested: works \u2014 @{login}'
     else:
-        note = (args.get('note') or '').strip() if isinstance(args.get('note') or '', str) else ''
-        if len(note) > 4000:
-            raise Problem(400, 'What went wrong is too long (4000 characters max).')
-        body = f"Tested: doesn't work \u2014 @{login}" + (f'\n\n{note}' if note else '')
+        body = f"Tested: doesn't work \u2014 @{login}\n\nWhat\u2019s wrong: {note}"
     gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
     nxt = 'building'
     if works:   # add the next label first, then drop ready-to-test, so the timeline never reads as a kick-back

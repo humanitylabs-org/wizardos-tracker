@@ -884,7 +884,7 @@ function placeBits(i) {
     const hit = app && appSwitchFor(i, app);
     if (hit) out.push(appToggle(i, app, hit), make('span', 'bd-sw-name', `${hit.name || hit.id}: ${hit.on ? 'on' : 'off'}`));
     else out.push(make('span', 'bd-sw-why', `${app ? app.name : repoName(pl.repo)}: ${pl.text}`));
-    out.push(openKey(smallBtn(app ? `Open ${app.name}` : 'Open', b => app ? openApp(app.id, app.name, b) : pop(b, '', `Open ${repoName(pl.repo)} on your Wizard, then ${pl.text}.`)), i));
+    out.push(openKey(smallBtn(app ? `Open ${app.name}` : 'Open', b => app ? openApp(app.id, app.name, b, i) : pop(b, '', `Open ${repoName(pl.repo)} on your Wizard, then ${pl.text}.`)), i));
   } else out.push(make('span', 'bd-sw-why', 'Turn on: ' + pl.text));
   return out;
 }
@@ -958,7 +958,9 @@ function appToggle(i, app, sw) {
     try {
       const j = await appSwitchApi(app.id, { id: sw.id, on: next });
       appSw[app.id] = { at: Date.now(), ok: true, status: 200, switches: j.switches.filter(x => x && x.id) };
-      if (next) pop(b, '', `On in ${app.name}. Now open ${app.name} and try it; switch it off here.`); else unpop();
+      if (b.closest('#appmodal')) unpop();
+      else if (next) pop(b, '', `On in ${app.name}. Now open ${app.name} and try it; switch it off here.`); else unpop();
+      flipped();
     } catch (err) {
       tryFace(b, !next);
       pop(b, '', err.status === 403 ? `Only this Wizard’s owner can switch ${app.name}.` : err.status === 401 ? `Open ${app.name} once, then try again.` : `${app.name} didn’t switch (${err.message || 'HTTP ' + (err.status || 'error')}).`);
@@ -1005,15 +1007,16 @@ function newTab(path, name, btn, why) {
   window.open(path, '_blank', 'noopener');
   if (btn) pop(btn, '', `${name} doesn’t open inside the Tracker${why ? ' (' + why + ')' : ''}, so it opened in a new tab.`);
 }
-async function openApp(id, name, btn) {
+async function openApp(id, name, btn, item) {
   name = name || id;
   const path = '/' + encodeURIComponent(id) + '/';
   const why = await frameRefusal(path);
   if (why) return newTab(path, name, btn, why);
   unpop();
-  appBack = { focus: btn || document.activeElement, at: place(), id, key: btn && btn.dataset.openKey };
+  appBack = { focus: btn || document.activeElement, at: place(), id, key: btn && btn.dataset.openKey, item: item || null, name };
   const d = el('appmodal'), f = el('appmodal-f');
-  el('appmodal-h').textContent = name; el('appmodal-tab').href = path; f.title = name;
+  el('appmodal-tab').href = path; f.title = name;
+  modalBar();
   f.onload = () => {
     let ok = false;
     try { const doc = f.contentDocument; ok = !!(doc && doc.location.href !== 'about:blank'); } catch (_) {}
@@ -1029,6 +1032,37 @@ async function openApp(id, name, btn) {
 }
 function closeApp() { const d = el('appmodal'); if (typeof d.close === 'function' && d.open) d.close(); else if (d.hasAttribute('open')) { d.removeAttribute('open'); d.dispatchEvent(new Event('close')); } }
 el('appmodal-x').onclick = closeApp;
+// 0.23.1: the pop-up's slim bar: the item's title, the same Try it toggle as its card (one state, rebuilt from it on
+// every flip), Works / Doesn't work with the card's confirm and required note, and Close. Without an item: the app's name.
+function modalBar() {
+  const it = appBack && appBack.item, d = el('appmodal');
+  el('appmodal-h').textContent = it ? it.title : (appBack ? appBack.name : '');
+  el('appmodal-h').title = it ? `${it.title} · ${appBack.name}` : '';
+  const tw = el('appmodal-try'), acts = el('appmodal-acts');
+  tw.replaceChildren(); acts.replaceChildren();
+  d.classList.toggle('bd-has-item', !!it);
+  if (!it) return;
+  const tg = tryToggle(it);
+  if (tg) tw.append(tg);
+  if (it.group === 'test') acts.append(verdictBtns(it, el('appmodal-bar'), tryState(it).wait));
+}
+// The live item behind the pop-up (a refresh may have replaced the object the button carried)
+function liveItem(it) {
+  for (const v of Object.keys(cache)) for (const g of Object.values((cache[v] || {}).groups || {})) for (const x of g || []) if (x.id === it.id) return x;
+  return it;
+}
+// After any flip: the card and the pop-up show the new state, and the framed app reloads so the change shows now
+function flipped() {
+  const d = el('appmodal');
+  if (!d.open || !appBack) return;
+  if (appBack.item) { appBack.item = liveItem(appBack.item); adoptSwitch(appBack.item); }
+  modalBar();
+  reloadFrame();
+}
+function reloadFrame() {
+  const f = el('appmodal-f');
+  try { f.contentWindow.location.reload(); } catch (_) { const s = f.getAttribute('src'); f.setAttribute('src', 'about:blank'); f.setAttribute('src', s); }
+}
 el('appmodal').addEventListener('close', () => {
   const d = el('appmodal'), f = el('appmodal-f'); f.onload = null; f.setAttribute('src', 'about:blank');
   document.documentElement.classList.remove('bd-modal-on');
@@ -1071,7 +1105,9 @@ function trySwitch(i) {
     tryFace(b, next); b.disabled = true;
     try {
       takeSwitches(await switchApi({ id: i.switch, on: next }));
-      if (next) pop(b, '', 'On in this Wizard. It shows within a few seconds; switch it off here or in Settings.'); else unpop();
+      if (b.closest('#appmodal')) unpop();   // 0.23.1: in the pop-up the app reloads with it instead
+      else if (next) pop(b, '', 'On in this Wizard. It shows within a few seconds; switch it off here or in Settings.'); else unpop();
+      flipped();
       if (cache[view] && !typing()) render(cache[view]);
       if (el('settings').open) tryList();
       if (openId === i.id) detailSwitch(i);
@@ -1269,12 +1305,46 @@ function itemCard(i) {
   c.append(make('p', 'bd-hint', [`${repoName(i.repo)} #${i.number}`, nameOf(i.author) || i.opener || '', when_].filter(Boolean).join(' · ')));
   return c;
 }
+// 0.23.1: what a Human review item needs before it can be tried: shared by the card, the detail and the app pop-up's bar
+function tryState(i) {
+  const ob = onboxOf(i);
+  // 0.21.3: an app that already serves this item's switch has the change, whatever the release records say
+  const pl = i.switch_place || null;
+  const swApp = pl && pl.kind === 'app' ? appForRepo(pl.repo) : null;
+  const hit = (i.switch_adopted && box && box.ok && box.switches[i.switch]) || (swApp ? appSwitchFor(i, swApp) : null);
+  const run = updRunFor(i, ob);
+  let wait = '';
+  if (run) { if (run.state !== 'done') wait = run.state === 'failed' ? 'Update first: this change isn’t on your Wizard yet.' : 'Updating your Wizard…'; }
+  else if (ob && ob.state === 'no' && !hit) wait = 'Update first: this change isn’t on your Wizard yet.';
+  return { ob, pl, swApp, hit, run, wait, app: swApp || appForRepo(i.repo) };
+}
+// 0.23.1: the item's Try it toggle on its own (the same state as the card's), or null when there is nothing to flip here
+function tryToggle(i) {
+  const t = tryState(i);
+  if (t.wait) return null;
+  if (i.switch) return trySwitch(i);
+  if (t.pl && t.pl.kind === 'app' && t.hit && t.swApp) return appToggle(i, t.swApp, t.hit);
+  return null;
+}
+// Doesn't work always asks what's wrong (Miguel, 0.23.1): the note is required and goes into the issue comment
+const WRONG = { label: 'What’s wrong?', placeholder: 'e.g. Swiping feels choppy, it should glide one day at a time', send: 'Send' };
+function doesntWork(area, i, b) { noteAsk(area, WRONG.placeholder, WRONG.send, note => tested(i, false, note, b), { required: true, label: WRONG.label }); }
+// Works (one tap, then the existing confirm) and Doesn't work: on the card, in the detail and in the app pop-up's bar
+function verdictBtns(i, area, wait) {
+  const btns = make('span', 'bd-act-btns');
+  if (!i.can_review) { btns.append(greyBtn('Works', i.review_rule), greyBtn('Doesn’t work', i.review_rule)); return btns; }
+  const yes = wait ? greyBtn('Works', wait, 'bd-mini bd-mini-go') : smallBtn('Works', b => askPop(b, i.category === 'core' ? 'Mark as works? It goes to James’ show-and-tell.' : i.shipped ? 'Mark as works? It closes as fixed.' : 'Mark as works? It ships with the next release.', 'Works', () => tested(i, true, '', b)));
+  if (!wait) yes.classList.add('bd-mini-go');
+  const no = wait ? greyBtn('Doesn’t work', wait) : smallBtn('Doesn’t work', b => doesntWork(area, i, b));
+  btns.append(yes, no);
+  return btns;
+}
 // The one action area: exactly what is needed now, greyed with the reason for anyone else.
 function actionArea(i, inDetail) {
   const g = i.group, row = make('div', 'bd-act');
   // 0.19: a shipped bug (AI check running, or closed and on its way to everyone): the filer can still say Doesn't work
   if (i.kind === 'bug' && i.can_fail && (g === 'airev' || (g === 'shipping' && i.closed_at))) {
-    const no = smallBtn('Doesn’t work', b => noteAsk(row, 'What went wrong? (optional)', g === 'shipping' ? 'Reopen' : 'Send back', note => tested(i, false, note, b)));
+    const no = smallBtn('Doesn’t work', b => doesntWork(row, i, b));
     row.append(make('span', 'bd-act-l', 'Still broken?'), no);
     return row;
   }
@@ -1284,23 +1354,17 @@ function actionArea(i, inDetail) {
       row.append(make('span', 'bd-why-s', i.review_rule));   // 0.20: 'James checks this one (he filed it)'
       return row;
     }
-    const ob = onboxOf(i);
-    let wait = '';
-    // 0.21.3: an app that already serves this item's switch has the change, whatever the release records say
-    const pl = i.switch_place || null;
-    const swApp = pl && pl.kind === 'app' ? appForRepo(pl.repo) : null;
-    const hit = (i.switch_adopted && box && box.ok && box.switches[i.switch]) || (swApp ? appSwitchFor(i, swApp) : null);
-    const run = updRunFor(i, ob);
+    const t = tryState(i);
+    const { ob, pl, swApp, hit, run } = t;
+    let wait = t.wait;
     if (run) {
       row.append(updPanel(run, i));   // 0.22: Update shows its progress in place, then 'On your Wizard ✓'
-      if (run.state !== 'done') wait = run.state === 'failed' ? 'Update first: this change isn’t on your Wizard yet.' : 'Updating your Wizard…';
     } else if (ob && ob.state === 'no' && !hit) {
       const u = updateFor(ob, i);
       const need = make('div', 'bd-need');
       need.append(make('span', 'bd-act-l', ob.fix || 'Not on your Wizard yet'));
       if (u) need.append(u);
       row.append(need);
-      wait = 'Update first: this change isn’t on your Wizard yet.';
     }
     // 0.22: the try flow, in order: Try it (switch it on) -> Open <app> -> Works / Doesn't work
     const grp = make('div', 'bd-trygrp');
@@ -1308,16 +1372,12 @@ function actionArea(i, inDetail) {
     if (!wait && i.switch) { grp.append(trySwitch(i)); why = tryWhy(i); }
     else if (!wait && pl && pl.kind === 'app') { if (hit) grp.append(appToggle(i, swApp, hit)); else why = `${swApp ? swApp.name : repoName(pl.repo)}: ${pl.text}`; }
     else if (!wait && pl) grp.append(...placeBits(i));
-    const app = swApp || appForRepo(i.repo);
-    if (app && app.id !== 'wizardos-tracker') grp.append(openKey(smallBtn(`Open ${app.name}`, b => openApp(app.id, app.name, b)), i));
+    const app = t.app;
+    if (app && app.id !== 'wizardos-tracker') grp.append(openKey(smallBtn(`Open ${app.name}`, b => openApp(app.id, app.name, b, i)), i));
     else if (pl && pl.kind === 'app' && !swApp) grp.append(openKey(smallBtn('Open', b => pop(b, '', `Open ${repoName(pl.repo)} on your Wizard, then ${pl.text}.`)), i));
     if (grp.childNodes.length) row.append(grp);
     if (why) row.append(make('span', 'bd-why-s', why));
-    const yes = wait ? greyBtn('Works', wait, 'bd-mini bd-mini-go') : smallBtn('Works', b => askPop(b, i.category === 'core' ? 'Mark as works? It goes to James’ show-and-tell.' : i.shipped ? 'Mark as works? It closes as fixed.' : 'Mark as works? It ships with the next release.', 'Works', () => tested(i, true, '', b)));
-    if (!wait) yes.classList.add('bd-mini-go');
-    const no = wait ? greyBtn('Doesn’t work', wait) : smallBtn('Doesn’t work', b => noteAsk(row, 'What went wrong? (optional)', 'Send back', note => tested(i, false, note, b)));
-    const btns = make('span', 'bd-act-btns'); btns.append(yes, no);
-    row.append(btns);
+    row.append(verdictBtns(i, row, wait));
     if (wait && inDetail) row.append(make('span', 'bd-why-s', wait));
     return row;
   }
@@ -1338,26 +1398,37 @@ function actionArea(i, inDetail) {
   return null;
 }
 // An inline 'why' note under the action area (Doesn't work, Decline), Cancel focused first
-function noteAsk(area, placeholder, yesText, fn) {
-  if (area.nextSibling && area.nextSibling.classList && area.nextSibling.classList.contains('bd-fail')) return;
+function noteAsk(area, placeholder, yesText, fn, opt = {}) {
+  if (area.nextSibling && area.nextSibling.classList && area.nextSibling.classList.contains('bd-fail')) return area.nextSibling.querySelector('textarea').focus();
   const f = make('form', 'bd-fail bd-confirm'); f.autocomplete = 'off';
-  const ta = make('textarea', 'wz-input bd-area'); ta.rows = 2; ta.maxLength = 4000; ta.placeholder = placeholder; ta.setAttribute('aria-label', placeholder);
-  ta.oninput = () => hold(!!ta.value.trim());
+  const ta = make('textarea', 'wz-input bd-area'); ta.rows = 2; ta.maxLength = 4000; ta.placeholder = placeholder; ta.setAttribute('aria-label', opt.label || placeholder);
+  if (opt.label) { const id = 'bd-note-' + Math.random().toString(36).slice(2, 8); ta.id = id; const l = make('label', 'bd-fail-l', opt.label); l.htmlFor = id; f.append(l); }
+  if (opt.required) ta.required = true;
   const r = make('div', 'bd-btns');
   const cancel = make('button', 'wz-button secondary', 'Cancel'); cancel.type = 'button';
   const go = make('button', 'wz-button', yesText); go.type = 'submit';
+  // 0.23.1: a required note (Doesn't work): Send stays off until there is text
+  const gate = () => { if (opt.required) go.disabled = !ta.value.trim(); };
+  ta.oninput = () => { hold(!!ta.value.trim()); gate(); };
+  gate();
   r.append(cancel, go); f.append(ta, r);
   area.after(f); ta.focus();
   const close = () => { f.remove(); hold(false); };
   cancel.onclick = close;
-  f.onkeydown = e => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
-  f.onsubmit = async e => { e.preventDefault(); go.disabled = cancel.disabled = true; await fn(ta.value.trim()); close(); };
+  f.onkeydown = e => { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); close(); } };
+  f.onsubmit = async e => {
+    e.preventDefault();
+    const note = ta.value.trim();
+    if (opt.required && !note) { gate(); return ta.focus(); }
+    go.disabled = cancel.disabled = true; await fn(note); close();
+  };
 }
 function afterAct(i, msg) {
   hold(false);
   for (const v of Object.keys(cache)) { const d = cache[v]; if (d && d.groups) for (const g of Object.keys(d.groups)) d.groups[g] = d.groups[g].filter(x => x.id !== i.id); }
   details.delete(i.id); onbox.delete(i.id); delete doneCache[view];
   if (el('detail').open) WzSheet.close(el('detail'));
+  if (el('appmodal').open) closeApp();   // 0.23.1: the check was made from the pop-up's bar
   if (cache[view]) render(cache[view]);
   toast(msg); setTimeout(() => load(view, true), 1500);
 }
@@ -2053,7 +2124,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.23.0';
+const PAGE_VERSION = '0.23.1';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2076,7 +2147,7 @@ setTimeout(checkVersion, 5000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.23.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.23.1' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

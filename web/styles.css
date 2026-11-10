@@ -798,6 +798,14 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 .bd-appmodal-bar { display: flex; align-items: center; gap: 10px; }
 .bd-appmodal-h { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bd-appmodal-tab { flex: none; display: inline-flex; align-items: center; min-height: 44px; }
+/* 0.23.1: the pop-up's slim bar: title (truncates) · Try it · Works / Doesn't work · New tab · Close */
+.bd-appmodal-bar { min-height: 52px; box-sizing: border-box; }
+.bd-appmodal-try, .bd-appmodal-acts { flex: none; display: inline-flex; align-items: center; gap: 8px; }
+.bd-appmodal-try:empty, .bd-appmodal-acts:empty { display: none; }
+.bd-appmodal-acts .bd-act-btns { margin: 0; flex-wrap: nowrap; }
+.bd-appmodal-acts .bd-mini { white-space: nowrap; }
+#appmodal > .bd-fail { flex: none; padding: 10px 12px; border-bottom: 1px solid var(--line-2); background: var(--wz-panel); }
+.bd-fail-l { font-size: .9rem; font-weight: 700; color: var(--ink); }
 
 @media (max-width: 599px) {
   /* header: Goals ◎ | Core Apps Bugs | ● Builder | ⚙ — on one row */
@@ -856,5 +864,15 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
   #appmodal .bd-appmodal-bar { padding: 6px 10px; border-bottom: 1px solid var(--line); }
   #appmodal .bd-appmodal-f { flex: 1; width: 100%; min-height: 0; border: 0; padding-bottom: env(safe-area-inset-bottom, 0px); }
   #appmodal .bd-appmodal-tab { font-size: .82rem; }
+  /* 0.23.1 phone: row one keeps the title (truncated), Try it and Close; Works / Doesn't work (and New tab) take row two */
+  #appmodal.bd-has-item .bd-appmodal-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; grid-template-areas: "h try x" "acts acts tab"; gap: 6px 8px; align-items: center; }
+  #appmodal.bd-has-item .bd-appmodal-h { grid-area: h; font-size: .95rem; }
+  #appmodal.bd-has-item .bd-appmodal-try { grid-area: try; }
+  #appmodal.bd-has-item .bd-appmodal-x { grid-area: x; padding: 0 12px 0 8px; }
+  #appmodal.bd-has-item .bd-appmodal-acts { grid-area: acts; min-width: 0; }
+  #appmodal.bd-has-item .bd-appmodal-acts .bd-act-btns { width: 100%; }
+  #appmodal.bd-has-item .bd-appmodal-acts .bd-mini { flex: 1 1 0; justify-content: center; }
+  #appmodal.bd-has-item .bd-appmodal-tab { grid-area: tab; }
+  #appmodal .bd-appmodal-try .bd-try-pill { padding: 0 10px 0 6px; gap: 6px; }
 }
 @media (max-width: 360px) { .bd-hbar .bd-toggle .bd-ctl-name { display: none; } }

@@ -249,9 +249,13 @@ class Reviews(unittest.TestCase):
         S.tested('j', {'repo': 'wizard-ux', 'number': 9, 'note': 'Button missing'}, False)
         self.assertEqual(GH.issues[9]['labels'], {'bug', 'building'})
         GH.issues[11] = {'user': 'jdefleur', 'labels': {'bug', 'ready-to-test'}, 'comments': []}
-        S.tested('j', {'repo': 'wizard-ux', 'number': 11}, False)   # 0.16: the note is optional
+        with self.assertRaises(S.Problem) as e:   # 0.23.1: the note is required again (Miguel)
+            S.tested('j', {'repo': 'wizard-ux', 'number': 11}, False)
+        self.assertEqual((e.exception.code, e.exception.reason), (400, 'note_required'))
+        self.assertEqual(GH.issues[11]['labels'], {'bug', 'ready-to-test'})
+        S.tested('j', {'repo': 'wizard-ux', 'number': 11, 'note': 'Swiping feels choppy'}, False)
         self.assertEqual(GH.issues[11]['labels'], {'bug', 'building'})
-        self.assertEqual(GH.issues[11]['comments'][-1], ('jdefleur', "Tested: doesn't work — @jdefleur"))
+        self.assertEqual(GH.issues[11]['comments'][-1], ('jdefleur', "Tested: doesn't work — @jdefleur\n\nWhat’s wrong: Swiping feels choppy"))
         GH.issues[10] = {'user': 'mistermizel', 'labels': {'bug', 'ai-review'}, 'comments': []}
         with self.assertRaises(S.Problem) as e:
             S.tested('j', {'repo': 'wizard-ux', 'number': 10}, True)

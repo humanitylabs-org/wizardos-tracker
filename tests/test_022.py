@@ -98,8 +98,9 @@ class Update(unittest.TestCase):
 
 class Modal(unittest.TestCase):
     def test_close_first_full_screen(self):
-        bar = HTML[HTML.index('<div class="bd-appmodal-bar">'):]
-        self.assertLess(bar.index('id="appmodal-x"'), bar.index('id="appmodal-h"'))
+        # 0.23.1: the bar reads title · Try it · Works / Doesn't work · Close (Close at the end, always on row one)
+        bar = HTML[HTML.index('<div class="bd-appmodal-bar"'):]
+        self.assertLess(bar.index('id="appmodal-h"'), bar.index('id="appmodal-x"'))
         ph = phone_rules()
         self.assertRegex(ph, r'#appmodal\.bd-appmodal \{ width: 100%; max-width: 100%; height: 100dvh;')
 
@@ -115,7 +116,7 @@ class TryFirst(unittest.TestCase):
         body = JS[JS.index("// 0.22: the try flow, in order"):JS.index("if (wait && inDetail) row.append")]
         self.assertLess(body.index('trySwitch(i)'), body.index('Open ${app.name}'))
         self.assertLess(body.index('appToggle(i, swApp, hit)'), body.index('Open ${app.name}'))
-        self.assertLess(body.index('Open ${app.name}'), body.index("'Works'"))
+        self.assertLess(body.index('Open ${app.name}'), body.index('verdictBtns(i, row, wait)'))
         self.assertIn("make('div', 'bd-trygrp')", body)
 
     def test_labelled_with_state(self):
