@@ -14,7 +14,7 @@ import server as S  # noqa: E402
 class Version(unittest.TestCase):
     def test_version(self):
         self.assertTrue(S.VERSION >= '0.24.1')
-        self.assertTrue(json.loads((ROOT / 'runtipi' / 'config.json').read_text())['version'] >= '0.24.1')
+        self.assertEqual(json.loads((ROOT / 'runtipi' / 'config.json').read_text())['version'], S.VERSION)
 
 
 class AgentInstructions(unittest.TestCase):

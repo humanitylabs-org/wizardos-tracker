@@ -33,7 +33,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.24.2'
+VERSION = '0.24.3'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -250,6 +250,10 @@ def refresh_loop(sleep=time.sleep, rounds=None):
                     refresh_account(key, acct)
                 except Exception:  # noqa: BLE001 - one bad account never stops the loop
                     pass
+        try:
+            _retry_pending()   # 0.24.2: screenshots that could not upload yet
+        except Exception:  # noqa: BLE001 - never stops the loop
+            pass
         if rounds is None or n < rounds:
             sleep(REFRESH_EVERY)
 
@@ -3218,9 +3222,13 @@ def tested(person, args, works):
     in a release that reaches everyone, then Done. Doesn't work: back to Building (a kick-back, counted in stats).
     0.19 bug rule (Miguel, 10 Nov): a bug is merged switched on before any review, so the filer may say Doesn't work at
     any point after the merge: in AI review, in their own check, or after it closed (it reopens to Building)."""
-    _, acct = account_for(person)
+    key, acct = account_for(person)
     full, number = _target(args)
     note = ''
+    try:
+        shots = [] if works else reporter.screenshots(args)   # 0.24.2: screenshots ride with Doesn't work
+    except reporter.ReportError as e:
+        raise Problem(400, str(e)) from None
     if not works:   # 0.23.1 (Miguel): Doesn't work always says what's wrong; the note goes into the issue comment
         raw = args.get('note')
         note = raw.strip() if isinstance(raw, str) else ''
@@ -3251,7 +3259,16 @@ def tested(person, args, works):
         body = f'Tested: works \u2014 @{login}'
     else:
         body = f"Tested: doesn't work \u2014 @{login}\n\nWhat\u2019s wrong: {note}"
+    urls, left, why = _attach(acct, shots)
+    body += reporter.images_md(urls, len(left))
     gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
+    shot_warning = None
+    if left:
+        shot_warning = SHOT_WAIT.format(s='s' if len(left) > 1 else '', why=why or 'GitHub refused')
+        try:
+            _queue_shots(key, full, number, left, "Screenshots for the Doesn't work note")
+        except OSError:
+            shot_warning = 'The screenshots could not be attached. Your note was sent.'
     nxt = 'building'
     if works:   # add the next label first, then drop ready-to-test, so the timeline never reads as a kick-back
         nxt = SHOW_LABEL if cat == 'core' else APPROVED_LABEL
@@ -3279,7 +3296,8 @@ def tested(person, args, works):
         _ship.clear()
     return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'works': works, 'labels': now, 'saved': True,
             'stage': ('show' if nxt == SHOW_LABEL else 'shipping') if works else 'building', 'state': after.get('state'),
-            'reopened': bool(closed and not works), 'reviews': {'done': 1 if works else 0, 'need': 1}, 'final': True}
+            'reopened': bool(closed and not works), 'reviews': {'done': 1 if works else 0, 'need': 1}, 'final': True,
+            'screenshots': urls, 'waiting': len(left), 'warning': shot_warning}
 
 
 def james_people(base=None):
@@ -3519,7 +3537,8 @@ def _ensure_label(acct, full, name, color, desc):
 
 
 def _upload_shot(acct, raw, ext):
-    """0.21: put the screenshot in the team's media repo (MEDIA_REPO) as the filer -> a URL the issue shows."""
+    """0.21: put the screenshot in the team's media repo (MEDIA_REPO) as the filer -> a URL the issue shows.
+    Needs the GitHub App's Contents read and write permission on the org installation (0.24.2)."""
     import base64
     import secrets
     path = time.strftime('reports/%Y/%m/', time.gmtime()) + secrets.token_hex(8) + '.' + ext
@@ -3528,27 +3547,106 @@ def _upload_shot(acct, raw, ext):
     return ((out.get('content') or {}).get('html_url') or f'https://github.com/{MEDIA_REPO}/blob/main/{path}') + '?raw=true'
 
 
+SHOTS_BODY = reporter.SHOT_COUNT * reporter.SHOT_MAX * 4 // 3 + 1024 * 1024   # every screenshot, base64, plus text
+SHOT_WAIT = ('The screenshot{s} could not upload yet ({why}). Your text was sent; the Tracker adds the '
+             'screenshot{s} to it by itself as soon as GitHub allows it.')
+PENDING_DIR = 'media-pending'      # 0.24.2: screenshots kept until they upload (never lost with the text)
+PENDING_DAYS = 30
+
+
+def _attach(acct, shots):
+    """Upload each screenshot -> (urls, left, why). After one refusal the rest wait too (same token, same answer)."""
+    urls, left, why = [], [], None
+    for raw, ext in shots:
+        if left:
+            left.append((raw, ext))
+            continue
+        try:
+            urls.append(_upload_shot(acct, raw, ext))
+        except Problem as e:
+            why = e.message.rstrip('.')
+            left.append((raw, ext))
+    return urls, left, why
+
+
+def _queue_shots(key, full, number, shots, what):
+    """Keep screenshots that could not upload (0600 files) so _retry_pending adds them to the issue later."""
+    import secrets
+    d = _private() / PENDING_DIR / (time.strftime('%Y%m%d%H%M%S', time.gmtime()) + '-' + secrets.token_hex(4))
+    d.mkdir(parents=True, mode=0o700)
+    names = []
+    for n, (raw, ext) in enumerate(shots, 1):
+        name = f'{n}.{ext}'
+        fd = os.open(d / name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, 'wb') as f:
+            f.write(raw)
+        names.append(name)
+    (d / 'meta.json').write_text(json.dumps({'person': key, 'repo': full, 'number': number, 'files': names,
+                                             'what': what, 'at': time.time()}))
+
+
+def _retry_pending():
+    """Upload waiting screenshots with their filer's account and add them to the issue in one comment.
+    Follows a moved issue (the builder transfers triage reports). Gives up after PENDING_DAYS."""
+    import shutil
+    root = PRIVATE / PENDING_DIR
+    if not root.is_dir():
+        return 0
+    done = 0
+    people = accounts()['people']
+    for d in sorted(root.iterdir()):
+        try:
+            meta = json.loads((d / 'meta.json').read_text())
+        except (OSError, ValueError):
+            shutil.rmtree(d, ignore_errors=True)
+            continue
+        if time.time() - meta.get('at', 0) > PENDING_DAYS * 86400:
+            shutil.rmtree(d, ignore_errors=True)
+            continue
+        acct = people.get(meta.get('person'))
+        if not acct or not acct.get('token'):
+            continue
+        shots = [((d / n).read_bytes(), n.rsplit('.', 1)[-1]) for n in meta.get('files') or [] if (d / n).is_file()]
+        urls, left, _ = _attach(acct, shots)
+        if left:   # still refused: try again next round (anything uploaded is re-uploaded then; harmless)
+            continue
+        try:
+            cur = gh(acct['token'], 'GET', f"/repos/{meta['repo']}/issues/{meta['number']}", cache=False)
+            full = '/'.join((cur.get('repository_url') or '').split('/')[-2:]) or meta['repo']
+            gh(acct['token'], 'POST', f"/repos/{full}/issues/{cur.get('number') or meta['number']}/comments",
+               {'body': (meta.get('what') or 'Screenshots') + ' (uploaded after the text):' + reporter.images_md(urls)})
+        except Problem:
+            continue
+        shutil.rmtree(d, ignore_errors=True)
+        done += 1
+    return done
+
+
 def report_file(person, args, agent=False):
     """0.21: file one two-step report in <org>/wizard-os with labels triage + bug/feature (version, device and an
     optional screenshot filled in). The builder's triage step moves it to the right repo within a tick or two."""
-    _, acct = account_for(person, agent)
+    key, acct = account_for(person, agent)
     org = settings()['org']
     try:
         kind, text = reporter.compose(args)
-        shot = reporter.screenshot(args.get('screenshot'))
+        shots = reporter.screenshots(args)
     except reporter.ReportError as e:
         raise Problem(400, str(e)) from None
     where = reporter.triage_where(org)
     warning = None
-    url = None
-    if shot:
-        try:
-            url = _upload_shot(acct, *shot)
-        except Problem as e:
-            warning = 'The screenshot could not be attached (' + e.message.rstrip('.') + ').'
+    urls, left, why = _attach(acct, shots)
+    if left:   # 0.24.2: the text is filed anyway; the screenshots wait on this box and are added later
+        warning = SHOT_WAIT.format(s='s' if len(left) > 1 else '', why=why or 'GitHub refused')
     _ensure_label(acct, where['repo'], reporter.TRIAGE_LABEL, 'fbca04', 'Report or request: the builder moves it to the right repo')
     labels = [reporter.LABELS[kind], reporter.TRIAGE_LABEL]
-    made = _create(acct, where['repo'], reporter.title_of(text), reporter.triage_body(kind, text, args, url), labels)
+    made = _create(acct, where['repo'], reporter.title_of(text),
+                   reporter.triage_body(kind, text, args, shot_urls=urls, waiting=len(left)), labels)
+    url = urls[0] if urls else None
+    if left:
+        try:
+            _queue_shots(key, where['repo'], made['number'], left, 'Screenshots')
+        except OSError:
+            warning = 'The screenshots could not be attached. Your text was sent.'
     card = {'id': made['id'], 'repo': where['repo'], 'number': made['number'], 'title': made['title'], 'url': made['url'],
             'author': made.get('author'), 'kind': kind, 'labels': made.get('labels') or labels}
     if made.get('labelled'):
@@ -3563,7 +3661,7 @@ def report_file(person, args, agent=False):
             _made[(_tid(acct['token']), card['id'])] = (time.time(), 'issues', card)
     view = 'bugs' if kind == 'bug' else 'core'
     return {'item': card, 'url': made['url'], 'repo': where['repo'], 'kind': kind, 'area': 'triage', 'view': view,
-            'landed': reporter.SENT, 'sent': reporter.SENT, 'screenshot': url,
+            'landed': reporter.SENT, 'sent': reporter.SENT, 'screenshot': url, 'screenshots': urls, 'waiting': len(left),
             'warning': ' '.join(x for x in (warning, made.get('warning')) if x) or None}
 
 
@@ -3772,7 +3870,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(415, {'error': 'Use application/json.'})
         try:
             size = int(self.headers.get('Content-Length', '0'))
-            if not 0 <= size <= (6 * 1024 * 1024 if path == '/api/report' else 65536):   # 0.21: a screenshot rides along
+            if not 0 <= size <= (SHOTS_BODY if path in ('/api/report', '/api/test/fails') else 65536):   # 0.24.2: screenshots ride along
                 return self.send(413, {'error': 'Request too large.'})
             body = json.loads(self.rfile.read(size))
             if path == '/mcp':

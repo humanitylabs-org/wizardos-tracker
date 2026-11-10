@@ -1368,7 +1368,8 @@ function tryToggle(i) {
 }
 // Doesn't work always asks what's wrong (Miguel, 0.23.1): the note is required and goes into the issue comment
 const WRONG = { label: 'What’s wrong?', placeholder: 'e.g. Swiping feels choppy, it should glide one day at a time', send: 'Send' };
-function doesntWork(area, i, b) { noteAsk(area, WRONG.placeholder, WRONG.send, note => tested(i, false, note, b), { required: true, label: WRONG.label }); }
+// 0.24.2: Doesn't work takes screenshots too (pick or paste, several, thumbnails); a failed send keeps the note open
+function doesntWork(area, i, b) { noteAsk(area, WRONG.placeholder, WRONG.send, (note, shots) => tested(i, false, note, b, shots), { required: true, label: WRONG.label, shots: true }); }
 // Works (one tap, then the existing confirm) and Doesn't work: on the card, in the detail and in the app pop-up's bar
 function verdictBtns(i, area, wait) {
   const btns = make('span', 'bd-act-btns');
@@ -1452,7 +1453,19 @@ function noteAsk(area, placeholder, yesText, fn, opt = {}) {
   const gate = () => { if (opt.required) go.disabled = !ta.value.trim(); };
   ta.oninput = () => { hold(!!ta.value.trim()); gate(); };
   gate();
-  r.append(cancel, go); f.append(ta, r);
+  r.append(cancel, go); f.append(ta);
+  let shots = null;
+  const say = make('p', 'wz-status'); say.setAttribute('role', 'status');
+  if (opt.shots && window.WizardReporter && WizardReporter.attacher) {
+    const row = make('div', 'rr-shot'); f.append(row);
+    shots = WizardReporter.attacher(row, t => { say.textContent = t; });
+    if (!WizardReporter.options()) WizardReporter.load().catch(() => {});
+    for (const ev of ['paste', 'drop']) ta.addEventListener(ev, e => {
+      const fs = shots.imagesOf(e.clipboardData || e.dataTransfer);
+      if (fs.length) { e.preventDefault(); shots.add(fs); }
+    });
+  }
+  f.append(say, r);
   area.after(f); ta.focus();
   const close = () => { f.remove(); hold(false); };
   cancel.onclick = close;
@@ -1461,7 +1474,10 @@ function noteAsk(area, placeholder, yesText, fn, opt = {}) {
     e.preventDefault();
     const note = ta.value.trim();
     if (opt.required && !note) { gate(); return ta.focus(); }
-    go.disabled = cancel.disabled = true; await fn(note); close();
+    go.disabled = cancel.disabled = true;
+    const ok = await fn(note, shots && shots.list().length ? shots.payload() : undefined);
+    if (ok === false) { go.disabled = cancel.disabled = false; gate(); return; }   // keep the words (and screenshots)
+    close();
   };
 }
 function afterAct(i, msg) {
@@ -1473,11 +1489,12 @@ function afterAct(i, msg) {
   if (cache[view]) render(cache[view]);
   toast(msg); setTimeout(() => load(view, true), 1500);
 }
-async function tested(i, works, note, b) {
+async function tested(i, works, note, b, screenshots) {
   try {
-    const r = await api(works ? 'api/test/works' : 'api/test/fails', { repo: i.repo, number: i.number, note });
-    afterAct(i, works ? (r.stage === 'show' ? 'Thanks — on to James’ show-and-tell.' : 'Thanks — it’s shipping.') : r.reopened ? 'Reopened: back to the builder.' : 'Sent back to the builder.');
-  } catch (err) { pop(b, '', err.message); }
+    const r = await api(works ? 'api/test/works' : 'api/test/fails', { repo: i.repo, number: i.number, note, screenshots });
+    afterAct(i, (works ? (r.stage === 'show' ? 'Thanks — on to James’ show-and-tell.' : 'Thanks — it’s shipping.') : r.reopened ? 'Reopened: back to the builder.' : 'Sent back to the builder.') + (r.warning ? ' ' + r.warning : ''));
+    return true;
+  } catch (err) { pop(b, '', err.message); return false; }
 }
 async function james(i, decision, note, b) {
   try { await api('api/james', { repo: i.repo, number: i.number, decision, note }); afterAct(i, decision === 'approve' ? 'Approved: the builder may start.' : 'Declined.'); }
@@ -2166,7 +2183,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.24.2';
+const PAGE_VERSION = '0.24.3';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2211,7 +2228,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.24.2' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.24.3' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

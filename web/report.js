@@ -10,7 +10,7 @@
   const UPDATES = '/wizard-os-home/store-install/_updates';
   const KINDS = [['bug', 'Something’s broken'], ['feature', 'I’d like something new']];
   const SENT = 'Sent. The builder files it in the right place in a minute or two.';
-  let opts = null, updates = null, kind = null, busy = false, shot = null;
+  let opts = null, updates = null, kind = null, busy = false, shots = null;
   const getJSON = u => fetch(u, { credentials: 'same-origin', cache: 'no-store' }).then(r => r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status)));
 
   // 'Mac · Chrome', 'iPhone · Safari'
@@ -45,8 +45,6 @@
       if (typeof api.onUpdate === 'function') { const b = mk('button', 'bd-mini', 'Update'); b.type = 'button'; b.onclick = () => api.onUpdate(b); w.append(b); }
     }
     $('rr-shot-row').hidden = !(opts && opts.screenshots);
-    $('rr-shot-l').hidden = !!shot; $('rr-shot-on').hidden = !shot;
-    if (shot) $('rr-shot-img').src = shot.url;
     $('rr-auto').textContent = 'Adds: ' + [wizardVersion() && 'WizardOS ' + wizardVersion(), device()].filter(Boolean).join(' · ');
     $('rr-go').disabled = busy || !(kind && $('rr-text').value.trim().length >= 8);
     $('rr-go').textContent = 'Send';
@@ -59,19 +57,52 @@
     paint();
   }
 
-  function takeShot(file) {
-    if (!file) return;
-    const max = (opts && opts.shot_max) || 4 * 1024 * 1024;
-    if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) { $('rr-status').textContent = 'Use a PNG, JPEG, WebP or GIF image.'; return; }
-    if (file.size > max) { $('rr-status').textContent = 'That screenshot is too big (4 MB max).'; return; }
-    const r = new FileReader();
-    r.onload = () => { shot = { type: file.type, url: String(r.result) }; $('rr-status').textContent = ''; paint(); };
-    r.readAsDataURL(file);
+  // 0.24.2: several screenshots with thumbnails (pick, paste or drop), shared with the Doesn't work note (app.js).
+  // attacher(row, say) -> { add(files), list(), clear(), payload() }; row gets the thumbnails and an Add button.
+  function attacher(row, say) {
+    let items = [];
+    const max = () => (opts && opts.shot_max) || 4 * 1024 * 1024, count = () => (opts && opts.shot_count) || 6;
+    const thumbs = mk('span', 'rr-thumbs');
+    const pick = mk('label', 'bd-mini rr-shot-pick');
+    const input = mk('input'); input.type = 'file'; input.multiple = true; input.hidden = true;
+    input.accept = 'image/png,image/jpeg,image/webp,image/gif';
+    input.onchange = () => { add(input.files); input.value = ''; };
+    pick.append(document.createTextNode('Add a screenshot'), input);
+    row.replaceChildren(thumbs, pick);
+    function draw() {
+      thumbs.replaceChildren(...items.map((it, n) => {
+        const t = mk('span', 'rr-thumb'), img = mk('img'); img.src = it.url; img.alt = 'Screenshot ' + (n + 1);
+        const x = mk('button', 'rr-thumb-x', '×'); x.type = 'button'; x.setAttribute('aria-label', 'Remove screenshot ' + (n + 1));
+        x.onclick = () => { items = items.filter(o => o !== it); draw(); };
+        t.append(img, x); return t;
+      }));
+      pick.firstChild.textContent = items.length ? 'Add another' : 'Add a screenshot';
+      pick.hidden = items.length >= count();
+    }
+    function add(files) {
+      for (const file of [...(files || [])]) {
+        if (items.length >= count()) { say(`Up to ${count()} screenshots.`); break; }
+        if (!/^image\/(png|jpeg|webp|gif)$/.test(file.type)) { say('Use a PNG, JPEG, WebP or GIF image.'); continue; }
+        if (file.size > max()) { say('That screenshot is too big (4 MB max).'); continue; }
+        const it = { type: file.type, url: '' }; items.push(it);
+        const r = new FileReader();
+        r.onload = () => { it.url = String(r.result); say(''); draw(); };
+        r.onerror = () => { items = items.filter(o => o !== it); say('That screenshot could not be read.'); draw(); };
+        r.readAsDataURL(file);
+      }
+      draw();
+    }
+    const imagesOf = dt => [...((dt && dt.files) || [])].filter(x => /^image\//.test(x.type));
+    draw();
+    return { add, imagesOf, list: () => items, clear() { items = []; draw(); },
+      payload: () => items.filter(it => it.url).map(it => ({ type: it.type, data: it.url.split(',', 2)[1] })) };
   }
 
   function open() {
-    kind = null; busy = false; shot = null;
-    $('rr-text').value = ''; $('rr-status').textContent = ''; $('rr-shot').value = '';
+    kind = null; busy = false;
+    shots = shots || attacher($('rr-shot-row'), t => { $('rr-status').textContent = t; });
+    shots.clear();
+    $('rr-text').value = ''; $('rr-status').textContent = '';
     $('rr-form').hidden = false; $('rr-done').hidden = true;
     paint();
     WzSheet.open($('report'));
@@ -86,7 +117,7 @@
     if (!kind || text.length < 8) { $('rr-status').textContent = 'Say a little more (a sentence is enough).'; return; }
     busy = true; paint(); $('rr-status').textContent = 'Sending…';
     const body = { kind, text, device: device(), wizard_version: wizardVersion(),
-      screenshot: shot ? { type: shot.type, data: shot.url.split(',', 2)[1] } : undefined };
+      screenshots: shots && shots.list().length ? shots.payload() : undefined };
     try {
       const r = await fetch('api/report', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       const out = await r.json().catch(() => ({}));
@@ -99,17 +130,15 @@
     finally { busy = false; paint(); if ($('rr-status').textContent === 'Sending…') $('rr-status').textContent = ''; }
   }
 
-  const api = { open, onFiled: null, onUpdate: null, device };
+  const api = { open, onFiled: null, onUpdate: null, device, attacher, options: () => opts, load };
   window.WizardReporter = api;
   const wire = () => {
     $('rr-form').addEventListener('submit', send);
     $('rr-text').addEventListener('input', paint);
-    $('rr-text').addEventListener('paste', e => {   // paste a screenshot straight into the box
-      const f = [...((e.clipboardData && e.clipboardData.files) || [])].find(x => /^image\//.test(x.type));
-      if (f && opts && opts.screenshots) { e.preventDefault(); takeShot(f); }
+    for (const ev of ['paste', 'drop']) $('rr-text').addEventListener(ev, e => {   // paste or drop screenshots into the box
+      const fs = shots ? shots.imagesOf(e.clipboardData || e.dataTransfer) : [];
+      if (fs.length && opts && opts.screenshots) { e.preventDefault(); shots.add(fs); }
     });
-    $('rr-shot').addEventListener('change', e => takeShot(e.target.files && e.target.files[0]));
-    $('rr-shot-x').onclick = () => { shot = null; $('rr-shot').value = ''; paint(); };
     $('rr-cancel').onclick = () => WzSheet.close($('report'));
     $('rr-close').onclick = () => WzSheet.close($('report'));
     const b = $('report-open'); if (b) b.onclick = () => open();
