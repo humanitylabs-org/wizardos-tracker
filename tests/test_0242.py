@@ -77,7 +77,7 @@ class RenderedToggle(unittest.TestCase):
         cls.httpd.shutdown()
 
     def test_every_item_with_a_switch_has_a_toggle_on_card_and_popup(self):
-        for k in ('core', 'app', 'app_catalog', 'needs_update', 'app_unreachable'):
+        for k in ('core', 'app', 'app_catalog', 'needs_update', 'app_unreachable', 'app_named'):
             with self.subTest(k):
                 self.assertTrue(self.out[k]['card'], (k, self.out[k]))
                 self.assertTrue(self.out[k]['popup'], (k, self.out[k]))
@@ -98,6 +98,9 @@ class RenderedToggle(unittest.TestCase):
         x = self.out['app_unreachable']
         self.assertTrue(x['cardGrey'] and x['popupGrey'])
         self.assertTrue(x['popupWhy'])
+        n = self.out['app_named']   # 'Switch: movies:friendly-phone' while Movies doesn't list it
+        self.assertTrue(n['cardGrey'] and n['popupGrey'])
+        self.assertIn('doesn’t list this switch yet', n['popupWhy'])
 
 
 if __name__ == '__main__':

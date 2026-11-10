@@ -828,9 +828,16 @@ function takeSwitches(r) {
 // An item without a 'Switch:' line takes the catalog switch that names its issue (an app's own switch, usually).
 function adoptSwitch(i) {
   if (!i || !box || !box.ok || (i.switch && !i.switch_adopted)) return i;
-  const id = box.byIssue[String(i.id || '').toLowerCase()];
+  // 0.24.2: a 'Switch: <app>:<id>' line names the catalog row itself
+  const named = appSwitchId(i);
+  const id = box.byIssue[String(i.id || '').toLowerCase()] || (named && box.switches[named.id] ? named.id : null);
   if (id) { i.switch = id; i.switch_adopted = true; }
   return i;
+}
+// 0.24.2: an app switch written in the builder's line as '<app>:<switch>' (the catalog's own id form)
+function appSwitchId(i) {
+  const m = /^([a-z0-9][a-z0-9-]{0,63}):([a-z0-9][a-z0-9-]{0,63})$/i.exec(String(i.switch_how || '').trim());
+  return m ? { id: m[0].toLowerCase(), app: m[1].toLowerCase(), sw: m[2].toLowerCase() } : null;
 }
 // A core switch is locked on For everyone; an app's own switch follows the app (never locked by the channel).
 const swLocked = sw => !!(sw && (sw.kind === 'app' ? sw.locked : (box.locked || sw.locked)));
@@ -953,8 +960,9 @@ function appWhy(i, app, pl) {
   if (!app) return `Install ${repoName((pl && pl.repo) || i.repo)} first`;
   const st = appSw[app.id];
   if (!st || (st.busy && !st.at)) return `Checking ${app.name}…`;
-  if (!st.ok) return st.status === 404 ? `Update ${app.name} first` : st.status === 403 || st.status === 401 ? `Open ${app.name} once, then try again` : `Can’t reach ${app.name} right now`;
-  return `Update ${app.name} first`;   // it answers, but doesn't list this item's switch yet
+  if (!st.ok) return st.status === 404 ? (app.update ? `Update ${app.name} first` : `${app.name} has no switches to flip yet`) : st.status === 403 || st.status === 401 ? `Open ${app.name} once, then try again` : `Can’t reach ${app.name} right now`;
+  // it answers, but doesn't list this item's switch: newer in the Store, or not in this build at all
+  return app.update ? `Update ${app.name} first` : `${app.name} ${app.version || ''} doesn’t list this switch yet`.replace('  ', ' ');
 }
 // 0.24.2: a Try it that can't be flipped right now: greyed, the reason in its label and on tap (Miguel: never hidden)
 function greyTry(name, why, on) {
@@ -1337,13 +1345,20 @@ function tryState(i) {
   let hit = (i.switch_adopted && box && box.ok && box.switches[i.switch]) || (swApp ? appSwitchFor(i, swApp) : null);
   // 0.24.2: no Switch line, but the item's own app serves a switch naming its issue: that is its switch
   if (!hit && !i.switch && !swApp && i.group === 'test') { const a = appForRepo(i.repo); const h = a && appSwitchFor(i, a, true); if (h) { hit = h; swApp = a; } }
+  // 0.24.2: 'Switch: <app>:<id>' (not in the box catalog): that app's own switch
+  const named = !i.switch ? appSwitchId(i) : null;
+  if (named && !hit) {
+    swApp = ((catalog && catalog.apps) || []).find(a => a.id === named.app) || appForRepo(i.repo);
+    const st = swApp && (appSw[swApp.id] || (loadAppSwitches(swApp.id), null));
+    hit = (st && st.ok && st.switches.find(x => String(x.id).toLowerCase() === named.sw)) || null;
+  }
   const run = updRunFor(i, ob);
   let wait = '';
   if (run) { if (run.state !== 'done') wait = run.state === 'failed' ? 'Update first: this change isn’t on your Wizard yet.' : 'Updating your Wizard…'; }
   else if (ob && ob.state === 'no' && !hit) wait = 'Update first: this change isn’t on your Wizard yet.';
   // 0.24.2 (Miguel): an item with a switch, core or app, ALWAYS shows Try it; when it can't be flipped now, `why` says
   // why next to the greyed toggle ('Update Calendar first'), on the card and in the pop-up bar.
-  const has = !!(i.switch || hit || (pl && pl.kind === 'app'));
+  const has = !!(i.switch || hit || named || (pl && pl.kind === 'app'));
   let why = '';
   if (has) {
     if (wait) {
@@ -2183,7 +2198,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.24.3';
+const PAGE_VERSION = '0.24.4';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2228,7 +2243,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.24.3' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.24.4' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

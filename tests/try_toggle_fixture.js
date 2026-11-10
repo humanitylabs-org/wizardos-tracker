@@ -22,6 +22,7 @@
     app_catalog: item('wizard-messenger', 133, place('wizard-messenger', 'Settings › Drafts at top')),
     needs_update: item('movies', 15, place('movies', 'Settings › Poster wall')),
     app_unreachable: item('wizard-calendar', 21, place('wizard-calendar', 'Settings › Trackpad day swipe')),
+    app_named: item('movies', 14, { switch_how: 'movies:friendly-phone', switch_place: { kind: 'other', text: 'movies:friendly-phone' } }),
   };
   const ob = { state: 'yes', text: 'On your Wizard ✓', fix: null, apps: [] };
   for (const [k, i] of Object.entries(cases)) {
