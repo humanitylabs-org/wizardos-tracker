@@ -182,8 +182,8 @@ def images_md(urls, waiting=0):
     out = ''.join(f'\n\n![Screenshot{"" if one else " " + str(n)}]({u})' for n, u in enumerate(urls, 1))
     paths = [m.group(1) + ':' + m.group(2) for m in (re.search(r'github\.com/([^/]+/[^/]+)/blob/[^/]+/([^?#]+)', u) for u in urls) if m]
     if paths:
-        out += ('\n\n<!-- screenshots (private media repo; agents fetch with: gh api repos/<repo>/contents/<path> -H '
-                '"Accept: application/vnd.github.raw"): ' + ' '.join(paths) + ' -->')
+        out += ('\n\n<!-- screenshots (private media repo; agents fetch with: curl -sL "$(gh api '
+                'repos/<repo>/contents/<path> -q .download_url)" -o shot.png): ' + ' '.join(paths) + ' -->')
     if waiting:
         out += (f'\n\n_{waiting} screenshot{"s" if waiting > 1 else ""} still uploading: the Tracker adds '
                 f'{"them" if waiting > 1 else "it"} here in a comment._')

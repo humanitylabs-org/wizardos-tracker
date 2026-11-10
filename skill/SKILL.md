@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.24.2
+version: 0.24.3
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -66,7 +66,7 @@ The Update manager and Try changes live in the Tracker's **Settings** (WizardOS 
 - Builder: never pick up a goal; never start a core feature without `james-approved`; after `switch-default` remove the switch and close it once merged.
 - `builder_set`, `targets_set` (view goals|features|bugs (core/apps use features), step queued|building|ai|review|done, seconds or '4h'), `try_set`: only when a human asked, with their words as `owner_request`.
 - Confirm every write from the returned issue; on error report the exact message, never claim it saved.
-- Screenshots on a report or Doesn't work note live in the private `humanitylabs-org/wizard-issue-media` repo; the issue body has a hidden `<!-- screenshots ... -->` note with the paths. Fetch one with `gh api repos/<repo>/contents/<path> -H "Accept: application/vnd.github.raw"`. '_N screenshots still uploading_' means the Tracker adds them later in a comment.
+- Screenshots on a report or Doesn't work note live in the private `humanitylabs-org/wizard-issue-media` repo; the issue body has a hidden `<!-- screenshots ... -->` note with the paths. Fetch one with `curl -sL "$(gh api repos/<repo>/contents/<path> -q .download_url)" -o shot.png` (the download link carries a short-lived token). '_N screenshots still uploading_' means the Tracker adds them later in a comment.
 - Stats are label-driven (counted since `since` in `/api/policy`): label promptly and honestly.
 
 ## Pitfalls
