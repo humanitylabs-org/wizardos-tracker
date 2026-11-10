@@ -1242,7 +1242,10 @@ function actionArea(i, inDetail) {
     }
     const ob = onboxOf(i);
     let wait = '';
-    if (ob && ob.state === 'no') {
+    // 0.21.3: an app that already serves this item's switch has the change, whatever the release records say
+    const swApp = i.switch_place && i.switch_place.kind === 'app' ? appForRepo(i.switch_place.repo) : null;
+    const served = !!(swApp && appSwitchFor(i, swApp));
+    if (ob && ob.state === 'no' && !served) {
       const u = updateFor(ob);
       row.append(make('span', 'bd-act-l', ob.fix || 'Not on your Wizard yet'));
       if (u) row.append(u);
@@ -1860,7 +1863,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.21.2';
+const PAGE_VERSION = '0.21.3';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -1883,7 +1886,7 @@ setTimeout(checkVersion, 5000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.21.2' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.21.3' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

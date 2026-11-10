@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.21.2
+version: 0.21.3
 summary: "The WizardOS team's build line: goals, bugs and the builder, on top of GitHub. Team members only."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -75,6 +75,8 @@ Built from the hello-wizard template (stdlib Python, vanilla view, shared Wizard
 
 Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the change's real **feature switch on the Wizard you are looking from** — the same state as Settings › Appearance › Try new features (one shared state, `Pages/wizard-look/look.json` `tweaks`). The Tracker's page runs inside the owner's Wizard, on the shell's origin, so the browser calls the shell's owner-only same-origin route `GET/POST /wizard-os-home/store-install/_feature-switches` (wizard-app-manager `StoreHandler`, owner Tailscale login; POST also sends `X-Wizard-Store: 1`; body `{"id": "<author>/<id>", "on": bool}`). No app key, no container networking, nothing to install. Messages: on For everyone (`locked`, or a 409) "Switch to For testers in Settings to try this"; the switch is not in this box's catalog, or the box's App Manager has no route yet (404) "Update to try this"; opened outside a Wizard (no JSON answer) "Open the Tracker inside your Wizard to try this."; no switch named "This change has nothing to switch on.".
 **`Switch:` convention (builder hand-over):** the builder's "What to check" comment (the one that hands the item to AI review / Human review) ends with one line `Switch: <author>/<id>` naming the shell tweak id the change sits behind (e.g. `Switch: miguel/send-and-go`; the id in wizard-ux `wizard-os-home/tweaks/catalog.json`). The newest builder comment with such a line wins; a `Switch:` line in the issue body is the fallback; no line = nothing to switch. The server parses it (`switch_of()`, `SWITCH_LINE`) and serves it as `switch` on Human/AI review cards; Markdown emphasis or backticks around it are fine. The server-side `GET/POST /api/try` and MCP `try_status`/`try_set` still only record a per-person wish (mock-up); the view no longer calls them.
+
+**0.21.3** A Human review card shows the app's Try it toggle as soon as the app serves that switch, even while the release records still say the change isn't on this Wizard (the app answering proves it is).
 
 **0.21.2** Open <app>: Close returns to the same card and button even after the list repaints; an app switch error shows the app's own message (Messenger's `{error: {message}}`), and a 401 says 'Open <app> once, then try again'.
 
