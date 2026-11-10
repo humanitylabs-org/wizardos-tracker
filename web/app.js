@@ -896,7 +896,9 @@ async function appSwitchApi(id, data) {
     if (r.status !== 404 || data) { if (r.ok) appSwWhere[id] = p; break; }
   }
   const json = /json/.test(r.headers.get('content-type') || '') ? await r.json().catch(() => null) : null;
-  if (!r.ok || !json || !Array.isArray(json.switches)) { const e = new Error((json && json.error) || ''); e.status = r.status; throw e; }
+  if (!r.ok || !json || !Array.isArray(json.switches)) {
+    const er = json && json.error, e = new Error(typeof er === 'string' ? er : (er && er.message) || ''); e.status = r.status; throw e;
+  }
   return json;
 }
 function loadAppSwitches(id, force) {
@@ -932,7 +934,7 @@ function appToggle(i, app, sw) {
       if (next) pop(b, '', `On in ${app.name}. Open ${app.name} to try it; switch it off here.`); else unpop();
     } catch (err) {
       b.setAttribute('aria-checked', String(!next));
-      pop(b, '', err.status === 403 ? `Only this Wizard’s owner can switch ${app.name}.` : `${app.name} didn’t switch (${err.message || 'HTTP ' + (err.status || 'error')}).`);
+      pop(b, '', err.status === 403 ? `Only this Wizard’s owner can switch ${app.name}.` : err.status === 401 ? `Open ${app.name} once, then try again.` : `${app.name} didn’t switch (${err.message || 'HTTP ' + (err.status || 'error')}).`);
     } finally { b.disabled = false; if (cache[view] && !typing()) setTimeout(() => render(cache[view]), 0); }
   };
   return b;
@@ -1858,7 +1860,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.21.1';
+const PAGE_VERSION = '0.21.2';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -1881,7 +1883,7 @@ setTimeout(checkVersion, 5000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.21.1' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.21.2' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
