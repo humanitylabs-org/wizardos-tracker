@@ -442,7 +442,6 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
 .bd-oauth + .bd-form { margin-top: var(--wz-space-3, 12px); }
 /* Five bins on a phone: only the median stays (p25/p75 live in the ⓘ popover and the tooltip). */
 @media (max-width: 640px) { .bd-rn .lo, .bd-rn .hi { display: none; } .bd-rn { justify-content: center; } }
-.bd-signin:has(#oauth:not([hidden])) .bd-h1 { display: none; }
 .bd-oauth, .bd-oauth-code { justify-items: center; text-align: center; }
 .bd-oauth { margin-top: 4px; }
 
@@ -876,3 +875,16 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
   #appmodal .bd-appmodal-try .bd-try-pill { padding: 0 10px 0 6px; gap: 6px; }
 }
 @media (max-width: 360px) { .bd-hbar .bd-toggle .bd-ctl-name { display: none; } }
+
+/* 0.24.0: first run is one card: the app name, one plain line, one big Sign in with GitHub */
+.bd-intro { margin: 0; text-align: center; color: var(--ink-2); line-height: 1.5; }
+.bd-signin-go { min-width: 240px; }
+.bd-other[hidden], .bd-use-token[hidden] { display: none !important; }
+/* 0.24.0: a newer Tracker in the Store: one clear Update on the main screen */
+.bd-selfupd { max-width: 680px; margin: 0 auto var(--wz-space-3, 12px); display: flex; align-items: center; justify-content: space-between;
+  gap: var(--wz-space-3, 12px); flex-wrap: wrap; padding: 10px 14px; border-radius: 14px;
+  background: color-mix(in srgb, var(--accent) 12%, transparent); border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent); }
+.bd-selfupd[hidden] { display: none; }
+.bd-selfupd-t { font-weight: 650; }
+.bd-selfupd-go { min-height: 44px; font-weight: 700; }
+.bd-selfupd .bd-upd { flex: 1 1 100%; margin: 0; }

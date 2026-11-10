@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.23.1
+version: 0.24.0
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -15,7 +15,7 @@ metadata:
 Repo: `humanitylabs-org/wizardos-tracker` (was `oscarhenrycollins/wizard-board`, then `oscarhenrycollins/wizardos-tracker`). Agent tools: `mcp__wizard__wizardos_tracker__<tool>`.
 
 ## Tabs and kinds (0.18)
-Goals (own header button; its number = all open goals) | Core features | App features | Bugs (0.19.1: items of `wizardos-tracker` and `wizardos-builder` never show on the board; Oscar fixes those directly). Human review, Shipping and Done cards name the release that has the change ('In For testers 0.3.x', 'In For everyone 0.3.y', 'Shipped in <App> <version>'); an item with both `bug` and `feature` labels counts as a bug. Labels stay `goal` / `feature` / `bug`; **core vs app comes from the repo**: core = `wizard-os`, `wizard-ux`, `wizard-app-manager`, `wizard-agent-service`, `try-wizard` (Mac app) — the list is `core_repos` in `/api/policy` (DATA_DIR/policy.json overrides). Every other repo (wizard-messenger, app repos) is an app.
+Goals (own header button; its number = all open goals) | Core features | App features | Bugs (0.19.1: items of `wizardos-tracker` and `wizardos-builder` never show on the board; Oscar fixes those directly). Human review, Shipping and Done cards name the release that has the change ('In For testers 0.3.x', 'In For everyone 0.3.y', 'Shipped in <App> <version>'); an item with both `bug` and `feature` labels counts as a bug. Labels stay `goal` / `feature` / `bug`; **core vs app comes from the repo**: core = `wizard-os`, `wizard-ux`, `wizard-app-manager`, `wizard-agent-service`, `try-wizard` (Mac app) — the list is `core_repos` in `/api/policy`. Every other repo (wizard-messenger, app repos) is an app.
 - **Goal**: human-led, never built by the builder. Owners (assignees) post status; only James closes it.
 - **Feature**: an idea to try. File with `board_report_feature`. When the owner asks to try an idea, file a feature, not a bug.
 - **Bug**: something that should clearly work. File with `board_report_bug` (what happens, what should happen, how to see it).
@@ -51,8 +51,12 @@ Name the switch in the hand-over with one `Switch:` line. A shell tweak (`Switch
 ## Your turn first (0.18.2)
 The default list sort is **Your turn first**: what the viewer can act on now (their Human review, approvals for James or Miguel, show-and-tell for James, goals they own with no status or an old one) sits on top under a small 'Your turn' divider, then everything else oldest first. Oldest, Newest, Most discussed and Recently active stay in the Sort menu.
 
-## Updates
-The Update manager and Try changes live only in the Tracker's **Settings** (WizardOS and every app, installed vs latest, Update / Update all). Cards show Update or the switch just in time, in their one action area.
+## Getting started and updates (for the owner)
+- First open: the owner taps **Sign in with GitHub**, copies the short code, taps **Open GitHub ↗**, pastes it and taps Authorize; the Tracker signs in by itself. Nothing to set up. Only WizardOS team members (humanitylabs-org) get in; the card says plainly what to do otherwise (ask Miguel or James to be added, or join through the team invite waiting on GitHub).
+- When a newer Tracker is in the Store, the Tracker's main screen shows **A new version of the Tracker is ready · Update**: one tap updates it and the page reloads. If the owner asks to update the Tracker (or any app), send them to that button (or Tracker › Settings › Update for other apps and WizardOS).
+- Never run `wam`, docker or any install command for this, and never send the owner to config files, env vars or client ids. A stock agent can't run wam anyway; the buttons are the way.
+
+The Update manager and Try changes live in the Tracker's **Settings** (WizardOS and every app, installed vs latest, Update / Update all). Cards show Update or the switch just in time, in their one action area.
 
 ## Rules for agents
 - Read freely: `board_list` (`repo`, `type` all|goal|bug — features come with `all`, `state` open|closed), `board_get` (`issue` "owner/repo#123" or `repo` + `number`), `board_flow` (time per stage, kick-backs), `builder_status`, `try_status`.
@@ -65,7 +69,7 @@ The Update manager and Try changes live only in the Tracker's **Settings** (Wiza
 - Stats are label-driven (counted since `since` in `/api/policy`): label promptly and honestly.
 
 ## Pitfalls
-- Tools act as the GitHub account first connected on this box. None connected → ask the owner to open WizardOS Tracker and sign in. Never ask for a token or secret in chat or put one in the repo.
+- Tools act as the GitHub account first connected on this box. None connected → ask the owner to open WizardOS Tracker and tap **Sign in with GitHub**. Never ask for a token or secret in chat or put one in the repo.
 - The human UI lets in only `humanitylabs-org` members with their own account; agent/builder accounts are refused. If someone is refused, they need org membership or must sign in as themselves; never sign in for them with an agent token.
 - Signing out the account the agent uses also stops the agent's tools.
-- A token that can't read org membership isn't "bad": recreate it with Resource owner humanitylabs-org. `reason: token_dead` = revoked/expired; sign in again.
+- Refused as not on the team: they need to be added to humanitylabs-org (or join through the invite waiting on GitHub), then sign in again. `reason: token_dead` = sign-in expired or revoked; tap Sign in with GitHub again.

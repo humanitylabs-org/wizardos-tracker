@@ -33,7 +33,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.23.1'
+VERSION = '0.24.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -54,7 +54,10 @@ MEDIA_REPO = os.environ.get('BOARD_MEDIA_REPO', 'humanitylabs-org/wizard-issue-m
 TEAM_ORG = os.environ.get('BOARD_TEAM_ORG', 'humanitylabs-org').strip()
 AGENT_LOGINS = {'oscarhenrycollins', 'defleur-agents', 'wizardosbuilder'}
 MEMBER_SECONDS = 600
-NOT_MEMBER = f'This tracker is for the WizardOS team. Ask an owner of {TEAM_ORG} to add you.'
+# 0.24.0: plain one-liners a new team member understands (no org jargon up front, no token talk for GitHub sign-in)
+NOT_MEMBER = 'This is for the WizardOS team, and this GitHub account isn\'t on it yet. Ask Miguel or James to add you, then sign in again.'
+INVITE_PENDING = (f'You have a team invite waiting on GitHub. Accept it at https://github.com/orgs/{TEAM_ORG}/invitation, '
+                  'then sign in again.')
 NOT_HUMAN = "Sign in with your own GitHub account, not your agent's. Agents use the Tracker's tools instead."
 CACHE_SECONDS = 60
 STATS_SECONDS = 60  # 0.13.9: was 300; the arrows must follow the builder in near real time
@@ -252,8 +255,15 @@ _members = {}  # (token id, org, login) -> (checked at, member?)
 _limited = set()  # keys whose token could not read the org membership API (403), for a clearer refusal
 
 
+_pending = set()  # 0.24.0: keys whose org membership is an invite not yet accepted
+
+
 def not_member_problem(token, login):
-    if (_tid(token), TEAM_ORG.lower(), (login or '').lower()) in _limited:
+    key = (_tid(token), TEAM_ORG.lower(), (login or '').lower())
+    if key in _pending:
+        return Problem(403, INVITE_PENDING, 'not_member')
+    # token advice only for a pasted token: GitHub sign-in (ghu_/gho_) never made one, so never talk about tokens
+    if key in _limited and not str(token).startswith(('ghu_', 'gho_')):
         return Problem(403, NOT_MEMBER + f' If you are on the team already, make the token with Resource owner {TEAM_ORG} '
                        '(or make your membership public on GitHub), then sign in again.', 'not_member')
     return Problem(403, NOT_MEMBER, 'not_member')
@@ -335,6 +345,10 @@ def team_member(token, login, fresh=False):
     if code == 200 and isinstance(body, dict):
         answered = True
         ok = body.get('state') == 'active' and ((body.get('user') or {}).get('login') or login).lower() == (login or '').lower()
+        if body.get('state') == 'pending':
+            _pending.add(key)
+        else:
+            _pending.discard(key)
     if not ok:
         g = _gql_member(token)
         if g == 'bad' or code == 401:

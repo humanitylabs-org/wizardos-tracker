@@ -38,20 +38,24 @@
         <button type="button" class="bd-rr" id="report-open" aria-haspopup="dialog" aria-label="Report or request" title="Report or request" hidden><svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></svg><span class="bd-rr-t">Report</span></button>
         <button type="button" class="bd-gear" id="settings-btn" aria-haspopup="dialog" aria-label="Settings" title="Settings"><svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z"/><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1.03 1.56V21a2 2 0 1 1-4 0v-.09A1.7 1.7 0 0 0 8.9 19.4a1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-1.56-1.03H3a2 2 0 1 1 0-4h.09A1.7 1.7 0 0 0 4.6 8.9a1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.7 1.7 0 0 0 8.96 4.6H9a1.7 1.7 0 0 0 1.03-1.56V3a2 2 0 1 1 4 0v.09A1.7 1.7 0 0 0 15.1 4.6a1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.7 1.7 0 0 0 19.4 8.96V9a1.7 1.7 0 0 0 1.56 1.03H21a2 2 0 1 1 0 4h-.09A1.7 1.7 0 0 0 19.4 15Z"/></svg></button>
       </header>
-      <!-- Not signed in: one card, one field. -->
+      <!-- 0.24.0: a new Tracker is ready: one tap, right on the main screen (signed in or not), never buried in Settings -->
+      <div id="selfupd" class="bd-selfupd" role="status" aria-live="polite" hidden></div>
+      <!-- Not signed in: one card, one obvious action. 0.24.0: Sign in with GitHub only; no token talk up front. -->
       <section id="signin" class="wz-card bd-signin" hidden>
-        <h1 class="bd-h1">Sign in with GitHub</h1>
-        <!-- 0.13: GitHub device flow when a client id is set (one button, then a code to type on GitHub). -->
+        <h1 class="bd-h1">WizardOS Tracker</h1>
+        <p class="bd-intro" id="signin-intro">For the WizardOS team. Sign in with your own GitHub account to start.</p>
+        <!-- GitHub device flow (built-in GitHub App): one button, then a code to type on GitHub; the box finishes by itself. -->
         <div id="oauth" class="bd-oauth" hidden>
-          <button class="wz-button" type="button" id="oauth-go">Sign in with GitHub</button>
+          <button class="wz-button bd-signin-go" type="button" id="oauth-go">Sign in with GitHub</button>
           <div id="oauth-code" class="bd-oauth-code" hidden>
-            <p class="bd-meta">Enter this code on GitHub:</p>
+            <p class="bd-meta">1. Copy this code:</p>
             <p class="bd-code"><b id="oauth-user-code" aria-live="polite"></b> <button type="button" class="wz-button secondary bd-copy" id="oauth-copy">Copy</button></p>
+            <p class="bd-meta">2. Paste it on GitHub and tap Authorize:</p>
             <a class="wz-button bd-open-gh" id="oauth-open" href="https://github.com/login/device" target="_blank" rel="noopener noreferrer">Open GitHub ↗</a>
-            <p class="bd-meta" id="oauth-wait">Waiting for GitHub…</p>
+            <p class="bd-meta" id="oauth-wait">Waiting for GitHub… this page signs you in by itself.</p>
             <button type="button" class="bd-acct-act" id="oauth-cancel">Cancel</button>
           </div>
-          <p class="bd-meta"><button type="button" class="bd-acct-act bd-use-token" id="oauth-token">Use a token instead</button></p>
+          <p class="bd-meta bd-other"><button type="button" class="bd-acct-act bd-use-token" id="oauth-token" hidden>Other ways to sign in</button></p>
         </div>
         <form id="connect-form" class="bd-form" autocomplete="off">
           <input id="token" class="wz-input" type="password" autocomplete="new-password" spellcheck="false" autocapitalize="none" minlength="20" maxlength="400" required placeholder="Paste your GitHub token" aria-label="Your GitHub token">
