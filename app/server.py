@@ -33,7 +33,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.24.0'
+VERSION = '0.24.1'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -58,6 +58,11 @@ MEMBER_SECONDS = 600
 NOT_MEMBER = 'This is for the WizardOS team, and this GitHub account isn\'t on it yet. Ask Miguel or James to add you, then sign in again.'
 INVITE_PENDING = (f'You have a team invite waiting on GitHub. Accept it at https://github.com/orgs/{TEAM_ORG}/invitation, '
                   'then sign in again.')
+# 0.24.1: what a stock agent hears when nobody has signed in yet, and how the Tracker stays current (never wam)
+NOBODY_AGENT = 'Nobody has signed in to WizardOS Tracker on this Wizard yet. Ask the owner to open WizardOS Tracker and tap Sign in with GitHub.'
+AGENT_UPDATE = ('Signing in and updating are the owner\'s taps, never yours. Not signed in: ask the owner to open WizardOS Tracker and tap Sign in with GitHub. '
+                'A newer Tracker: its main screen shows an Update button; send the owner there (other apps and WizardOS: Tracker Settings, Update). '
+                'Never run wam, docker or install commands, never ask for a token and never point anyone at config files. ')
 NOT_HUMAN = "Sign in with your own GitHub account, not your agent's. Agents use the Tracker's tools instead."
 CACHE_SECONDS = 60
 STATS_SECONDS = 60  # 0.13.9: was 300; the arrows must follow the builder in near real time
@@ -137,7 +142,7 @@ def account_for(person=None, agent=False):
         key = person_key(person)
     acct = people.get(key) if key else None
     if not acct or not acct.get('token'):
-        raise Problem(401, 'No GitHub account is connected in Board. Ask the owner to connect one in the app.' if agent else 'Connect your GitHub account first.')
+        raise Problem(401, NOBODY_AGENT if agent else 'Sign in with GitHub first.')
     if acct.get('refresh_token') and _due(acct):
         acct = refresh_account(key, acct) or acct
     if not agent:
@@ -3624,7 +3629,7 @@ def rpc(msg):
     try:
         if m == 'initialize':
             r = {'protocolVersion': '2025-06-18', 'capabilities': {'tools': {}}, 'serverInfo': {'name': APP_ID, 'version': VERSION},
-                 'instructions': 'Tracker rules: agents may list, read, report bugs and comment. Never open, close or reopen goals on your own. A filed bug is ready to work. '
+                 'instructions': AGENT_UPDATE + 'Tracker rules: agents may list, read, report bugs and comment. Never open, close or reopen goals on your own. A filed bug is ready to work. '
                                  'Line: Queued -> Building -> AI review (label ai-review) -> Human review (label ready-to-test) -> Done. '
                                  "Bugs and features: Works / Doesn't work by whoever filed them. Core features (repos in /api/policy core_repos) wait for approval by James or Miguel (label james-approved) before building, and James approves them again after a show-and-tell. "
                                  "After Works an item is Shipping until its merged change is in a release for everyone, then Done. Goals are human-led and never built: owners post status with goal_status_set; only James closes a goal. "

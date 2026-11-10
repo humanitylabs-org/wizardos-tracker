@@ -30,12 +30,12 @@ def section(id_):
 
 class Version(unittest.TestCase):
     def test_version_everywhere(self):
-        self.assertEqual(S.VERSION, '0.24.0')
-        self.assertIn("PAGE_VERSION = '0.24.0'", JS)
-        self.assertIn("version: '0.24.0'", JS)
-        self.assertIn('version: 0.24.0', (ROOT / 'wizard.md').read_text())
-        self.assertEqual(CONFIG['version'], '0.24.0')
-        self.assertIn('version: 0.24.0', SKILL)
+        self.assertTrue(S.VERSION >= '0.24.0')
+        self.assertIn("PAGE_VERSION = '" + S.VERSION + "'", JS)
+        self.assertIn("version: '" + S.VERSION + "'", JS)
+        self.assertIn('version: ' + S.VERSION, (ROOT / 'wizard.md').read_text())
+        self.assertEqual(CONFIG['version'], S.VERSION)
+        self.assertIn('version: ' + S.VERSION, SKILL)
 
 
 class StoreInstall(unittest.TestCase):
