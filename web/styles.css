@@ -741,7 +741,7 @@ html, body { overflow-x: hidden; }
 .bd-hbar .bd-toggle { min-height: 44px; }
 .bd-hbar .bd-goals-btn { min-height: 44px; }
 /* Report or request: never a tab. Wide: a compact '+ Report' pill at the right of the row. */
-.bd-rr { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 14px 0 10px; border: 0; border-radius: var(--r-pill); background: var(--accent); color: var(--on-accent); font: inherit; font-size: .875rem; font-weight: 700; cursor: pointer; box-shadow: 0 1px 2px color-mix(in srgb, #000 18%, transparent); }
+.bd-rr { display: inline-flex; align-items: center; gap: 4px; min-height: 40px; padding: 0 14px 0 10px; border: 0; border-radius: var(--r-pill); background: var(--accent); color: var(--on-accent); font: inherit; font-size: .875rem; font-weight: 700; cursor: pointer; box-shadow: 0 1px 2px color-mix(in srgb, var(--wz-base) 40%, transparent); }
 .bd-rr svg { width: 18px; height: 18px; }
 .bd-rr:active { transform: scale(.97); }
 /* Tools row: Filter · Sort · Show stats · freshness ⟳ on one line */
@@ -776,7 +776,7 @@ html, body { overflow-x: hidden; }
 .bd-upd-h { display: flex; align-items: center; gap: 8px; margin: 0; font-size: .9rem; color: var(--ink); }
 .bd-upd-h b { flex: 1; min-width: 0; font-weight: 650; overflow-wrap: anywhere; }
 .bd-upd-t { flex: none; font-size: .78rem; color: var(--ink-3); font-variant-numeric: tabular-nums; }
-.bd-upd-dot { flex: none; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-style: normal; font-size: 11px; font-weight: 800; }
+.bd-upd-dot { flex: none; display: grid; place-items: center; width: 18px; height: 18px; border-radius: 50%; font-style: normal; font-size: .6875rem; font-weight: 800; }
 .bd-upd.running .bd-upd-dot { border: 2px solid var(--line-2); border-top-color: var(--accent); animation: bd-spin .9s linear infinite; box-sizing: border-box; }
 .bd-upd.done .bd-upd-dot { background: var(--accent); color: var(--on-accent); }
 .bd-upd.failed .bd-upd-dot { background: var(--wz-danger); color: var(--wz-base); }
@@ -812,14 +812,14 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
   .bd-gear { width: 40px; }
   /* Report or request: the round floating '+' bottom right, clear of the home bar */
   .bd-rr { position: fixed; z-index: 25; right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(18px + env(safe-area-inset-bottom, 0px));
-           width: 56px; height: 56px; padding: 0; justify-content: center; border-radius: 50%; box-shadow: 0 6px 18px color-mix(in srgb, #000 30%, transparent); }
+           width: 56px; height: 56px; padding: 0; justify-content: center; border-radius: 50%; box-shadow: 0 6px 18px color-mix(in srgb, var(--ink) 28%, transparent); }
   .bd-rr svg { width: 26px; height: 26px; }
   .bd-rr-t { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .bd-scroll { padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
   /* stage strip: one line; scrolls sideways if it must, never wraps */
   .bd-strip { display: block !important; overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: none; scroll-snap-type: x proximity; }
   .bd-strip .bd-i { display: none; }
-  .bd-strip { -webkit-mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, #000 calc(100% - 28px), transparent); padding-right: 28px; }
+  .bd-strip { -webkit-mask-image: linear-gradient(90deg, black calc(100% - 28px), transparent); mask-image: linear-gradient(90deg, black calc(100% - 28px), transparent); padding-right: 28px; }
   .bd-strip::-webkit-scrollbar { display: none; }
   .bd-strip .bd-steps { display: flex; gap: 6px; margin: 0; padding: 0; }
   .bd-strip .bd-stepli { flex: none; scroll-snap-align: start; }
@@ -832,7 +832,7 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
   .bd-tools { gap: 4px; }
   .bd-tools .bd-tool { min-height: 44px; padding: 0 12px; }
   .bd-tools .bd-fresh { display: none; }
-  .bd-tools .bd-fresh.stale + .bd-reload { color: var(--warn, #b26a00); }
+  .bd-tools .bd-fresh.stale + .bd-reload { color: var(--wz-warning); }
   .bd-tools .bd-reload { width: 44px; min-height: 44px; }
   .bd-tools .bd-tool-link { padding: 0 4px; }
   /* cards and rows run full width */
