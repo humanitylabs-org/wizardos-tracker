@@ -89,7 +89,7 @@ class Form(unittest.TestCase):
         self.assertNotIn('What’s it about?', HTML)
         self.assertNotIn('rr-core', HTML + RJS)
         self.assertNotIn('Not sure', RJS)
-        self.assertIn('id="rr-shot"', HTML)
+        self.assertIn('id="rr-shot-row"', HTML)
         self.assertIn('Sent. The builder files it in the right place in a minute or two.', RJS)
         self.assertNotIn('confirm(', RJS)
 

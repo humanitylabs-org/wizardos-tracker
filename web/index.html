@@ -146,10 +146,7 @@
           <legend class="rr-q" id="rr-ask">What happened, and what should happen?</legend>
           <p class="rr-warn" id="rr-warn" hidden></p>
           <textarea id="rr-text" class="wz-input rr-text" rows="8" maxlength="8000" aria-labelledby="rr-ask"></textarea>
-          <div class="rr-shot" id="rr-shot-row" hidden>
-            <label class="bd-mini rr-shot-pick" id="rr-shot-l">Add a screenshot <input type="file" id="rr-shot" accept="image/png,image/jpeg,image/webp,image/gif" hidden></label>
-            <span class="rr-shot-on" id="rr-shot-on" hidden><img id="rr-shot-img" alt="Screenshot to send"> <button type="button" class="bd-mini" id="rr-shot-x">Remove</button></span>
-          </div>
+          <div class="rr-shot" id="rr-shot-row" hidden><!-- 0.24.2: thumbnails + Add a screenshot (report.js attacher) --></div>
           <p class="rr-auto" id="rr-auto"></p>
         </fieldset>
         <p class="wz-status" id="rr-status" role="status" aria-live="polite"></p>

@@ -21,6 +21,7 @@ TRIAGE_LABEL = 'triage'
 SENT = 'Sent. The builder files it in the right place in a minute or two.'
 SHOT_TYPES = {'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif'}
 SHOT_MAX = 4 * 1024 * 1024     # bytes, after base64 decoding
+SHOT_COUNT = 6                 # 0.24.2: several screenshots per report or Doesn't work note
 
 # WizardOS itself, in plain names. Each maps to its core repo (inside the team org).
 CORE_TOPICS = [
@@ -48,7 +49,7 @@ class ReportError(ValueError):
 
 def options():
     """What the form shows: the two kinds, the prompt for each, limits."""
-    return {'kinds': [{'key': k, 'name': v} for k, v in KINDS.items()], 'sent': SENT, 'shot_max': SHOT_MAX,
+    return {'kinds': [{'key': k, 'name': v} for k, v in KINDS.items()], 'sent': SENT, 'shot_max': SHOT_MAX, 'shot_count': SHOT_COUNT,
             'core': [{'key': t['key'], 'name': t['name']} for t in CORE_TOPICS],
             'unsure': {'key': 'unsure', 'name': 'Not sure'},
             'prompts': PROMPTS, 'max_text': 8000}
@@ -173,9 +174,25 @@ def triage_where(org):
     return {'repo': f'{org}/{TRIAGE_REPO}', 'name': 'WizardOS', 'area': 'core', 'picked': False}
 
 
-def triage_body(kind, text, args, shot_url=None):
-    """The issue text for a two-step report: the owner's words, the screenshot, then the auto-filled facts."""
-    shot = f'\n\n![Screenshot]({shot_url})' if shot_url else ''
+def images_md(urls, waiting=0):
+    """0.24.2: the screenshots as Markdown images (they render for anyone on the team), a line for any still waiting
+    to upload, and a hidden note telling agents (the builder) how to fetch them from the private media repo."""
+    urls = [u for u in (urls or []) if u]
+    one = len(urls) == 1
+    out = ''.join(f'\n\n![Screenshot{"" if one else " " + str(n)}]({u})' for n, u in enumerate(urls, 1))
+    paths = [m.group(1) + ':' + m.group(2) for m in (re.search(r'github\.com/([^/]+/[^/]+)/blob/[^/]+/([^?#]+)', u) for u in urls) if m]
+    if paths:
+        out += ('\n\n<!-- screenshots (private media repo; agents fetch with: gh api repos/<repo>/contents/<path> -H '
+                '"Accept: application/vnd.github.raw"): ' + ' '.join(paths) + ' -->')
+    if waiting:
+        out += (f'\n\n_{waiting} screenshot{"s" if waiting > 1 else ""} still uploading: the Tracker adds '
+                f'{"them" if waiting > 1 else "it"} here in a comment._')
+    return out
+
+
+def triage_body(kind, text, args, shot_url=None, shot_urls=None, waiting=0):
+    """The issue text for a two-step report: the owner's words, the screenshots, then the auto-filled facts."""
+    shot = images_md(([shot_url] if shot_url else []) + list(shot_urls or []), waiting)
     return text + shot + footer(args, {'area': 'core', 'name': 'WizardOS', 'picked': False}).replace(
         'Filed with Report or request', 'Filed with Report or request · waiting for the builder to sort it (label triage)')
 
@@ -201,6 +218,20 @@ def screenshot(v):
     if not raw or len(raw) > SHOT_MAX or not sig[ext]:
         raise ReportError('The screenshot must be a PNG, JPEG, WebP or GIF image (4 MB max).')
     return raw, ext
+
+
+def screenshots(args):
+    """0.24.2: every screenshot in a request: `screenshots` (a list) and/or the older single `screenshot`.
+    -> [(bytes, ext)]. Raises ReportError."""
+    many = args.get('screenshots')
+    if many is None:
+        many = []
+    if not isinstance(many, list):
+        raise ReportError('Screenshots must be a list of images.')
+    vals = ([args['screenshot']] if args.get('screenshot') else []) + [v for v in many if v]
+    if len(vals) > SHOT_COUNT:
+        raise ReportError(f'Up to {SHOT_COUNT} screenshots at a time.')
+    return [screenshot(v) for v in vals]
 
 
 def landed(kind, where, next_step):

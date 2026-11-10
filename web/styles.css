@@ -705,10 +705,14 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
 @media (max-width: 480px) { .rr-kinds { grid-template-columns: 1fr; } }
 /* 0.21 Report or request: two steps; optional screenshot */
 .rr-text { min-height: 180px; }
-.rr-shot { display: flex; align-items: center; gap: 8px; }
+.rr-shot { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
 .rr-shot-pick { cursor: pointer; }
-.rr-shot-on { display: inline-flex; align-items: center; gap: 8px; }
-.rr-shot-on img { max-height: 56px; max-width: 120px; border-radius: 6px; border: 1px solid var(--line-2); object-fit: cover; }
+.rr-thumbs { display: contents; }
+.rr-thumb { position: relative; display: inline-block; }
+.rr-thumb img { display: block; height: 56px; width: 72px; border-radius: 6px; border: 1px solid var(--line-2); object-fit: cover; }
+.rr-thumb-x { position: absolute; top: -8px; right: -8px; width: 24px; height: 24px; border-radius: 50%; border: 1px solid var(--line-2);
+  background: var(--bg, #fff); color: inherit; font-size: 15px; line-height: 1; cursor: pointer; padding: 0; }
+.bd-fail .rr-shot { margin: 6px 0; }
 /* 0.21 Open <app>: the app in a large sheet over the Tracker */
 .bd-appmodal { width: min(1100px, calc(100vw - 32px)); height: calc(100vh - 48px); max-width: none; max-height: none; padding: 0; border: 1px solid var(--line-2); border-radius: var(--r); background: var(--wz-panel); color: var(--ink); overflow: hidden; }
 .bd-appmodal[open] { display: flex; flex-direction: column; }
