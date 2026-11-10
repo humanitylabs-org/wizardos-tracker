@@ -74,6 +74,16 @@ class Report(unittest.TestCase):
         self.assertEqual(S.category('humanitylabs-org/wizard-os', ['feature', 'triage']), 'core')   # Core features tab
 
 
+class Refiled(unittest.TestCase):
+    def test_builder_copy_counts_as_the_filer(self):
+        d = {'data': {'search': {'nodes': [
+            {'number': 1, 'author': {'login': 'wizardosbuilder'}, 'body': 'Text\n\nFiled by @mistermizel with Report or request (moved from humanitylabs-org/wizard-os#504)'},
+            {'number': 2, 'author': {'login': 'wizardosbuilder'}, 'body': 'Filed by @mistermizel says a person'},
+            {'number': 3, 'author': {'login': 'jdefleur'}, 'body': 'Filed by @mistermizel with Report or request'}]}}}
+        n = S.refiled(d)['data']['search']['nodes']
+        self.assertEqual([x['author']['login'] for x in n], ['mistermizel', 'wizardosbuilder', 'jdefleur'])
+
+
 class Form(unittest.TestCase):
     def test_two_steps(self):
         self.assertNotIn('What’s it about?', HTML)
@@ -110,8 +120,8 @@ class Form(unittest.TestCase):
             subprocess.run(['node', '--check', str(ROOT / f)], check=True)
 
     def test_version(self):
-        self.assertEqual(S.VERSION, '0.21.0')
-        self.assertIn("const PAGE_VERSION = '0.21.0'", JS)
+        self.assertEqual(S.VERSION, '0.21.1')
+        self.assertIn("const PAGE_VERSION = '0.21.1'", JS)
 
 
 if __name__ == '__main__':
