@@ -114,8 +114,7 @@ class Modal(unittest.TestCase):
 class TryFirst(unittest.TestCase):
     def test_try_then_open_then_verdict(self):
         body = JS[JS.index("// 0.22: the try flow, in order"):JS.index("if (wait && inDetail) row.append")]
-        self.assertLess(body.index('trySwitch(i)'), body.index('Open ${app.name}'))
-        self.assertLess(body.index('appToggle(i, swApp, hit)'), body.index('Open ${app.name}'))
+        self.assertLess(body.index('tryToggle(i)'), body.index('Open ${app.name}'))   # 0.24.2: core and app toggles
         self.assertLess(body.index('Open ${app.name}'), body.index('verdictBtns(i, row, wait)'))
         self.assertIn("make('div', 'bd-trygrp')", body)
 
