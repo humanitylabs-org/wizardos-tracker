@@ -57,7 +57,7 @@ class BugFlow(unittest.TestCase):
 
     def test_doesnt_work_after_close_reopens(self):
         f = self.use(state='closed', labels={'bug', 'approved'})
-        out = S.tested('m', {'repo': 'wizard-messenger', 'number': 7}, False)
+        out = S.tested('m', {'repo': 'wizard-messenger', 'number': 7, 'note': 'Still broken'}, False)
         self.assertEqual(f.issue['state'], 'open')
         self.assertEqual(f.issue['labels'], {'bug', 'building'})
         self.assertTrue(out['reopened'])
@@ -65,7 +65,7 @@ class BugFlow(unittest.TestCase):
 
     def test_doesnt_work_during_ai_check(self):
         f = self.use(labels={'bug', 'ai-review'})
-        S.tested('m', {'repo': 'wizard-messenger', 'number': 8}, False)
+        S.tested('m', {'repo': 'wizard-messenger', 'number': 8, 'note': 'Still broken'}, False)
         self.assertEqual(f.issue['labels'], {'bug', 'building'})
         self.assertEqual(f.issue['state'], 'open')
 
@@ -78,18 +78,18 @@ class BugFlow(unittest.TestCase):
     def test_features_unchanged(self):
         self.use(state='closed', labels={'feature', 'approved'})
         with self.assertRaises(S.Problem):
-            S.tested('m', {'repo': 'wizard-messenger', 'number': 10}, False)
+            S.tested('m', {'repo': 'wizard-messenger', 'number': 10, 'note': 'Still broken'}, False)
 
     def test_only_the_filer(self):
         self.use(state='closed', labels={'bug', 'approved'}, user='JanMesaric')
         with self.assertRaises(S.Problem) as e:
-            S.tested('m', {'repo': 'wizard-messenger', 'number': 11}, False)
+            S.tested('m', {'repo': 'wizard-messenger', 'number': 11, 'note': 'Still broken'}, False)
         self.assertEqual(e.exception.code, 403)
 
     def test_not_planned_stays_closed(self):
         self.use(state='closed', reason='not_planned', labels={'bug'})
         with self.assertRaises(S.Problem):
-            S.tested('m', {'repo': 'wizard-messenger', 'number': 12}, False)
+            S.tested('m', {'repo': 'wizard-messenger', 'number': 12, 'note': 'Still broken'}, False)
 
 
 class Board(unittest.TestCase):
