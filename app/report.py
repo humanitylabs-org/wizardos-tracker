@@ -190,10 +190,42 @@ def images_md(urls, waiting=0):
     return out
 
 
+_ITEM = re.compile(r'^([A-Za-z0-9][\w.-]{0,99})/([A-Za-z0-9][\w.-]{0,99})$')
+
+
+def context_of(args):
+    """0.27: 'Report something else' from inside testing: the item under test -> {repo, number, title, app, app_name}
+    or None. Only well-formed values are kept; the title is cleaned like any other filled-in text."""
+    c = args.get('context')
+    if not isinstance(c, dict):
+        return None
+    repo, n = str(c.get('repo') or '').strip(), c.get('number')
+    if isinstance(n, str) and n.isdigit():
+        n = int(n)
+    if not _ITEM.match(repo) or not isinstance(n, int) or isinstance(n, bool) or not 0 < n < 10 ** 7:
+        return None
+    app = str(c.get('app') or '').strip()
+    return {'repo': repo, 'number': n, 'title': _clean(c.get('title'), 120),
+            'app': app if _NAME.match(app or '-') else '', 'app_name': _clean(c.get('app_name'), 60)}
+
+
+def context_md(ctx):
+    """The 'Found while testing' line (a link to the item under test) and a marker builder-triage reads: the report is
+    its own issue (never a comment on the item), filed in the tested app's repo."""
+    if not ctx:
+        return ''
+    ref = f"{ctx['repo']}#{ctx['number']}"
+    url = f"https://github.com/{ctx['repo']}/issues/{ctx['number']}"
+    where = f" in {ctx['app_name']}" if ctx.get('app_name') else ''
+    title = f" ({ctx['title']})" if ctx.get('title') else ''
+    return (f'\n\nFound while testing [{ref}]({url}){title}{where}. Its own report: the item under test is unaffected.'
+            f"\n\n<!-- found-while-testing: {ref}{' app: ' + ctx['app'] if ctx.get('app') else ''} -->")
+
+
 def triage_body(kind, text, args, shot_url=None, shot_urls=None, waiting=0):
     """The issue text for a two-step report: the owner's words, the screenshots, then the auto-filled facts."""
     shot = images_md(([shot_url] if shot_url else []) + list(shot_urls or []), waiting)
-    return text + shot + footer(args, {'area': 'core', 'name': 'WizardOS', 'picked': False}).replace(
+    return text + context_md(context_of(args)) + shot + footer(args, {'area': 'core', 'name': 'WizardOS', 'picked': False}).replace(
         'Filed with Report or request', 'Filed with Report or request · waiting for the builder to sort it (label triage)')
 
 

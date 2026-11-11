@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.26.5'
+VERSION = '0.27.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1357,6 +1357,11 @@ def _card(node, tab):
             if named:
                 out['switch_how'] = named
         out['switch_place'] = None if out['switch'] else switch_place(out['switch_how'], [c.get('body') for c in said] + [node.get('body')], repo)
+        # 0.27 (Miguel, wizard-notes#18): an item that says it has no Try it switch (an install-time setting, 'Switch:
+        # none' after the switch was removed) gets no toggle, only its 'How to check' line. A later catalog-form
+        # 'Switch: <app>:<id>' line still wins.
+        if no_switch([c.get('body') for c in (node.get('comments') or {}).get('nodes') or []], node.get('body')):
+            out.update(switch=None, switch_how=None, switch_place=None, no_switch=True)
         if not said:  # first real line of the description (not a "Part of #13" link line)
             lines = [_plain(x, 220) for x in re.split(r'\n\s*\n|\r?\n', node.get('body') or '')]
             out['check'] = next((x for x in lines if x and not re.fullmatch(r'(part of|closes|fixes|refs?)\s+\S*#\d+\.?', x, re.I)), '')
@@ -1442,6 +1447,23 @@ def app_switch_line(bodies):
         if m:
             return m[-1].lower()
     return None
+
+
+NO_SWITCH_SAID = re.compile(r"\bno\s+(?:tracker\s+)?try[- ]it\s+(?:switch|toggle)|\bno\s+(?:feature\s+|tracker\s+)?(?:switch|toggle)\s+for\s+(?:this|it)\b"
+                            r"|\bnot\s+a\s+(?:tracker\s+)?(?:try[- ]it\s+)?toggle\b", re.I)
+
+
+def no_switch(bodies, issue_body=None):
+    """0.27 (wizard-notes#18): do the newest words say there is no Try it switch ('No Try it switch for this one', 'no
+    Tracker Try-it toggle', 'not a Tracker toggle')? Comments oldest first; a shell tweak or 'Switch: <app>:<id>' line
+    in a later comment means a switch was linked since."""
+    texts = [issue_body] + list(bodies or [])
+    for body in reversed([b for b in texts if isinstance(b, str)]):
+        if APP_SWITCH_LINE.search(body) or SWITCH_LINE.search(body):
+            return False
+        if NO_SWITCH_SAID.search(body):
+            return True
+    return False
 
 
 def switch_of(builder_bodies, issue_body=None):
@@ -3056,10 +3078,12 @@ def ai_review(args, passed):
         raise Problem(403, f'AI review of this {kind} is for {who_text}, not this box\'s agent ({agent_name} of {box_person}).', 'not_ai_reviewer')
     head = f"AI review: {'pass' if passed else 'fail'} — {agent_name} (agent of {box_person})"
     gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': head + '\n\n' + note})
-    finish = passed and DEFAULT_LABEL in names and APPROVED_LABEL in names
+    # 0.27: a cleanup that removes a dropped feature's switch and code needs no human test either
+    finish = passed and ((DEFAULT_LABEL in names and APPROVED_LABEL in names) or 'switch-remove' in names)
     if finish:  # 0.26.4: the human already approved it; the switch is removed, so it closes (Shipping until released)
         _drop_label(acct, full, number, AI_LABEL)
-        _drop_label(acct, full, number, DEFAULT_LABEL)
+        if DEFAULT_LABEL in names:
+            _drop_label(acct, full, number, DEFAULT_LABEL)
         _close(acct, full, number)
     elif passed:  # add Human review first, then drop AI review, so the label timeline never shows a kick-back
         gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/labels', {'labels': [HUMAN_LABEL]})
@@ -3663,6 +3687,68 @@ def show_and_tell(person, args):
     return {'id': f'{full}#{number}', 'labels': _labels(after), 'state': after.get('state'), 'switch_default': switched, 'saved': True}
 
 
+# ---------- 0.27 (Miguel, 11 Nov): Drop this feature (not needed) / Not a bug, won't fix: the '...' menu ----------
+DROPPED_LABEL, WONTFIX_LABEL, CLEANUP_LABEL, REMOVE_LABEL = 'dropped', 'wontfix', 'switch-cleanup', 'switch-remove'
+# Labels that mean the change is already merged (behind its switch for a feature)
+MERGED_LABELS = {AI_LABEL, HUMAN_LABEL, SHOW_LABEL, APPROVED_LABEL, DEFAULT_LABEL}
+STAGE_LABELS = ('building', AI_LABEL, HUMAN_LABEL, SHOW_LABEL, DEFAULT_LABEL, 'builder:blocked')
+
+
+def drop_item(person, args, agent=False):
+    """POST /api/drop {repo, number, reason}: anyone on the team drops a feature it doesn't need, or says a bug is not a
+    bug / won't fix. A short reason is required and goes into the comment with who said it. The issue closes as not
+    planned with label `dropped` (features) or `wontfix` (bugs). A feature whose code is already merged behind its switch
+    also gets `switch-cleanup`: the builder's tick files a cleanup issue that removes the switch and its code (through
+    the normal AI review). The page turns the switch off on this Wizard before it calls this."""
+    _, acct = account_for(person, agent)
+    full, number = _target(args)
+    reason = _text(args.get('reason'), 'The reason', 3, 300)
+    login = acct.get('login') or ''
+    base = policy_base()
+    if not on_team(login, base):
+        raise Problem(403, 'Only the WizardOS team can drop items.', 'not_team')
+    cur = _current(acct, full, number)
+    names = _labels(cur)
+    if (cur.get('state') or 'open') == 'closed':
+        raise Problem(409, 'This is already closed. Refresh to see the latest.')
+    cat = category(full, names, base)
+    if cat == 'goal':
+        raise Problem(409, 'Goals are human-led: close a goal from its own card.', 'goal')
+    who = person_of(login, base) or login
+    if cat == 'bug':
+        label, cleanup = WONTFIX_LABEL, False
+        body = f"Not a bug / won\u2019t fix \u2014 {who} (@{login})\n\nWhy: {reason}"
+        _ensure_label(acct, full, WONTFIX_LABEL, 'ffffff', 'Not a bug, or won\u2019t fix (said in the Tracker)')
+    else:
+        rows = _issue_comments(acct, full, number, cur.get('comments') or 0)
+        sw, how = switch_info([b for w, b in _comment_rows(rows) if w.lower() == BUILDER], cur.get('body'))
+        cleanup = bool((sw or how) and MERGED_LABELS & set(names))
+        label = DROPPED_LABEL
+        body = f"Dropped (not needed) \u2014 {who} (@{login})\n\nWhy: {reason}"
+        if cleanup:
+            body += ('\n\nBuilder: its code is merged behind its switch. Open a cleanup PR that removes the switch and '
+                     'its code (label switch-cleanup; the tick files the cleanup issue).')
+        _ensure_label(acct, full, DROPPED_LABEL, 'cfd3d7', 'Dropped in the Tracker: not needed')
+        if cleanup:
+            _ensure_label(acct, full, CLEANUP_LABEL, 'c5def5', 'Dropped feature: the builder removes its switch and code')
+    gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
+    _add_label(acct, full, number, label)
+    if cleanup:
+        _add_label(acct, full, number, CLEANUP_LABEL)
+    for lab in STAGE_LABELS:
+        if lab in names:
+            try:
+                _drop_label(acct, full, number, lab)
+            except Problem:
+                pass
+    _close(acct, full, number, 'not_planned')
+    after = _current(acct, full, number)
+    with LOCK:
+        _stats.clear()
+        _ship.clear()
+    return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'kind': cat, 'label': label, 'cleanup': cleanup,
+            'labels': _labels(after), 'state': after.get('state'), 'by': who, 'saved': True}
+
 # ---------- 0.18 goal status: a GitHub comment whose first line is 'Status: green|yellow|red', then the text ----------
 STATUS_LINE = re.compile(r'^[ \t>*_]*status[*_]*\s*:\s*[*_]*(green|yellow|red)\b[*_]*[ \t.]*(?:\n|$)', re.I)
 STATUS_WORDS = {'green': 'On track', 'yellow': 'At risk', 'red': 'Blocked'}
@@ -3967,6 +4053,7 @@ TOOLS = [
     {'name': 'ai_review_fail', 'description': "AI REVIEW (agents only). The build does not match the issue's scope (for a goal: the slice does not move a done-list item forward): send it back to Building (removes ai-review, adds building) with a short note saying what is missing or wrong; the builder picks it up again. Counted on the AI review -> Building return arrow.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'note': {'type': 'string', 'minLength': 3, 'maxLength': 4000, 'description': 'What is missing or wrong, for the builder.'}}, 'required': ['note']}},
     {'name': 'goal_status_set', 'description': "Post a goal's status for its owner (the goal's owners or James; an agent posts for its own person, who must be one of them). color green = On track, yellow = At risk, red = Blocked; text: one or two sentences. Saved as a GitHub comment whose first line is 'Status: <color>'.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'color': {'type': 'string', 'enum': ['green', 'yellow', 'red']}, 'text': {'type': 'string', 'minLength': 3, 'maxLength': 600}}, 'required': ['color', 'text']}},
     {'name': 'goal_status_get', 'description': "A goal's latest status (color, words, text, who, when, stale after 7 days) and its whole status history, newest first.", 'inputSchema': {'type': 'object', 'properties': ISSUE}},
+    {'name': 'board_drop', 'description': "Drop a feature (not needed) or close a bug as not a bug / won't fix, only when a human on the team asked (pass their words). reason: their short reason (3-300 characters), saved in the comment with who said it. Closes it as not planned with label dropped (feature) or wontfix (bug); a feature already merged behind its switch also gets switch-cleanup, so the builder removes the switch and its code. Turn its Try it switch off first.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'minLength': 3, 'maxLength': 300}, **ASKED}, 'required': ['reason', 'owner_request']}},
     {'name': 'board_reopen', 'description': 'Reopen a Bug when a human asked you to (pass their words). Goals are refused: only humans reopen goals.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, **ASKED}, 'required': ['owner_request']}},
 ]
 CALLS = {
@@ -3979,6 +4066,7 @@ CALLS = {
     'board_add_goal': lambda a: add_goal(None, a, agent=True),
     'board_close': lambda a: set_state(None, a, 'closed', agent=True),
     'board_reopen': lambda a: set_state(None, a, 'open', agent=True),
+    'board_drop': lambda a: drop_item(None, a, agent=True),
     'builder_status': lambda a: builder_status(),
     'builder_set': lambda a: builder_set(None, a, agent=True),
     'try_status': lambda a: try_status(None, agent=True),
@@ -4131,6 +4219,10 @@ class Handler(BaseHTTPRequestHandler):
         kind = STATIC_TYPES.get(Path(name).suffix)
         if kind and '/' not in name and not name.startswith('.') and (ROOT / 'web' / name).is_file():
             return self.send(200, (ROOT / 'web' / name).read_bytes(), kind)
+        # 0.27: vendored, unmodified third-party files (html2canvas 1.4.1, MIT) live in web/dist
+        sub = name[5:] if name.startswith('dist/') else ''
+        if kind and sub and '/' not in sub and not sub.startswith('.') and (ROOT / 'web' / 'dist' / sub).is_file():
+            return self.send(200, (ROOT / 'web' / 'dist' / sub).read_bytes(), kind)
         if path == '/openapi.json':
             return self.send(200, (ROOT / 'openapi.json').read_bytes())
         self.send(405 if path == '/mcp' else 404, {'error': 'Use POST /mcp.' if path == '/mcp' else 'Not found.'})
@@ -4176,6 +4268,7 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/james': lambda: james_decide(who, body),
                 '/api/feedback/review': lambda: feedback_review(who, body),
                 '/api/show': lambda: show_and_tell(who, body),
+                '/api/drop': lambda: drop_item(who, body),
                 '/api/onbox': lambda: on_box(who, body),
                 '/api/builder': lambda: builder_set(who, body),
                 '/api/try': lambda: try_set(who, body),

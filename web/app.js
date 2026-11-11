@@ -91,7 +91,7 @@ const SORT_FN = {
 function myTurn(i) {
   if (!i || i.closed_at || i.state === 'closed') return false;
   if (i.kind === 'bug' && i.shipped) return false;   // 0.26: a bug's check never waits on anyone
-  if (i.group === 'test') return !!i.can_review;
+  if (i.group === 'test') return !!i.can_review && !i.nextrel;
   if (i.group === 'james' || i.group === 'show') return !!i.can_james;
   if (i.group === 'goals' || i.category === 'goal') return !!i.turn;
   return false;
@@ -114,7 +114,17 @@ function say(text, kind = '') {
 function toast(text) {
   let shown = false;
   try { shown = !!(window.WizardApp && WizardApp.shell && typeof WizardApp.shell.toast === 'function' && WizardApp.shell.toast('✓', text)); } catch (_) {}
-  if (!shown) { say(text, 'note'); setTimeout(() => { if (el('status').textContent === text) say(''); }, 4000); }
+  if (!shown) localToast(text);
+}
+// 0.27: a small toast that shows over whatever is open (the Report sheet, the app pop-up), not under it
+function localToast(text) {
+  let t = el('bd-toast');
+  if (!t) { t = make('div', 'bd-toast'); t.id = 'bd-toast'; t.setAttribute('role', 'status'); t.setAttribute('aria-live', 'polite'); }
+  const host = ['report', 'appmodal', 'detail', 'settings', 'filter'].map(el).find(d => d && d.open) || document.body;
+  if (t.parentNode !== host) host.append(t);
+  t.textContent = text; t.hidden = false;
+  clearTimeout(t.__t); t.__t = setTimeout(() => { t.hidden = true; }, 3200);
+  if (host === document.body) { say(text, 'note'); setTimeout(() => { if (el('status').textContent === text) say(''); }, 4000); }
 }
 async function api(path, data) {
   const init = data === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) };
@@ -224,10 +234,10 @@ el('refused-back').onclick = () => { el('refused').hidden = true; el('signin').h
 el('connect-form').onsubmit = async e => {
   e.preventDefault();
   const t = el('token'), b = el('connect');
-  b.disabled = true; t.disabled = true; say('Checking with GitHub…', 'note');
+  const done = busyOn(b); t.disabled = true; say('Checking with GitHub…', 'note');
   try { const s = await api('api/connect', { token: t.value }); t.value = ''; say(''); show(s); load(view); loadSide(); }
   catch (err) { if (err.reason) { t.value = ''; refuse(err.reason, err.message); } else say(err.message, 'error'); }
-  finally { b.disabled = false; t.disabled = false; }
+  finally { done(); t.disabled = false; }
 };
 
 // ---------- 0.13: Sign in with GitHub (device flow): one button, a code to type on GitHub, the box polls ----------
@@ -260,10 +270,10 @@ async function pollDevice() {
   if (r.state !== 'none' && r.state !== 'cancelled') { otherWays = true; signinMode(me); say(r.message || 'Sign-in did not finish. Try again.', 'error'); }
 }
 el('oauth-go').onclick = async () => {
-  const b = el('oauth-go'); b.disabled = true; say('Asking GitHub for a code…', 'note');
+  const b = el('oauth-go'), done = busyOn(b); say('Asking GitHub for a code…', 'note');
   try { showCode(await api('api/device/start', {})); say(''); }
   catch (err) { otherWays = true; signinMode(me); say(err.message, 'error'); }
-  finally { b.disabled = false; }
+  finally { done(); }
 };
 el('oauth-copy').onclick = async () => {
   const code = el('oauth-user-code').textContent;
@@ -393,6 +403,9 @@ function render(d) {
   const order = SORT_FN[sortBy[d.view]];
   if (goals) return renderGoals(d, keep, order);
   const groups = Object.fromEntries(GROUPS.map(g => { const l = (d.groups[g] || []).filter(keep); return [g, order ? l.sort(order) : l]; }));
+  for (const i of groups.test) i.nextrel = comingNext(i);
+  groups.nextrel = groups.test.filter(i => i.nextrel);
+  groups.test = groups.test.filter(i => !i.nextrel);
   // 0.18: Shipping = open approved items + closed items not yet in a release for everyone; Done = shipped (from api/done)
   const dc = doneCache[d.view] || {};
   for (const i of groups.shipping) if (dc.open_ship && dc.open_ship[i.id]) i.ship = dc.open_ship[i.id];
@@ -681,7 +694,7 @@ const STAGE_INFO = {
   done: 'In a release that reaches everyone: For everyone (stable) for WizardOS and the Mac app, the app’s latest Store release for apps. The card says Shipped in <version>.',
 };
 function binsOf(v) {
-  const tail = [{ key: 'airev', word: 'AI review', groups: ['airev'] }, { key: 'test', word: 'Human review', groups: ['test'] }];
+  const tail = [{ key: 'airev', word: 'AI review', groups: ['airev'] }, { key: 'test', word: 'Human review', groups: ['test', 'nextrel'] }];
   const end = [{ key: 'shipping', word: 'Shipping', groups: ['shipping'] }, { key: 'done', word: 'Done', groups: ['done'] }];
   if (v === 'core') return [{ key: 'james', word: 'Waiting for approval', groups: ['sorting', 'james'], tip: 'James or Miguel approves before the builder starts' },
     { key: 'building', word: 'Build queue', groups: ['queued', 'building'], info: 'corebuild' }, ...tail,
@@ -699,7 +712,7 @@ function binsOf(v) {
 function sectionsOf(v) {
   if (v === 'bugs') return [['testers', 'In For testers'], ['relwait', 'Merged · waiting for a release'], ['building', 'Building'], ['queued', 'Queued'],
     ['sorting', 'Sorting…'], ['done', 'In the release for everyone']];
-  return [['test', 'Human review'], ['show', 'Show-and-tell'], ['james', 'Waiting for approval'], ['airev', 'AI review'],
+  return [['test', 'Human review'], ['nextrel', 'Coming in the next release'], ['show', 'Show-and-tell'], ['james', 'Waiting for approval'], ['airev', 'AI review'],
     ['building', 'Building'], ['queued', v === 'core' ? 'Approved · waiting for the builder' : 'Queued'], ['sorting', 'Sorting…'], ['shipping', 'Shipping'], ['done', 'Done']]
     .filter(([g]) => v === 'core' || !['show', 'james'].includes(g));
 }
@@ -943,6 +956,31 @@ function smallBtn(text, fn) {
   b.onclick = e => { e.preventDefault(); e.stopPropagation(); fn(b); };
   return b;
 }
+// ---------- 0.27 busy feedback (Miguel): every button that goes to the network shows a small spinner and turns itself
+// off at once, says 'Still working…' after 8 s, then a brief result ('Saved', 'Switched on') or the error with its
+// reason (the callers' pop). Nothing may look frozen.
+const STILL_MS = 8000;
+function busyOn(b) {
+  if (!b || b.__busy) return () => {};
+  const was = !!b.disabled;
+  b.__busy = true; b.classList.add('bd-busy'); b.setAttribute('aria-busy', 'true'); b.disabled = true;
+  let still = null;
+  const t = setTimeout(() => {
+    if (!b.isConnected) return;
+    still = make('span', 'bd-stillwork', 'Still working…'); still.setAttribute('role', 'status');
+    b.after(still);
+  }, STILL_MS);
+  return () => { clearTimeout(t); if (still) still.remove(); b.__busy = false; b.classList.remove('bd-busy'); b.removeAttribute('aria-busy'); b.disabled = was; };
+}
+// A brief result next to the button; a toast instead when a repaint already replaced it
+function flash(b, text, err) {
+  if (!text) return;
+  if (!b || !b.isConnected || !b.offsetParent) return toast(text);
+  const n = b.nextElementSibling;
+  if (n && n.classList.contains('bd-flash')) n.remove();
+  const f = make('span', 'bd-flash' + (err ? ' err' : ''), text); f.setAttribute('role', 'status');
+  b.after(f); setTimeout(() => f.remove(), err ? 6000 : 2500);
+}
 // ---------- 0.21 app switches (wizard.app-switches/1, docs/app-switches.md) ----------
 // An app declares its own feature switches and serves them at its same-origin path: GET /<app>/api/switches ->
 // {contract: 'wizard.app-switches/1', switches: [{id, name, description, on, default, issues: ['owner/repo#N']}]};
@@ -1017,9 +1055,10 @@ function appToggle(i, app, sw) {
   b.onclick = async e => {
     e.preventDefault(); e.stopPropagation();
     const next = b.getAttribute('aria-checked') !== 'true';
-    tryFace(b, next); b.disabled = true;
+    tryFace(b, next); const done = busyOn(b);
     try {
       const j = await appSwitchApi(app.id, { id: sw.id, on: next });
+      done(); flash(b, next ? 'Switched on' : 'Switched off');
       appSw[app.id] = { at: Date.now(), ok: true, status: 200, switches: j.switches.filter(x => x && x.id) };
       if (b.closest('#appmodal')) unpop();
       else if (next) pop(b, '', `On in ${app.name}. Now open ${app.name} and try it; switch it off here.`); else unpop();
@@ -1027,7 +1066,7 @@ function appToggle(i, app, sw) {
     } catch (err) {
       tryFace(b, !next);
       pop(b, '', err.status === 403 ? `Only this Wizard’s owner can switch ${app.name}.` : err.status === 401 ? `Open ${app.name} once, then try again.` : `${app.name} didn’t switch (${err.message || 'HTTP ' + (err.status || 'error')}).`);
-    } finally { b.disabled = false; if (cache[view] && !typing()) setTimeout(() => render(cache[view]), 0); }
+    } finally { done(); if (cache[view] && !typing()) setTimeout(() => render(cache[view]), 0); }
   };
   return b;
 }
@@ -1107,7 +1146,9 @@ function modalBar() {
   if (!it) return;
   const tg = tryToggle(it);
   if (tg) { tw.append(tg); const ts = tryState(it); if (ts.why) { const bits = ts.run ? [make('span', 'bd-why-s', ts.why)] : blockerBits(it, ts, ts.why); bits.forEach(x => (x.classList.contains('bd-why-s') ? x : x.querySelector('.bd-why-s') || x).classList.add('bd-try-why')); tw.append(...bits); } }
-  if (it.group === 'test') acts.append(verdictBtns(it, el('appmodal-bar'), tryState(it).wait));
+  if (it.group === 'test' && !it.nextrel) { const vb = verdictBtns(it, el('appmodal-bar'), tryState(it).wait); vb.append(moreBtn(it, true)); acts.append(vb); }
+  else acts.append(moreBtn(it, true));   // 0.27: the ⋯ menu (Report something else) in every pop-up that tests an item
+  onceOnly(el('appmodal-bar'), 'Not released yet');
 }
 // The live item behind the pop-up (a refresh may have replaced the object the button carried)
 function liveItem(it) {
@@ -1165,9 +1206,10 @@ function trySwitch(i) {
     const why = tryWhy(i);
     if (why) return pop(b, '', why);
     const next = b.getAttribute('aria-checked') !== 'true';
-    tryFace(b, next); b.disabled = true;
+    tryFace(b, next); const done = busyOn(b);
     try {
       takeSwitches(await switchApi({ id: i.switch, on: next }));
+      done(); flash(b, next ? 'Switched on' : 'Switched off');
       if (b.closest('#appmodal')) unpop();   // 0.23.1: in the pop-up the app reloads with it instead
       else if (next) pop(b, '', 'On in this Wizard. It shows within a few seconds; switch it off here or in Settings.'); else unpop();
       flipped();
@@ -1179,7 +1221,7 @@ function trySwitch(i) {
       if (err.status === 409) { box.locked = true; return pop(b, '', 'Switch to For testers in Settings to try this'); }
       if (err.status === 404 && err.json) return pop(b, '', UPDATE_NOTE);
       pop(b, '', err.message || 'Couldn’t reach this Wizard. Try again.');
-    } finally { b.disabled = false; }
+    } finally { done(); }
   };
   return b;
 }
@@ -1211,10 +1253,10 @@ function showBuilder(b) {
   t.title = b.updated_by ? `Set by ${b.updated_by} ${when(new Date(b.updated_at * 1000).toISOString())}` : '';
 }
 async function setBuilder(on) {
-  const t = el('builder'); unpop(); t.disabled = true;
-  try { showBuilder(await api('api/builder', { running: on })); }
-  catch (err) { pop(t, '', err.status === 403 ? (err.message || 'Only team members can start or pause the builder.') : err.message); }
-  finally { t.disabled = false; }
+  const t = el('builder'); unpop(); const done = busyOn(t);
+  try { showBuilder(await api('api/builder', { running: on })); done(); flash(t, on ? 'Running' : 'Paused'); }
+  catch (err) { done(); pop(t, '', err.status === 403 ? (err.message || 'Only team members can start or pause the builder.') : err.message); }
+  finally { done(); }
 }
 el('builder').onclick = () => {
   const t = el('builder');
@@ -1332,11 +1374,26 @@ function bugLine(i) {
   const r = i.ship ? i.ship.text : rel;
   return [r ? shippedText(r) : 'Merged · checking releases…', g === 'done' ? 'done' : ''];
 }
+// 0.27 (Miguel, wizard-ux#1256): merged, but in no release this Wizard can install yet (the box's own channel: For
+// testers when it follows it). Not 'Waiting on you': its own quiet group with one line and no buttons. It moves back
+// to Human review by itself once a release has it (the on-box check is redone on every load).
+function comingNext(i) {
+  if (i.group !== 'test') return false;
+  const t = tryState(i);
+  return !!(t.ob && t.ob.state === 'no' && t.ob.fix === 'Not released yet' && !t.hit && !t.run);
+}
+function nextLine(i) {
+  const core = CORE_NAMES.includes(repoName(i.repo));
+  const app = !core && appForRepo(i.repo);
+  return `Merged. Shows up in the next ${core ? 'For testers' : (app ? app.name : repoName(i.repo))} release.`;
+}
+const CORE_NAMES = ['wizard-ux', 'wizard-app-manager', 'wizard-agent-service', 'wizard-os', 'try-wizard'];
 function whereLine(i) {
   const g = i.group;
+  if (i.nextrel) return [nextLine(i), ''];
   if (i.kind === 'bug' && (i.shipped || ((g === 'shipping' || g === 'done') && i.state_reason !== 'not_planned'))) return bugLine(i);
   // 0.25.1 (Miguel): review stages lead with 'Waiting on <who>' (waitHead); this line only adds what is left to say
-  if (g === 'test') { const ob = onboxOf(i); return ob && ob.state === 'no' ? ['Update first, then check it', ''] : ['', '']; }
+  if (g === 'test') { const ob = onboxOf(i); return ob && ob.state === 'no' && ob.fix !== 'Not released yet' ? ['Update first, then check it', ''] : ['', '']; }
   if (g === 'show' || g === 'james') return ['', ''];
   if (g === 'airev') return ['Then ' + (i.opener || 'the filer') + ' checks it', ''];
   if (i.blocked && (g === 'building' || g === 'queued')) return ['The builder asked a question and paused (see the latest comment)', 'warn'];
@@ -1351,6 +1408,7 @@ function whereLine(i) {
 // agent named, never a vague 'Your turn'. AI review names the agent (or the agents that may do it).
 const WAIT_WHAT = { test: 'to check it', james: 'to approve or decline', show: 'for show-and-tell', airev: 'AI review' };
 function waitHead(i) {
+  if (i.nextrel) return null;
   const g = i.group, wo = i.waiting_on || {};
   const stuck = i.blocked && (g === 'queued' || g === 'building');
   if (!(g in WAIT_WHAT) && !stuck) return null;
@@ -1377,7 +1435,7 @@ function checkTag(i) {
   return t;
 }
 function itemCard(i) {
-  const c = make('article', 'bd-card bd-card-calm bd-icard');
+  const c = make('article', 'bd-card bd-card-calm bd-icard' + (i.nextrel ? ' bd-next' : ''));
   const wh = waitHead(i);
   if (wh) c.append(wh);
   const top = make('div', 'bd-card-top');
@@ -1393,9 +1451,24 @@ function itemCard(i) {
   if (rel && rel !== (i.ship && i.ship.text)) c.append(make('p', 'bd-hint bd-rel', rel));   // Shipping/Done say it above
   const act = actionArea(i);
   if (act) c.append(act);
+  onceOnly(c, 'Not released yet');
   const when_ = i.group === 'done' || i.group === 'shipping' && i.closed_at ? (i.closed_at ? 'closed ' + when(i.closed_at) : '') : age(i.created_at);
   c.append(make('p', 'bd-hint', [`${repoName(i.repo)} #${i.number}`, nameOf(i.author) || i.opener || '', when_].filter(Boolean).join(' · ')));
   return c;
+}
+// 0.27 (Miguel): a phrase like 'Not released yet' says it at most once per card (the first stays; a later element that
+// says only that goes, and the words go from a longer line)
+function onceOnly(root, phrase, seen = false) {
+  if (!root) return root;
+  const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  const hits = [];
+  for (let n = w.nextNode(); n; n = w.nextNode()) if (n.nodeValue.includes(phrase)) hits.push(n);
+  for (const n of hits.slice(seen ? 0 : 1)) {
+    const e = n.parentElement;
+    if (e && e !== root && e.textContent.trim().replace(/[\s·.]+$/, '') === phrase && !e.querySelector('button')) e.remove();
+    else n.nodeValue = n.nodeValue.replace(phrase, '').replace(/^\s*·\s*|\s*·\s*$/g, '');
+  }
+  return root;
 }
 // 0.23.1: what a Human review item needs before it can be tried: shared by the card, the detail and the app pop-up's bar
 function tryState(i) {
@@ -1419,7 +1492,10 @@ function tryState(i) {
   else if (ob && ob.state === 'no' && !hit) wait = 'Update first: this change isn’t on your Wizard yet.';
   // 0.24.2 (Miguel): an item with a switch, core or app, ALWAYS shows Try it; when it can't be flipped now, `why` says
   // why next to the greyed toggle ('Update Calendar first'), on the card and in the pop-up bar.
-  const has = !!(i.switch || hit || named || (pl && pl.kind === 'app'));
+  // 0.27 (Miguel, wizard-notes#18): never a toggle that can never work. Try it shows only when the item declares a
+  // switch (core 'Switch:', 'Switch: <app>:<id>', or an in-app 'Switch: Settings > …') or the catalog links one. Bugs,
+  // and items that say they have no switch (an install-time setting), get 'How to check' instead.
+  const has = i.kind !== 'bug' && !i.no_switch && !!(i.switch || hit || named || (pl && pl.kind === 'app'));
   let why = '';
   if (has) {
     if (wait) {
@@ -1491,15 +1567,16 @@ function actionArea(i, inDetail) {
   // (opens the detail: what changed, where to look, Before / After); the detail has Open <app>, Works, Doesn't work.
   if (i.kind === 'bug' && i.shipped && i.state_reason !== 'not_planned') {
     if (!i.can_review) return null;
-    if (i.fix && i.fix.dev && !inDetail) { row.append(make('span', 'bd-why-s', 'Behind the scenes: nothing to see by hand')); return row; }
-    if (!inDetail) { row.append(smallBtn('Check it', () => openDetail(i, true))); return row; }
+    if (i.fix && i.fix.dev && !inDetail) { row.append(make('span', 'bd-why-s', 'Behind the scenes: nothing to see by hand'), moreBtn(i, false)); return row; }
+    if (!inDetail) { row.append(smallBtn('Check it', () => openDetail(i, true)), moreBtn(i, false)); return row; }
     const at = i.check_at || {}, app = (at.app && appsById().get(at.app)) || appForRepo(i.repo);
     if (app && app.id !== 'wizardos-tracker') row.append(smallBtn(`Open ${app.name}`, b => openApp(app.id, app.name, b, i)));
     const yes = smallBtn('Works', b => askPop(b, 'Tag it Checked by you? It stays on its release path.', 'Works', () => tested(i, true, '', b)));
     yes.classList.add('bd-mini-go');
-    row.append(yes, smallBtn('Doesn’t work', b => doesntWork(row, i, b)));
+    row.append(yes, smallBtn('Doesn’t work', b => doesntWork(row, i, b)), moreBtn(i, false));
     return row;
   }
+  if (g === 'test' && i.nextrel) { row.classList.add('bd-act-quiet'); row.append(moreBtn(i, false)); return row; }
   if (g === 'test') {
     if (!i.can_review) {
       // 0.24.5: someone else gives the verdict, but anyone may try it on their own Wizard: Try it and the update
@@ -1508,8 +1585,9 @@ function actionArea(i, inDetail) {
       if (r0) row.append(updPanel(r0, i));
       if (tg0) { const grp = make('div', 'bd-trygrp'); grp.append(tg0); row.append(grp); }
       if (!r0) row.append(...blockerBits(i, t0, t0.why || (t0.ob && t0.ob.state === 'no' && !t0.hit ? t0.ob.fix || ONBOX_TEXT.no : '')));
-      row.append(greyBtn('Works', i.review_rule), greyBtn('Doesn’t work', i.review_rule));
+      row.append(greyBtn('Works', i.review_rule), greyBtn('Doesn’t work', i.review_rule), moreBtn(i, false));
       row.append(make('span', 'bd-why-s', i.review_rule));   // 0.20: 'James checks this one (he filed it)'
+      if (!tg0 && !inDetail) row.append(...howTo(i));
       return row;
     }
     const t = tryState(i);
@@ -1536,8 +1614,10 @@ function actionArea(i, inDetail) {
     else if (pl && pl.kind === 'app' && !swApp) grp.append(openKey(smallBtn('Open', b => pop(b, '', `Open ${repoName(pl.repo)} on your Wizard, then ${pl.text}.`)), i));
     if (grp.childNodes.length) row.append(grp);
     if (why && !run) row.append(...blockerBits(i, t, why));
-    row.append(verdictBtns(i, row, wait));
+    const vb = verdictBtns(i, row, wait); vb.append(moreBtn(i, false));
+    row.append(vb);
     if (wait && inDetail) row.append(make('span', 'bd-why-s', wait));
+    if (!tg && !inDetail) row.append(...howTo(i));
     return row;
   }
   if (g === 'james') {
@@ -1555,6 +1635,135 @@ function actionArea(i, inDetail) {
     row.append(yes); return row;
   }
   return null;
+}
+// 0.27: no toggle (a bug fix, or an item with no switch): its 'Human test:' line as one short plain instruction
+function howTo(i) {
+  const t = String(i.steps || '').trim();
+  if (!t) return [];
+  const short = t.length > 160 ? t.slice(0, 159).replace(/\s+\S*$/, '') + '…' : t;
+  const p = make('p', 'bd-howto', 'How to check: ' + cap(short)); if (short !== t) p.title = t;
+  return [p];
+}
+// ---------- 0.27 (Miguel): the '⋯' more-options menu on Human review cards and in the app pop-up's bar, so the main row
+// stays Try it / Works / Doesn't work. Report something else · Drop this feature (bugs: Not a bug / won't fix) · Open
+// on GitHub. Anyone on the team can drop; the comment records who and why. ----------
+function moreBtn(i, inModal) {
+  const b = make('button', 'bd-mini bd-more'); b.type = 'button';
+  b.setAttribute('aria-label', 'More options'); b.setAttribute('aria-haspopup', 'menu'); b.title = 'More options';
+  b.append(make('span', '', '⋯'));
+  b.addEventListener('pointerdown', e => e.stopPropagation());
+  b.addEventListener('keydown', e => e.stopPropagation());
+  b.onclick = e => { e.preventDefault(); e.stopPropagation(); moreMenu(i, b, inModal); };
+  return b;
+}
+function moreMenu(i, b, inModal) {
+  const m = make('div', 'bd-more-menu'); m.setAttribute('role', 'menu');
+  const item = (text, fn) => { const x = make('button', 'bd-menu-i', text); x.type = 'button'; x.setAttribute('role', 'menuitem'); x.onclick = e => { e.preventDefault(); e.stopPropagation(); fn(x); }; return x; };
+  m.append(item('Report something else', () => { unpop(); reportFrom(i, inModal); }));
+  m.append(item(i.kind === 'bug' ? 'Not a bug / won’t fix' : 'Drop this feature (not needed)', () => dropAsk(i, b)));
+  const gh = link('bd-menu-i bd-menu-a', i.url); gh.textContent = 'Open on GitHub ↗'; gh.setAttribute('role', 'menuitem'); gh.onclick = () => unpop();
+  m.append(gh);
+  m.addEventListener('keydown', e => {
+    const xs = [...m.querySelectorAll('.bd-menu-i')], n = xs.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); xs[(n + (e.key === 'ArrowDown' ? 1 : xs.length - 1)) % xs.length].focus(); }
+  });
+  pop(b, '', [m]);
+  m.querySelector('.bd-menu-i').focus();
+}
+function dropAsk(i, b) {
+  const bug = i.kind === 'bug';
+  const f = make('form', 'bd-drop'); f.autocomplete = 'off'; f.noValidate = true;
+  const id = 'bd-drop-' + Math.random().toString(36).slice(2, 8);
+  const l = make('label', 'bd-fail-l', bug ? 'Why? (required)' : 'Why isn’t it needed? (required)'); l.htmlFor = id;
+  const ta = make('textarea', 'wz-input bd-area'); ta.id = id; ta.rows = 2; ta.maxLength = 300; ta.required = true;
+  ta.placeholder = bug ? 'e.g. Works as designed: the list is sorted by date' : 'e.g. Settings already does this';
+  const r = make('div', 'bd-askrow');
+  const no = make('button', 'bd-mini', 'Cancel'); no.type = 'button'; no.onclick = () => unpop();
+  const go = make('button', 'bd-mini bd-mini-go', 'Next'); go.type = 'submit'; go.disabled = true;
+  ta.oninput = () => { go.disabled = ta.value.trim().length < 3; };
+  ta.addEventListener('keydown', e => e.stopPropagation());
+  r.append(no, go); f.append(l, ta, r);
+  f.onsubmit = e => { e.preventDefault(); const reason = ta.value.trim(); if (reason.length < 3) return ta.focus(); dropConfirm(i, b, reason); };
+  unpop(); pop(b, bug ? 'Not a bug / won’t fix' : 'Drop this feature', [f]);
+  ta.focus();
+}
+function dropConfirm(i, b, reason) {
+  const bug = i.kind === 'bug';
+  const row = make('div', 'bd-askrow');
+  const no = make('button', 'bd-mini', 'Cancel'); no.type = 'button'; no.onclick = () => unpop();
+  const yes = make('button', 'bd-mini bd-mini-go', bug ? 'Close it' : 'Drop it'); yes.type = 'button';
+  const err = make('span', 'bd-why-s bd-drop-err'); err.setAttribute('role', 'status');
+  yes.onclick = async () => {
+    const done = busyOn(yes); no.disabled = true; err.textContent = '';
+    try { await dropItem(i, reason); }
+    catch (e) { err.textContent = e.message || 'Something went wrong. Try again.'; }
+    finally { done(); no.disabled = false; }
+  };
+  row.append(no, yes);
+  unpop();
+  const sw = tryState(i).has;
+  pop(b, '', [bug ? `Close “${i.title}” as not a bug / won’t fix? It closes as not planned, with your reason.`
+    : sw ? `Drop “${i.title}”? Its switch turns off here and it closes as not planned, with your reason. The builder removes its code.`
+      : `Drop “${i.title}”? It closes as not planned, with your reason.`, row, err]);
+  yes.focus();
+}
+async function dropItem(i, reason) {
+  const t = tryState(i);
+  const sw = i.switch && box && box.ok && box.switches[i.switch];
+  if (sw && sw.on && !swLocked(sw)) {   // its switch off first; nothing closes if that fails
+    try { takeSwitches(await switchApi({ id: i.switch, on: false })); }
+    catch (e) { throw new Error(`Couldn’t turn its switch off (${e.message || 'HTTP ' + (e.status || 'error')}). Nothing was closed.`); }
+  } else if (t.hit && t.swApp && t.hit.on && !t.hit.locked) {
+    try { const j = await appSwitchApi(t.swApp.id, { id: t.hit.id, on: false }); appSw[t.swApp.id] = { at: Date.now(), ok: true, status: 200, switches: j.switches.filter(x => x && x.id) }; }
+    catch (e) { throw new Error(`Couldn’t turn its switch off in ${t.swApp.name} (${e.message || 'HTTP ' + (e.status || 'error')}). Nothing was closed.`); }
+  }
+  const r = await api('api/drop', { repo: i.repo, number: i.number, reason });
+  unpop();
+  afterAct(i, i.kind === 'bug' ? 'Closed: not a bug / won’t fix.' : r.cleanup ? 'Dropped. Its switch is off; the builder removes its code.' : 'Dropped.');
+}
+// 0.27 (Miguel): 'Report something else' from inside testing: the Report sheet opens ON TOP of the pop-up (which keeps
+// its place and state), filled in with the app, a 'Found while testing <repo>#<n>' line and a one-tap screenshot of the
+// framed app. After Send: back exactly where you were, with a small 'Sent'. The item under test is untouched.
+function reportFrom(i, inModal) {
+  if (!window.WizardReporter) return;
+  const a = inModal && appBack ? { id: appBack.id, name: appBack.name } : (tryState(i).app || appForRepo(i.repo));
+  WizardReporter.open({
+    context: { repo: i.repo, number: i.number, title: i.title, url: i.url, app: (a && a.id) || '', app_name: (a && a.name) || repoName(i.repo) },
+    shoot: inModal && el('appmodal').open ? captureFrame : null,
+    onSent: () => toast('Sent'),
+  });
+}
+// html2canvas-pro (bundled, MIT; reads modern CSS colours such as color-mix()) runs INSIDE the framed app's window, so its clone renders under the app's own styles and
+// policy; the Tracker's own copy is the fallback.
+const H2C_URL = () => new URL('dist/html2canvas-pro.min.js', location.href).href;   // vendored, unmodified (web/dist)
+function loadH2C(w = window) {
+  if (w.html2canvas) return Promise.resolve(w.html2canvas);
+  if (w.__bdH2C) return w.__bdH2C;
+  return (w.__bdH2C = new Promise((ok, no) => {
+    const d = w.document, sc = d.createElement('script'); sc.src = H2C_URL();
+    const t = setTimeout(() => { w.__bdH2C = null; no(new Error('The screenshot tool didn’t load')); }, 8000);
+    sc.onload = () => { clearTimeout(t); w.html2canvas ? ok(w.html2canvas) : (w.__bdH2C = null, no(new Error('The screenshot tool didn’t load'))); };
+    sc.onerror = () => { clearTimeout(t); w.__bdH2C = null; no(new Error('The screenshot tool didn’t load')); };
+    (d.head || d.documentElement).append(sc);
+  }));
+}
+// The framed app's visible screen as a JPEG data URL (same-origin frame, html2canvas). Throws when it can't.
+async function captureFrame() {
+  const f = el('appmodal-f');
+  let w = null, doc = null;
+  try { w = f.contentWindow; doc = f.contentDocument; } catch (_) {}
+  if (!w || !doc || !doc.documentElement || doc.location.href === 'about:blank') throw new Error('This screen can’t be read from here');
+  const h = await loadH2C(w).catch(() => loadH2C(window));
+  const scale = Math.min(2, window.devicePixelRatio || 1);
+  const bg = getComputedStyle(doc.body || doc.documentElement).backgroundColor;
+  const shot = h(doc.documentElement, { x: w.scrollX, y: w.scrollY, width: w.innerWidth, height: w.innerHeight, windowWidth: w.innerWidth,
+    windowHeight: w.innerHeight, scale, logging: false, useCORS: true, imageTimeout: 4000,
+    backgroundColor: bg && bg !== 'transparent' && !/,\s*0\)$/.test(bg) ? bg : getComputedStyle(document.body).backgroundColor });
+  const canvas = await Promise.race([shot, new Promise((_, no) => setTimeout(() => no(new Error('The screenshot took too long')), 15000))]);
+  let url = canvas.toDataURL('image/jpeg', 0.85);
+  if (url.length * 0.75 > 3.8e6) url = canvas.toDataURL('image/jpeg', 0.6);
+  if (url.length < 2000) throw new Error('The screenshot came out empty');
+  return { type: 'image/jpeg', url };
 }
 // An inline 'why' note under the action area (Doesn't work, Decline), Cancel focused first
 function noteAsk(area, placeholder, yesText, fn, opt = {}) {
@@ -1591,8 +1800,10 @@ function noteAsk(area, placeholder, yesText, fn, opt = {}) {
     e.preventDefault();
     const note = ta.value.trim();
     if (opt.required && !note) { gate(); return ta.focus(); }
-    go.disabled = cancel.disabled = true;
+    cancel.disabled = true;
+    const done = busyOn(go);
     const ok = await fn(note, shots && shots.list().length ? shots.payload() : undefined);
+    done();
     if (ok === false) { go.disabled = cancel.disabled = false; gate(); return; }   // keep the words (and screenshots)
     close();
   };
@@ -1607,19 +1818,25 @@ function afterAct(i, msg) {
   toast(msg); setTimeout(() => load(view, true), 1500);
 }
 async function tested(i, works, note, b, screenshots) {
+  const done = works ? busyOn(b) : () => {};   // Doesn't work: its note's Send button spins (noteAsk)
   try {
     const r = await api(works ? 'api/test/works' : 'api/test/fails', { repo: i.repo, number: i.number, note, screenshots });
     afterAct(i, (works ? (r.stage === 'show' ? 'Thanks — on to James’ show-and-tell.' : i.kind === 'bug' ? 'Thanks — tagged Checked by you.' : 'Thanks — it’s shipping.') : r.reopened ? 'Reopened: back to the builder.' : 'Sent back to the builder.') + (r.warning ? ' ' + r.warning : ''));
     return true;
-  } catch (err) { pop(b, '', err.message); return false; }
+  } catch (err) { done(); pop(b, '', err.message); return false; }
+  finally { done(); }
 }
 async function james(i, decision, note, b) {
-  try { await api('api/james', { repo: i.repo, number: i.number, decision, note }); afterAct(i, decision === 'approve' ? 'Approved: the builder may start.' : 'Declined.'); }
-  catch (err) { pop(b, '', err.message); }
+  const done = decision === 'approve' ? busyOn(b) : () => {};
+  try { await api('api/james', { repo: i.repo, number: i.number, decision, note }); done(); afterAct(i, decision === 'approve' ? 'Approved: the builder may start.' : 'Declined.'); }
+  catch (err) { done(); pop(b, '', err.message); }
+  finally { done(); }
 }
 async function showOk(i, b) {
-  try { const r = await api('api/show', { repo: i.repo, number: i.number }); afterAct(i, r.switch_default ? 'Approved: the builder turns it on for everyone.' : 'Approved: it’s shipping.'); }
-  catch (err) { pop(b, '', err.message); }
+  const done = busyOn(b);
+  try { const r = await api('api/show', { repo: i.repo, number: i.number }); done(); afterAct(i, r.switch_default ? 'Approved: the builder turns it on for everyone.' : 'Approved: it’s shipping.'); }
+  catch (err) { done(); pop(b, '', err.message); }
+  finally { done(); }
 }
 // Kept for scripts that call it: the status line in the detail ('On your Wizard ✓' or what to update, and the switch)
 function statusLine(p, t) {
@@ -1819,8 +2036,8 @@ function openDetail(i, toAct) {
   roles(i);
   el('d-still').hidden = true;   // 0.18.2: set from the item's own flow (Doesn't work said more than once)
   const inReview = i.group === 'test';   // 0.16
-  el('d-onbox').hidden = !inReview;
-  if (inReview) onboxLine(el('d-onbox'), i);
+  el('d-onbox').hidden = !inReview || !!i.nextrel;
+  if (inReview && !i.nextrel) onboxLine(el('d-onbox'), i);
   releaseLine(i);
   el('d-steps').hidden = !(inReview && (i.steps || i.check));
   if (inReview) el('d-steps').textContent = i.steps ? 'To test: ' + cap(i.steps) : i.check || '';
@@ -1865,14 +2082,14 @@ el('d-close').onclick = async () => {
       'Close anyway', () => { b.dataset.anyway = '1'; b.click(); });
   }
   anyway = !!b.dataset.anyway; delete b.dataset.anyway;
-  b.disabled = true;
+  const done = busyOn(b);
   try {
     await api(closing ? 'api/issue/close' : 'api/issue/reopen', { repo: d.repo, number: d.number, ...(anyway ? { anyway: true } : {}) });
     details.delete(d.id); toast(closing ? 'Marked done.' : 'Reopened.');
     WzSheet.close ? WzSheet.close(el('detail')) : el('detail').close();
     setTimeout(() => load(view, true), 800);
-  } catch (err) { pop(b, '', err.message); }
-  finally { b.disabled = false; }
+  } catch (err) { done(); pop(b, '', err.message); }
+  finally { done(); }
 };
 function fill(d) {
   closeCtl(d);
@@ -1974,6 +2191,8 @@ function detailAct(i) {
   const wh = waitHead(i);
   const chk = i.kind === 'bug' && i.shipped;
   a.replaceChildren(make('h3', 'bd-sec-h bd-d-h', chk ? 'Does it work now?' : wh ? wh.textContent : (text || 'Next')), area);
+  const ob = el('d-onbox');
+  onceOnly(a, 'Not released yet', !!(ob && !ob.hidden && ob.textContent.includes('Not released yet')));
 }
 
 // ---------- one item's own assembly line (its label timeline, fetched on tap, cached briefly) ----------
@@ -2165,7 +2384,9 @@ async function backUp(url, want, had, name, seconds) {
   }
   throw new Error(last ? `${name} restarted but still runs ${last}.` : `${name} didn’t come back within ${Math.round(seconds / 60)} minutes.`);
 }
-async function updateApp(id, btn, item) {
+// 0.27: the Update button spins from the tap until the in-place progress panel takes over (or the answer comes back)
+async function updateApp(id, btn, item) { const done = busyOn(btn); try { return await updateApp_(id, btn, item); } finally { done(); } }
+async function updateApp_(id, btn, item) {
   await loadCatalog();
   const a = ((catalog && catalog.apps) || []).find(x => x.id === id);
   if (!a || !a.release) return btn && pop(btn, '', 'The Store has no newer release of this app for this Wizard. Update in Settings › Apps.');
@@ -2204,13 +2425,14 @@ async function updateAll(btn) {
   if (!list.length) return pop(btn, '', 'Every app is up to date.');
   askPop(btn, `Update ${list.length} app${list.length === 1 ? '' : 's'}? Each one restarts for a moment.`, 'Update all', async () => { for (const a of list) await updateApp(a.id); });
 }
-async function updateWizardOS(btn, item) {
+async function updateWizardOS(btn, item) { const done = busyOn(btn); try { return await updateWizardOS_(btn, item); } finally { done(); } }
+async function updateWizardOS_(btn, item) {
   try {
     const u = updates || await getJSON(UPDATES_API);
     const target = u && (u.latest_for_channel || (u.channel === 'latest' ? u.latest : u.stable));
     if (!u || !u.update_available) return btn && pop(btn, '', `WizardOS ${u && u.installed ? u.installed : ''} is the latest on ${u && u.channel === 'latest' ? 'For testers' : 'Stable'}.`);
     if (runs.get('os') && runs.get('os').state === 'running') return;
-    if (btn && !btn.dataset.sure) return askPop(btn, `Update WizardOS ${u.installed} → ${target}? Wizard restarts for a moment.`, 'Update', () => { btn.dataset.sure = '1'; updateWizardOS(btn, item).finally(() => { delete btn.dataset.sure; }); });
+    if (btn && !btn.dataset.sure) return askPop(btn, `Update WizardOS ${u.installed} → ${target}? Wizard restarts for a moment.`, 'Update', () => { btn.dataset.sure = '1'; setTimeout(() => updateWizardOS(btn, item).finally(() => { delete btn.dataset.sure; }), 0); });
     const r = newRun('os', 'WizardOS', target, item, b => updateWizardOS(b, item), u.quick);
     try {
       const a = await getJSON(UPDATES_API, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Wizard-Store': '1' }, body: JSON.stringify({ action: 'apply' }) });
@@ -2333,7 +2555,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.26.5';
+const PAGE_VERSION = '0.27.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2378,7 +2600,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.26.5' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.27.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
