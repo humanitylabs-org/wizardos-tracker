@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.26.1
+version: 0.26.2
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -138,3 +138,5 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.26.0** (Miguel, 11 Nov) Bugs follow the release cycle, and their human check is optional. Bugs stages: Queued → Building → Merged (waiting for a release) → For testers → For everyone (Stable, or the app's Store release), from the same release lookup as Shipping. Nothing after the merge waits on anyone: no "Waiting on", no AI review step in the strip. Anyone on the team may check a shipped bug at any time: the card's **Check it** opens the detail with what changed, where to look (the builder's `Check: <app-id> <where>` line, which also gives the detail an Open <app> button), and Before / After screenshots (the builder's `Before:` / `After:` links); then **Works** tags it "✓ Checked by <person> · <date>" without moving it, and **Doesn't work** sends it back to Building (it reopens if closed). The builder no longer hands bugs to AI review after the merge.
 
 **0.26.1** (Miguel, 11 Nov) Check it on a shipped bug opens a short check card instead of the GitHub thread: "What changed" and "How to check" in plain words (from the builder's hand-back `What changed:` / `What to check:` sections, `fix` on the card via `bug_handover()`), Before / After screenshot buttons when given, then "Does it work now?" with Open <app> · Works · Doesn't work. The issue text, labels, timeline and comments are behind "Show the full history".
+
+**0.26.2** (Miguel, 11 Nov) No more "everything shows Merged" on load: the server keeps the release lookups warm (a background pass every 4 minutes that refreshes lookups before they expire; `TRACKER_WARM=0` turns it off), the page remembers the last lookup on the device (`board.done2`) and shows it at once, and until a first lookup exists the Merged / For testers counts show "—" instead of a wrong number. Behind-the-scenes bug fixes (the builder's `Visible: no`, or a developer-only check such as terminal commands or test files) say "Behind the scenes: nothing to see by hand" instead of Check it.

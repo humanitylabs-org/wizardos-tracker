@@ -46,7 +46,7 @@ const EMPTY = { goals: 'No open goals.', core: 'No open core features.', apps: '
 const GROUPS = ['test', 'show', 'james', 'airev', 'building', 'queued', 'sorting', 'shipping'];
 const VIEWS = ['goals', 'core', 'apps', 'bugs'];
 const stage = { goals: null, core: null, apps: null, bugs: null, features: null };   // tap a bin: show only that stage (not remembered)
-const doneCache = {};   // view -> { at, items } recently closed, loaded when the Done bin is tapped
+const doneCache = {};   // view -> { at, items, open_ship }; filled from the device below (0.26.2)
 // 0.18.1: the last view is remembered per device; first landing is Core features (Goals only if you last used Goals).
 const lastView = () => { try { const v = JSON.parse(localStorage.getItem('board.view')); return VIEWS.includes(v) ? v : 'core'; } catch (_) { return 'core'; } };
 let me = null, view = ({ '#goals': 'goals', '#bugs': 'bugs', '#core': 'core', '#apps': 'apps', '#features': 'apps' })[location.hash] || lastView(), umOpen = false, umBack = 'core', gen = 0, held = null, lastLoad = 0, who = '';
@@ -66,6 +66,9 @@ const POP = {
 };
 const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch (_) { return null; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (_) {} } };
+// 0.26.2: the last release lookup is remembered on this device, so Bugs opens with the right stages at once; a fresh
+// lookup replaces it a moment later
+Object.assign(doneCache, Object.fromEntries(Object.entries(store.get('board.done2') || {}).map(([k, v]) => [k, { ...v, at: 0 }])));
 // Chip filters live on Bugs only (0.9: Goals has none); picks are remembered on the device.
 const picked = Object.fromEntries([...VIEWS, 'features'].map(v => [v, new Set(store.get('board.repos.' + v) || [])]));
 const pickedWho = Object.fromEntries([...VIEWS, 'features'].map(v => [v, new Set(store.get('board.who.' + v) || [])]));
@@ -453,6 +456,7 @@ function bucketBugs(groups, dc) {
   }
   groups.airev = []; groups.test = []; groups.shipping = [];
   groups.relwait = out.relwait; groups.testers = out.testers;
+  if (!dc.open_ship) { out.relwait.pending = true; out.testers.pending = true; }   // 0.26.2: '—' until the lookup lands
   groups.done = groups.done ? [...out.done, ...groups.done] : out.done.length ? out.done : null;
 }
 // 0.17: 'Filtered: Jan · wizard-ux ×' only when a filter is set; × clears it.
@@ -502,6 +506,7 @@ async function loadDone(which, force) {
   try {
     const r = await api('api/done?view=' + which + (force ? '&refresh=1' : ''));
     doneCache[which] = { at: Date.now(), items: r.items || [], open_ship: r.open_ship || {} };
+    try { store.set('board.done2', Object.fromEntries(Object.entries(doneCache).filter(([, v]) => v.items).map(([k, v]) => [k, { items: v.items.slice(0, 80), open_ship: v.open_ship }]))); } catch (_) {}
   } catch (err) { doneCache[which] = { at: Date.now(), items: null, error: err.message }; }
   if (which === view && cache[which] && !typing()) render(cache[which]);
 }
@@ -701,7 +706,7 @@ function strip(d, bins, groups) {
   bins.forEach((x, n) => {
     if (n) out.push(arrow());
     const lists = x.groups.map(g => groups[g]);
-    const count = lists.some(l => l == null) ? null : lists.reduce((a, l) => a + l.length, 0);
+    const count = lists.some(l => l == null || l.pending) ? null : lists.reduce((a, l) => a + l.length, 0);
     const li = make('li', 'bd-stepli bd-binx' + (count ? ' on' : '') + (only === x.key ? ' sel' : '') + (only && only !== x.key ? ' dim' : ''));
     li.dataset.step = x.key;
     const b = make('button', 'bd-bin' + (count ? ' on' : '')); b.type = 'button'; b.dataset.step = x.key;
@@ -1482,6 +1487,7 @@ function actionArea(i, inDetail) {
   // (opens the detail: what changed, where to look, Before / After); the detail has Open <app>, Works, Doesn't work.
   if (i.kind === 'bug' && i.shipped && i.state_reason !== 'not_planned') {
     if (!i.can_review) return null;
+    if (i.fix && i.fix.dev && !inDetail) { row.append(make('span', 'bd-why-s', 'Behind the scenes: nothing to see by hand')); return row; }
     if (!inDetail) { row.append(smallBtn('Check it', () => openDetail(i, true))); return row; }
     const at = i.check_at || {}, app = (at.app && appsById().get(at.app)) || appForRepo(i.repo);
     if (app && app.id !== 'wizardos-tracker') row.append(smallBtn(`Open ${app.name}`, b => openApp(app.id, app.name, b, i)));
@@ -1780,7 +1786,8 @@ function bugCheckLines(i) {
   const bits = [];
   if (fx.changed) bits.push(part('What changed', fx.changed));
   const how = fx.how || (at && at.text) || '';
-  bits.push(part('How to check', how || 'Open the app where it was broken and do what the report describes; it should work now.'));
+  if (fx.dev) bits.push(part('How to check', 'Nothing to see by hand: this fix is behind the scenes and its automatic tests passed. Say Doesn’t work only if you still hit the problem.'));
+  else bits.push(part('How to check', how || 'Open the app where it was broken and do what the report describes; it should work now.'));
   if (shots.length) {
     const s_ = make('div', 'bd-shots');
     for (const x of shots) {
@@ -2322,7 +2329,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.26.1';
+const PAGE_VERSION = '0.26.2';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2367,7 +2374,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.26.1' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.26.2' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
