@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.26.2
+version: 0.26.3
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -140,3 +140,5 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.26.1** (Miguel, 11 Nov) Check it on a shipped bug opens a short check card instead of the GitHub thread: "What changed" and "How to check" in plain words (from the builder's hand-back `What changed:` / `What to check:` sections, `fix` on the card via `bug_handover()`), Before / After screenshot buttons when given, then "Does it work now?" with Open <app> · Works · Doesn't work. The issue text, labels, timeline and comments are behind "Show the full history".
 
 **0.26.2** (Miguel, 11 Nov) No more "everything shows Merged" on load: the server keeps the release lookups warm (a background pass every 4 minutes that refreshes lookups before they expire; `TRACKER_WARM=0` turns it off), the page remembers the last lookup on the device (`board.done2`) and shows it at once, and until a first lookup exists the Merged / For testers counts show "—" instead of a wrong number. Behind-the-scenes bug fixes (the builder's `Visible: no`, or a developer-only check such as terminal commands or test files) say "Behind the scenes: nothing to see by hand" instead of Check it.
+
+**0.26.3** Release lookups are stale-while-revalidate: a page load takes any answer under an hour old, and only the background warm-up (every 2 minutes) re-asks answers older than 3 minutes; the whole Shipping lookup is kept per person and view, so opening Bugs never waits on GitHub for the stages.
