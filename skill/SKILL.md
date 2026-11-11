@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.26.3
+version: 0.26.4
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -25,7 +25,7 @@ Anyone on the allowlist files: Miguel/Oscar (`mistermizel`, `oscarhenrycollins`)
 
 ## Flows (agreed with James, 9 Nov)
 - **Bugs** (0.20, Miguel: shipping never waits on humans): Queued → Building → **Shipped** (merged switched on, in For testers within minutes; AI check by the filer's agent) → **Human check** (the filer's quick sanity check, any time after Shipped; never holds up shipping) → **Checked** (said Works, or 7 days with no Doesn't work: 'Checked (no problems in 7 days)'). Cards show release and check apart: 'Shipped in For testers 0.3.150 · Human check pending' / 'Shipped in For everyone 0.3.152 · Checked by Miguel'. Doesn't work at any point (also after it closed) reopens it to Building. Promotion to For everyone never waits on a bug's human check. Hotfix: the same, plus the front of the queue.
-- **App features**: Queued → Building → AI review → Human review by the filer (with its switch) → Shipping → Done. No James step.
+- **App features**: Queued → Building → AI review → Human review by the filer (with its switch) → Shipping → Done. No James step. Works on one with a switch adds `switch-default` (0.26.4): the builder removes the switch (always on), hands back with `Switch: none`, and the AI review pass closes it.
 - **Core features**: Queued → **Waiting for approval** (0.18.2, wizard-os#423: **James or Miguel** approves — policy `core_approvers`; the builder must not start until the issue has label `james-approved`; Approve / Decline, Decline closes it as not planned; others see 'Only James or Miguel can approve core features.') → Building → AI review → Human review by the filer → **Show-and-tell** (label `show-and-tell`; James approves: no switch → closed, with a switch → label `switch-default`, the builder removes the switch / turns it on for everyone, merges and closes) → Shipping → Done.
 - **Kick-backs** (AI review fail, Human Doesn't work) go back to Building and are counted in stats. Stats also show **Still not working**: items where a human said Doesn't work more than once (`summary.still_not_working`; `board_flow` returns `still_not_working` per item, the detail shows a badge).
 
