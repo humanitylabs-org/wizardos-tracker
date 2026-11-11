@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "WizardOS Tracker",
-    "version": "0.26.4",
+    "version": "0.26.5",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged. 0.13: two-step review (Queued → Building → AI review [label ai-review] → Human review [label ready-to-test] → Done; AI review is agents-only via MCP ai_review_pass / ai_review_fail; policy human_reviews 1|2) and Sign in with GitHub via the OAuth device flow (no client secret).",
     "contact": {
       "name": "WizardOS Tracker",
@@ -10,6 +10,83 @@
     }
   },
   "paths": {
+    "/api/feedback/pending": {
+      "get": {
+        "summary": "0.26.5: Pending approval: the Feedback inbox (open needs-review reports), read through the Feedback relay with the signed-in person's own token (team members only).",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{items: [{id, number, kind bug|feature, kind_word, title, text, submitter, submitter_word, created, screenshots}], count}"
+          },
+          "401": {
+            "description": "Not signed in"
+          },
+          "403": {
+            "description": "Not on the team"
+          },
+          "502": {
+            "description": "The relay could not be reached"
+          }
+        }
+      }
+    },
+    "/api/feedback/review": {
+      "post": {
+        "summary": "0.26.5: approve (a copy in wizard-os with triage + bug/feature + from-feedback, for the builder) or reject (closed as not planned) one Feedback inbox item. Idempotent.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "number",
+                  "action"
+                ],
+                "properties": {
+                  "number": {
+                    "type": "integer"
+                  },
+                  "action": {
+                    "type": "string",
+                    "enum": [
+                      "approve",
+                      "reject"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{number, result approved|rejected, already, twin: {repo, number, url} | null, message}"
+          },
+          "400": {
+            "description": "Bad action or number"
+          },
+          "403": {
+            "description": "Not on the team"
+          },
+          "404": {
+            "description": "No such inbox item"
+          }
+        }
+      }
+    },
     "/healthz": {
       "get": {
         "summary": "Health",

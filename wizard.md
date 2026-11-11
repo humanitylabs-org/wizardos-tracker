@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.26.4
+version: 0.26.5
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -144,3 +144,5 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.26.4** Approved app features ship always on (Miguel, 11 Nov): Works on an app feature that has a switch adds `approved` + `switch-default` and keeps it open with 'Builder: remove the switch'; the builder removes the switch, merges and hands back to AI review with `Switch: none`; the AI check pass then closes it (no second human test). Shipping shows 'Waiting for the builder to turn it on for everyone' meanwhile.
 
 **0.26.3** Release lookups are stale-while-revalidate: a page load takes any answer under an hour old, and only the background warm-up (every 2 minutes) re-asks answers older than 3 minutes; the whole Shipping lookup is kept per person and view, so opening Bugs never waits on GitHub for the stages.
+
+**0.26.5** (Miguel, 11 Nov) **Pending approval**: reports sent from the Feedback app by people outside the team (or not signed in) wait in the private Feedback inbox; the Tracker shows them as the first stage (Bugs: bug reports; Core features and App features: ideas), only while something waits. Each card says From Feedback app, Bug or Idea, who sent it (Anonymous or @login), how long ago, the full text and its screenshots (links: the team's private media), with Approve (sent to the builder queue: a copy in wizard-os with `triage` + `from-feedback`, so it lands in Sorting…) and Reject (closed as Not planned), each confirmed in place. The server asks the Feedback relay (`FEEDBACK_RELAY_URL`, `/v1/pending`, `/v1/review`) with your own GitHub token; it never reaches the page. Cards of issues labelled `from-feedback` carry a small From Feedback app chip.

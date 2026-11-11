@@ -1,0 +1,16 @@
+/* WizardOS Tracker 0.26.5: Pending approval (web/feedback-stage.js) and the 'From Feedback app' chip */
+.bd-fbchips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+.bd-fbchip { display: inline-flex; align-items: center; min-height: 22px; padding: 0 9px; border-radius: var(--r-pill, 999px); border: 1px solid var(--line-2, var(--wz-border)); font-size: .72rem; font-weight: 700; letter-spacing: .01em; color: var(--ink-2, var(--wz-text-secondary)); background: var(--fill, transparent); white-space: nowrap; }
+.bd-fbchip.src { border-color: color-mix(in srgb, var(--accent) 55%, transparent); color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.bd-fbchip.bug { border-color: color-mix(in srgb, var(--wz-danger) 50%, transparent); color: var(--wz-danger); }
+.bd-fbchip.idea { border-color: var(--line-2); color: var(--ink-2); }
+.bd-fbchip.small { justify-self: start; min-height: 18px; padding: 0 7px; font-size: .66rem; }
+.bd-fbtitle { font-size: var(--wz-text-md, 1rem); }
+.bd-fbtext { margin: 0; font-size: var(--wz-text-md, 1rem); line-height: 1.45; color: var(--ink-2, var(--wz-text-secondary)); white-space: pre-wrap; overflow-wrap: anywhere; }
+.bd-fbshots { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+.bd-fbshots .bd-shot { min-height: 30px; font-size: .78rem; }
+.bd-fbact { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.bd-fbcard { transition: opacity var(--wz-motion-fast, .15s) var(--wz-ease, ease), transform var(--wz-motion-fast, .15s) var(--wz-ease, ease); }
+.bd-fbcard.busy { opacity: .6; }
+.bd-fbcard.leaving { opacity: 0; transform: translateX(16px); }
+@media (prefers-reduced-motion: reduce) { .bd-fbcard, .bd-fbcard.leaving { transition: none; transform: none; } }
