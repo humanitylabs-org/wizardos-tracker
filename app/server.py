@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.28.2'
+VERSION = '0.29.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1795,6 +1795,33 @@ def ship_one(token, d, base=None):
     return 'app', f"Waiting for {app['name']} release", None
 
 
+def note_release(iid, wait):
+    """0.29: when the Tracker first saw an item's change in For testers / For everyone (DATA_DIR/release_at.json)."""
+    slot = {'testers': 'testers', 'done': 'everyone'}.get(wait)
+    if not slot:
+        return
+    with LOCK:
+        kept = _read('release_at.json', {})
+        kept = kept if isinstance(kept, dict) else {}
+        row = kept.get(iid) if isinstance(kept.get(iid), dict) else {}
+        if slot in row:
+            return
+        row[slot] = int(time.time())
+        kept[iid] = row
+        _write('release_at.json', dict(list(kept.items())[-4000:]))
+
+
+def release_times(iid, cache=None):
+    """{testers_at, everyone_at}: first seen in each release (For everyone falls back to the Shipped-in record)."""
+    rel = (cache or {}).get('rel') if cache else None
+    shp = (cache or {}).get('shp') if cache else None
+    rel = rel if rel is not None else (_read('release_at.json', {}) or {})
+    shp = shp if shp is not None else (_read('shipped.json', {}) or {})
+    row = rel.get(iid) if isinstance(rel.get(iid), dict) else {}
+    kept = shp.get(iid) if isinstance(shp.get(iid), dict) else {}
+    return {'testers_at': row.get('testers'), 'everyone_at': row.get('everyone') or kept.get('at')}
+
+
 def ship_status(token, iid, delivers, open_prs, state, state_reason, labels, base=None):
     """{state shipping|done, wait, text, version}. Open items are always Shipping (approved, not closed yet)."""
     low = {str(l).lower() for l in labels or []}
@@ -1819,6 +1846,7 @@ def ship_status(token, iid, delivers, open_prs, state, state_reason, labels, bas
         return hit[1]
     parts = [ship_one(token, d, base) for d in delivers]
     worst = min(parts, key=lambda p: SHIP_RANK[p[0]])
+    note_release(iid, worst[0])
     done = worst[0] == 'done' and state == 'closed'
     if done:   # the newest 'Shipped in' among the parts is when all of it reached everyone
         shipped = [p for p in parts if p[2]]
@@ -2420,7 +2448,27 @@ def history_of(ev, opened, closed_at, state, now=None):
     current = ('done' if not is_open else 'review' if 'ready-to-test' in labelled else 'ai' if 'ai-review' in labelled
                else 'building' if 'building' in labelled else 'queued')
     has = lambda x: x is not None
-    return {'wait': rnd(first_build - opened) if has(first_build) and has(opened) else None,
+    # 0.29 (Miguel, 11 Nov): the stats follow the current stages. Waiting for approval (core: opened -> james-approved),
+    # Needs an answer (builder:blocked stints) and Show-and-tell (show-and-tell stints), plus when it was handed off.
+    approved_at = next((t for t, k, l in ev if k == 'LabeledEvent' and l == 'james-approved'), None)
+
+    def stints(name):
+        out, start = [], None
+        for t, k, l in ev:
+            if k == 'LabeledEvent' and l == name and start is None:
+                start = t
+            elif start is not None and ((k == 'UnlabeledEvent' and l == name) or k == 'ClosedEvent'):
+                out.append(t - start)
+                start = None
+        return out, (now - start if start is not None and is_open else None)
+    answer_rounds, answer_now = stints('builder:blocked')
+    show_rounds, show_now = stints('show-and-tell')
+    extra = {'approval': rnd(approved_at - opened) if has(approved_at) and has(opened) and approved_at >= opened else None,
+             'approved_at': rnd(approved_at), 'handoff_at': rnd(first_ready), 'first_build_at': rnd(first_build),
+             'answer_rounds': [int(r) for r in answer_rounds if r >= 0], 'show_rounds': [int(r) for r in show_rounds if r >= 0]}
+    spent2 = {'approval': int((approved_at if has(approved_at) else (now if is_open else closed_ts or now)) - opened) if has(opened) else 0,
+              'answer': int(sum(answer_rounds) + (answer_now or 0)), 'show': int(sum(show_rounds) + (show_now or 0))}
+    return {**extra, 'spent2': spent2, 'wait': rnd(first_build - opened) if has(first_build) and has(opened) else None,
             'build': rnd(first_ready - first_build) if has(first_ready) and has(first_build) and first_ready >= first_build else None,
             'review_rounds': [int(r) for r in rounds if r >= 0], 'ai_rounds': [int(r) for r in ai_rounds if r >= 0],
             'total': rnd(closed_ts - opened) if has(closed_ts) and has(opened) and not is_open else None,
@@ -2437,6 +2485,7 @@ def item_history(node, now=None):
                  for e in (node.get('timelineItems') or {}).get('nodes') or [] if e and _ts(e.get('createdAt'))), key=lambda x: x[0])
     h = history_of(ev, _ts(node.get('createdAt')), node.get('closedAt'), node.get('state'), now)
     h.pop('spent', None)
+    h.pop('spent2', None)
     return {'id': f"{node['repository']['nameWithOwner']}#{node['number']}", 'repo': node['repository']['nameWithOwner'],
             'author': (node.get('author') or {}).get('login') or '', 'state': (node.get('state') or '').lower(), **h}
 
@@ -2522,6 +2571,7 @@ def item_flow(person, args, agent=False):
                  for e in rows if isinstance(e, dict) and e.get('event') in _REST_KIND and _ts(e.get('created_at'))), key=lambda x: x[0])
     h = history_of(ev, _ts(it.get('created_at')), it.get('closed_at'), it.get('state'))
     out = {'id': f'{full}#{number}', 'repo': full, 'number': number, 'state': it.get('state'), **h,
+           **release_times(f'{full}#{number}'),
            'still_not_working': (h.get('kicks') or 0) >= 2, 'computed_at': int(time.time())}
     with LOCK:
         _flows[key] = (time.time(), out)
@@ -2641,6 +2691,9 @@ def view_stats(token, org, view, cached_only=False):
     now = time.time()
     base = policy_base()
     items = [item_history(n, now) for n in nodes if n.get('repository') and view_keeps(view, n['repository']['nameWithOwner'], base)]
+    rc = {'rel': _read('release_at.json', {}) or {}, 'shp': _read('shipped.json', {}) or {}}
+    for i in items:
+        i.update(release_times(i['id'], rc))   # 0.29: Shipping / Merged / For testers / For everyone times
     out = {'items': items, 'done': sum(1 for i in items if i['state'] == 'closed'), 'counted': len(items),
            'total': total, 'computed_at': int(now), 'cache_seconds': STATS_SECONDS}
     with LOCK:
@@ -2688,7 +2741,8 @@ POLICY_DEFAULT = {
     # James's (open.goals). DATA_DIR/policy.json `core_approvers` overrides.
     'core_approvers': ['James', 'Miguel'],
 }
-TARGET_KEYS = {'queued': 'queued', 'open': 'queued', 'building': 'building', 'build': 'building', 'ai': 'ai', 'ai-review': 'ai',
+TARGET_KEYS = {'approval': 'approval', 'james': 'approval', 'answer': 'answer', 'show': 'show', 'shipping': 'shipping',
+               'relwait': 'relwait', 'testers': 'testers', 'buildq': 'buildq', 'queued': 'queued', 'open': 'queued', 'building': 'building', 'build': 'building', 'ai': 'ai', 'ai-review': 'ai',
                'ai_review': 'ai', 'review': 'review', 'human': 'review', 'human-review': 'review', 'human_review': 'review',
                'test': 'review', 'done': 'done'}
 _UNIT = {'s': 1, 'm': 60, 'h': 3600, 'd': 86400, 'w': 7 * 86400}

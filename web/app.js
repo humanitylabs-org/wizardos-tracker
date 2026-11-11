@@ -419,7 +419,7 @@ function render(d) {
   const doneN = st.pending || st.error ? null : hist.filter(i => i.state === 'closed').length;
   const bins = window.FeedbackStage ? FeedbackStage.bins(d.view, binsOf(d.view)) : binsOf(d.view);
   strip(d, bins, groups);
-  flow(d, groups, doneN, st, hist);
+  flow(d, groups, doneN, st, hist, bins);
   const only = stage[d.view];
   const bin = bins.find(b => b.key === only);
   const showing = g => !only ? g !== 'done' : (bin ? bin.groups.includes(g) : false);
@@ -567,6 +567,28 @@ const STAT_HELP = {
   done: 'Total time: opened → closed',
 };
 const STAT_KEY = { open: 'queued', build: 'building', ai: 'ai', review: 'review', done: 'done' };
+// 0.29 (Miguel, 11 Nov): the stats follow the current stages (binsOf), on every tab and on each item. One measure per
+// stage: { t: its target key, help: what is timed, xs(items): the seconds }. Release times (Merged → For testers →
+// For everyone, Shipping) count from when the Tracker first saw the change in that release.
+const gap = (a, b) => a != null && b != null && b >= a ? b - a : null;
+function stageStat(v, key) {
+  const core = v === 'core', bug = v === 'bugs';
+  return ({
+    james: { t: 'approval', help: 'Waiting for approval: opened → approved by James or Miguel', xs: l => l.map(i => i.approval) },
+    queued: { t: 'queued', help: 'Queued: opened → the builder starts', xs: l => l.map(i => i.wait) },
+    building: core ? { t: 'buildq', help: 'Build queue: approved → built and handed off', xs: l => l.map(i => gap(i.approved_at || i.opened_at, i.handoff_at)) }
+      : { t: 'building', help: bug ? 'Building: the builder starts → fix merged' : 'Building: the builder starts → handed to AI review', xs: l => l.map(i => i.build) },
+    answer: { t: 'answer', help: 'Needs an answer: the builder asks → someone answers', xs: l => l.flatMap(i => i.answer_rounds || []) },
+    airev: { t: 'ai', help: 'AI review: handed off → passed on or sent back', xs: l => l.flatMap(i => i.ai_rounds || []) },
+    test: { t: 'review', help: 'Human review: ready to try → Works or Doesn’t work', xs: l => l.flatMap(i => i.review_rounds || []) },
+    show: { t: 'show', help: 'Show-and-tell: Works → James approves', xs: l => l.flatMap(i => i.show_rounds || []) },
+    shipping: { t: 'shipping', help: 'Shipping: closed → in a release for everyone', xs: l => l.map(i => gap(i.closed_at, i.everyone_at)) },
+    relwait: { t: 'relwait', help: 'Merged: fix merged → in For testers', xs: l => l.map(i => gap(i.handoff_at, i.testers_at)) },
+    testers: { t: 'testers', help: 'For testers: in For testers → in For everyone', xs: l => l.map(i => gap(i.testers_at, i.everyone_at)) },
+    done: bug ? { t: 'done', help: 'For everyone: reported → fixed for everyone', xs: l => l.map(i => gap(i.opened_at, i.everyone_at)) }
+      : { t: 'done', help: 'Total time: opened → closed', xs: l => l.map(i => i.total) },
+  })[key] || null;
+}
 // Same maths as the server's line_stats(), run after the view's own filters.
 function spread(xs) {
   xs = xs.filter(x => x != null).sort((a, b) => a - b);
@@ -608,20 +630,22 @@ function rangeBar(s, target, cls) {
 const statLines = (x, s, target) => [
   s && s.n ? (s.p25 != null ? `Typical ${dur(s.p25)}–${dur(s.p75)} (middle half), median ${dur(s.median)}.` : `Median ${dur(s.median)} (${s.n} item${s.n === 1 ? '' : 's'}).`) : '',
   target ? `Target: under ${dur(target)}.` : ''];
-function binStat(x, ls, st, targets) {
+function binStat(x, ls, st, targets, v, hist) {
   const box = make('span', 'bd-bin-s');
   if (st.pending) { box.textContent = '…'; box.title = 'Counting…'; return box; }
-  const target = (targets || {})[STAT_KEY[x.key]] || null;
+  const def = stageStat(v, x.key);
+  const target = def ? (targets || {})[def.t] || null : null;
   if (st.error || !ls) { box.textContent = '—'; box.title = st.error || NO_DATA; return box; }
-  const s = ls[STAT_KEY[x.key]];
+  const s = def ? spread(def.xs(hist || [])) : { n: 0 };
+  const help = def ? def.help : x.word;
   if (!s.n) { box.append(make('span', 'bd-rn none', '—'));
-    box.title = `${STAT_HELP[x.key]}: ${NO_DATA}`; return box; }
+    box.title = `${help}: ${def ? 'nothing measured yet' : 'not timed'}`; return box; }
   const cls = target ? (s.median <= target ? 'ok' : 'warn') : '';
   const nums = make('span', 'bd-rn' + (s.p25 == null ? ' one' : ''));
   if (s.p25 != null) nums.append(make('span', 'lo', dur(s.p25)), make('b', 'md ' + cls, dur(s.median)), make('span', 'hi', dur(s.p75)));
   else nums.append(make('b', 'md ' + cls, dur(s.median)));
   box.append(nums, rangeBar(s, target, cls));
-  box.title = `${STAT_HELP[x.key]} (${s.n} item${s.n === 1 ? '' : 's'}). ` + statLines(x, s, target).filter(Boolean).join(' ') + (s.avg != null ? ` Average ${dur(s.avg)}.` : '');
+  box.title = `${help} (${s.n} item${s.n === 1 ? '' : 's'}). ` + statLines(x, s, target).filter(Boolean).join(' ') + (s.avg != null ? ` Average ${dur(s.avg)}.` : '');
   return box;
 }
 const infoIcon = () => {
@@ -629,40 +653,46 @@ const infoIcon = () => {
   const c = document.createElementNS(NS, 'circle'); c.setAttribute('cx', '8'); c.setAttribute('cy', '8'); c.setAttribute('r', '6.25');
   const p = document.createElementNS(NS, 'path'); p.setAttribute('d', 'M8 7.2v4M8 4.9v.1'); svg.append(c, p); return svg;
 };
-function flow(d, groups, done, st, hist) {
+function flow(d, groups, done, st, hist, bins) {
   steps = d.steps && d.steps.length >= 3 ? d.steps : [];
   const ls = st.pending || st.error ? null : lineStats(hist || []);
   const only = stage[d.view], out = [];
-  BINS.forEach((x, n) => {
+  bins.forEach((x, n) => {
     if (n) out.push(arrow());
-    const g = x.group || 'done';
-    const count = x.group ? groups[x.group].length : done;
-    const li = make('li', 'bd-stepli bd-binx' + (count ? ' on' : '') + (only === g ? ' sel' : '') + (only && only !== g ? ' dim' : ''));
+    const lists = x.groups.map(g => groups[g]);
+    const count = lists.some(l => l == null || l.pending) ? null : lists.reduce((a, l) => a + l.length, 0);
+    const li = make('li', 'bd-stepli bd-binx' + (count ? ' on' : '') + (only === x.key ? ' sel' : '') + (only && only !== x.key ? ' dim' : ''));
     li.dataset.step = x.key;
     const b = make('button', 'bd-bin' + (count ? ' on' : '')); b.type = 'button'; b.dataset.step = x.key;
-    b.setAttribute('aria-pressed', String(only === g));
-    b.setAttribute('aria-label', `${x.word}: ${count == null ? 'counting' : count}. ${only === g ? 'Show everything' : 'Show only ' + x.word}`);
+    b.setAttribute('aria-pressed', String(only === x.key));
+    b.setAttribute('aria-label', `${x.word}: ${count == null ? 'counting' : count}. ${only === x.key ? 'Show everything' : 'Show only ' + x.word}`);
     b.append(make('span', 'bd-bin-n', count == null ? '—' : String(count)));
-    if (x.key === 'done') b.title = st.error ? st.error : done == null ? 'Counting…' : `Closed ${sinceText(d.since).toLowerCase()} · tap for the latest`;
-    li.append(b, make('span', 'bd-bin-w', x.word), binStat(x, ls, st, d.targets));
-    li.onclick = () => setStage(g);
+    li.append(b, make('span', 'bd-bin-w', x.word), binStat(x, ls, st, d.targets, d.view, hist));
+    li.onclick = () => setStage(x.key);
     out.push(li);
   });
   el('steps').replaceChildren(...out);
-  el('stats-note').textContent = sinceText(d.since) + ' · typical time per step, the target (✎ same for everyone), and how often work comes back.';
+  el('flow').style.gridTemplateColumns = bins.map(() => 'minmax(0, 1fr)').join(' var(--ga) ');
+  el('flow').classList.toggle('bd-noreview', !bins.some(x => x.key === 'airev' || x.key === 'test'));
+  el('stats-note').textContent = sinceText(d.since) + ' · typical time in each stage (middle half, median bold), the target (✎ same for everyone)'
+    + (d.view === 'bugs' ? '. Release stages count from when the Tracker first saw the fix there.' : ', and how often work comes back.');
   // 0.10: the controls live in a thin row under the bins, one cell per bin column, never inside a bin.
-  const target = k => (d.targets || {})[STAT_KEY[k]] || null;
-  el('ctl').replaceChildren(...BINS.map(x => {
-    const c = make('div', 'bd-ctl'); c.dataset.step = x.key;
+  const target = k => { const def = stageStat(d.view, k); return def ? (d.targets || {})[def.t] || null : null; };
+  const tight = bins.length > 5;
+  el('ctl').replaceChildren(...bins.map((x, n) => {
+    const c = make('div', 'bd-ctl'); c.dataset.step = x.key; c.style.gridColumn = String(2 * n + 1);
     const t = make('button', 'bd-tgt'); t.type = 'button';
     const tv = make('span', 'bd-tgt-v');
-    if (target(x.key)) tv.append(make('span', 'bd-tgt-k', 'target '), document.createTextNode(dur(target(x.key)))); else tv.textContent = 'set target';
+    if (target(x.key)) tv.append(make('span', 'bd-tgt-k', tight ? '≤ ' : 'target '), document.createTextNode(dur(target(x.key)))); else tv.textContent = tight ? 'target' : 'set target';
     t.append(tv, make('span', 'bd-tgt-e', '✎'));
     t.setAttribute('aria-label', `${x.word} target: ${target(x.key) ? 'under ' + dur(target(x.key)) : 'none'}. Change it`);
     t.onclick = () => editTarget(t, d.view, x);
-    const info = make('button', 'bd-i'); info.type = 'button'; info.setAttribute('aria-label', `Who does ${x.word}?`); info.append(infoIcon());
-    info.onclick = () => openStep(x, info, d.view, [...statLines(x, ls ? ls[STAT_KEY[x.key]] : null, target(x.key)),
-      ...(x.key === 'done' && d.since ? [make('span', 'bd-since', sinceText(d.since))] : [])]);
+    const def = stageStat(d.view, x.key);
+    if (!def) { t.hidden = true; t.disabled = true; }
+    const info = make('button', 'bd-i'); info.type = 'button'; info.setAttribute('aria-label', `What happens in ${x.word}?`); info.append(infoIcon());
+    const ss = def && ls ? spread(def.xs(hist || [])) : null;
+    info.onclick = () => pop(info, x.word, [STAGE_INFO[x.info || x.key] || x.tip || '', ...(def ? [def.help + '.'] : []), ...statLines(x, ss, target(x.key)),
+      ...(x.key === 'done' && d.since ? [make('span', 'bd-since', sinceText(d.since))] : [])].filter(Boolean));
     c.append(t, info);
     return c;
   }));
@@ -759,12 +789,13 @@ const parseDur = v => { const m = String(v || '').trim().toLowerCase().match(/^(
 function editTarget(anchor, which, x) {
   const p = el('pop');
   if (popFor === anchor && !p.hidden) return unpop();
-  const cur = ((cache[which] || {}).targets || {})[STAT_KEY[x.key]] || null;
+  const tk = (stageStat(which, x.key) || {}).t || STAT_KEY[x.key];
+  const cur = ((cache[which] || {}).targets || {})[tk] || null;
   const note = make('span', 'bd-te-note', 'Same for everyone.');
   const save = async sec => {
     p.querySelectorAll('button, input').forEach(n => { n.disabled = true; }); note.textContent = 'Saving…';
     try {
-      const r = await api('api/targets', { view: which, step: STAT_KEY[x.key], seconds: sec });
+      const r = await api('api/targets', { view: which, step: tk, seconds: sec });
       if (cache[which]) cache[which].targets = r.targets;
       unpop(); if (which === view && cache[which]) render(cache[which]);
       toast(`${x.word} target: ${dur(r.seconds)}`);
@@ -797,7 +828,7 @@ function kickLabel(ls, st) {
     const k = el(id);
     k.hidden = !!st.pending;
     if (st.pending) continue;
-    k.textContent = !kk || kk.rate == null ? '—' : kk.kicked ? `${pct(kk.rate)} · ${times(kk.per)}` : '0%';
+    k.textContent = `Sent back from ${from}: ` + (!kk || kk.rate == null ? '—' : kk.kicked ? `${pct(kk.rate)} · ${times(kk.per)}` : '0%');
     const why = !kk || kk.rate == null ? `Sent back from ${from}: ${NO_DATA}`
       : `${pct(kk.rate)} of ${kk.reviewed} item${kk.reviewed === 1 ? '' : 's'} in ${from} came back at least once` + (kk.kicked ? `, ${times(kk.per)} on average` : '')
         + (kk.toDone != null ? `. ${dur(kk.toDone)} on average from first kick-back to done.` : '.');
@@ -2008,7 +2039,7 @@ function roles(i) {
   r.hidden = !who;
   if (!who) return;
   if (goal) { r.textContent = 'Human-led goal, never built by the builder · its owners or James post status · only James closes it'; return; }
-  if (i.category === 'bug' || i.kind === 'bug') { r.textContent = `Reported by ${who} · merged and shipping as soon as it’s built · then an AI check by their agent and ${who}’s own check · Doesn’t work reopens it`; return; }
+  if (i.category === 'bug' || i.kind === 'bug') { r.textContent = `Reported by ${who} · built and merged by the builder · For testers, then For everyone with the releases · anyone may check it (optional) · Doesn’t work reopens it`; return; }
   r.textContent = `Filed by ${who} · AI review by their agent · ${who} tries it` + (i.category === 'core' ? ' · James or Miguel approves before building, James after a show-and-tell' : '') + ' · then Shipping until it’s in a release for everyone';
 }
 // 0.26.1 (Miguel, 11 Nov): Check it opens a short check card, not the GitHub thread: what changed and how to check
@@ -2221,7 +2252,42 @@ function itemFlow(i) {
     .then(f => { flows.set(i.id, { at: Date.now(), data: f }); if (openId === i.id) drawItemFlow(f); })
     .catch(err => { if (openId === i.id) box.replaceChildren(make('p', 'bd-meta', err.message)); });
 }
+// 0.29: an item's own line uses its tab's stages (binsOf), each with the time it spent there
+function itemView(f) {
+  const i = (openItem && openItem.id === f.id) ? openItem : null;
+  if (i && i.kind === 'goal') return 'goals';
+  if (i && i.kind === 'bug') return 'bugs';
+  if (i && i.category === 'core') return 'core';
+  return i ? 'apps' : view;
+}
+function itemStageTime(v, key, f) {
+  const sp = f.spent || {}, s2 = f.spent2 || {}, d = x => (x ? dur(x) : null);
+  const on = (a, b) => a != null ? dur(Math.max(0, (b || Date.now() / 1000) - a)) : null;
+  switch (key) {
+    case 'james': return f.approved_at || f.state === 'open' ? d(s2.approval) : null;
+    case 'queued': return v === 'core' ? null : f.staged ? d(sp.queued) : 'for ' + dur(sp.queued);
+    case 'building': return v === 'core' ? (f.approved_at ? on(f.approved_at, f.handoff_at) : null) : f.staged && (sp.building || f.build != null) ? dur(sp.building) : null;
+    case 'answer': return d(s2.answer);
+    case 'airev': return f.staged && (sp.ai || f.ai_tries) ? dur(sp.ai) : null;
+    case 'test': return f.staged && (sp.review || f.tries) ? dur(sp.review) : null;
+    case 'show': return d(s2.show);
+    case 'shipping': return f.closed_at ? on(f.closed_at, f.everyone_at) : null;
+    case 'relwait': return f.handoff_at ? on(f.handoff_at, f.testers_at || f.everyone_at) : null;
+    case 'testers': return f.testers_at ? on(f.testers_at, f.everyone_at) : null;
+    case 'done': return f.everyone_at || f.closed_at ? new Date((v === 'bugs' ? f.everyone_at || f.closed_at : f.closed_at || f.everyone_at) * 1000).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : null;
+    default: return null;
+  }
+}
+function itemStageNow(v, f) {
+  const i = openItem && openItem.id === f.id ? openItem : null;
+  const bins = binsOf(v), g = i ? (i.group === 'shipping' && v === 'bugs' ? null : i.group) : null;
+  if (v === 'bugs' && i && i.shipped) return f.everyone_at ? 'done' : f.testers_at ? 'testers' : 'relwait';
+  const hit = g && bins.find(b => b.groups.includes(g));
+  return hit ? hit.key : f.state === 'closed' ? 'done' : null;
+}
 function drawItemFlow(f) {
+  const v = itemView(f);
+  if (v !== 'goals') return drawStageFlow(f, v);
   const box = el('d-flow');
   const still = el('d-still'), k2 = f.kicks || 0;
   still.hidden = !(f.still_not_working || k2 >= 2);
@@ -2254,6 +2320,35 @@ function drawItemFlow(f) {
   const wrap = make('div', 'bd-flow bd-dflowx'); wrap.append(ol, loop);
   box.replaceChildren(wrap);
   if (!staged && f.state === 'open') box.append(make('p', 'bd-meta bd-dflow-note', `Queued for ${dur(f.spent.queued)} · no build yet`));
+}
+
+function drawStageFlow(f, v) {
+  const box = el('d-flow');
+  const still = el('d-still'), k2 = f.kicks || 0;
+  still.hidden = !(f.still_not_working || k2 >= 2);
+  if (!still.hidden) { still.textContent = `Still not working · Doesn’t work ${k2}×`; still.title = `Someone said Doesn’t work ${k2} times on this item`; }
+  const ol = make('ol', 'bd-dflow'); ol.setAttribute('aria-label', 'This item so far');
+  const cur = itemStageNow(v, f), bins = binsOf(v), curAt = bins.findIndex(b => b.key === cur);
+  bins.forEach((x, n) => {
+    if (n) ol.append(arrow());
+    const val = itemStageTime(v, x.key, f);
+    const past = val != null || (curAt >= 0 && n < curAt && x.key !== 'answer' && x.key !== 'show');
+    const li = make('li', 'bd-dbin' + (x.key === cur ? ' cur' : '') + (!past && x.key !== cur ? ' dim' : ''));
+    li.append(make('span', 'bd-dbin-v', val || '—'), make('span', 'bd-dbin-w', x.word));
+    const def = stageStat(v, x.key);
+    li.title = (def ? def.help : x.word) + (x.key === cur ? ' (now)' : '');
+    li.setAttribute('aria-label', `${x.word}: ${val || 'none'}${x.key === cur ? ' (now)' : ''}`);
+    ol.append(li);
+  });
+  ol.style.gridTemplateColumns = bins.map(() => 'minmax(0, 1fr)').join(' var(--ga) ');
+  const wrap = make('div', 'bd-flow bd-dflowx bd-dflow-st'); wrap.append(ol);
+  wrap.style.gridTemplateColumns = ol.style.gridTemplateColumns;
+  const back = [];
+  if (f.ai_kicks) back.push(`AI review sent it back ${f.ai_kicks}×`);
+  if (f.kicks) back.push(`Doesn’t work ${f.kicks}×`);
+  box.replaceChildren(wrap);
+  if (back.length) box.append(make('p', 'bd-meta bd-dflow-note', back.join(' · ') + (f.kick_to_done != null ? ` · ${dur(f.kick_to_done)} from first kick-back to done` : '')));
+  if (!f.staged && f.state === 'open' && v !== 'core') box.append(make('p', 'bd-meta bd-dflow-note', `Queued for ${dur((f.spent || {}).queued || 0)} · no build yet`));
 }
 
 // ---------- 0.17 Update manager: this box's WizardOS and every app, installed vs latest, Update and Update all ----------
@@ -2569,7 +2664,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.28.2';
+const PAGE_VERSION = '0.29.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2614,7 +2709,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.28.2' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.29.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
