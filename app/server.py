@@ -33,7 +33,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.26.1'
+VERSION = '0.26.2'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1885,6 +1885,24 @@ def on_box(person, args):
     return {'items': out, 'box': box}
 
 
+def _warm_releases():
+    """0.26.2 (Miguel, 11 Nov): keep the release lookups warm, so the Bugs stages (Merged / For testers / For everyone)
+    are right the moment the page opens instead of after a 15-second cold lookup."""
+    time.sleep(20)
+    while True:
+        try:
+            key = accounts().get('default')
+            with LOCK:   # refresh lookups before they expire, so a page load never finds them cold
+                for k in [k for k, v in _ship.items() if time.time() - v[0] > SHIP_SECONDS / 2]:
+                    _ship.pop(k, None)
+            if key:
+                for v in ('bugs', 'apps', 'core'):
+                    done_list(key, {'view': v})
+        except Exception:   # noqa: BLE001 - a warm-up miss only means the next page load does the lookup itself
+            pass
+        time.sleep(240)
+
+
 def board_view(person, args):
     """One tab of the board (0.3 shape). 0.17: the same items for everyone; nothing is filtered by who is looking."""
     _, acct = account_for(person)
@@ -3331,6 +3349,10 @@ def _say(t, limit):
     return t + ('.' if t and t[-1] not in '.…!?' else '')
 
 
+DEV_CHECK = re.compile(r'(?i)\b(npx|npm (run|test)|vitest|pytest|unittest|node --test|curl |journalctl|systemctl|docker |'
+                       r'git (log|show|diff)|checkout\b|tests?/[\w./-]+|\.test\.[jt]s|ls ~|cat ~|run `|gh (api|run))')
+
+
 def bug_handover(bodies):
     """0.26.1 (Miguel, 11 Nov): the two things a person needs to check a shipped bug, in plain words, from the
     builder's newest hand-back: what changed, and how to check it. {} when there is no hand-back."""
@@ -3339,7 +3361,11 @@ def bug_handover(bodies):
         changed, how = sec.get('what changed'), sec.get('what to check') or sec.get('how to check') or sec.get('to check')
         if changed or how:
             first = re.split(r'(?<=[.!?])\s+', _say(changed or '', 600))
-            return {'changed': ' '.join(first[:2])[:320], 'how': _say(how or '', 520)}
+            how_t = _say(how or '', 520)
+            # 0.26.2: behind-the-scenes fixes have nothing a person can see: the builder says 'Visible: no', or its
+            # check is a developer's (terminal commands, test files, a code checkout)
+            hidden = bool(re.search(r'(?im)^[\s*_-]*visible\s*:\s*no\b', body)) or bool(DEV_CHECK.search(how or ''))
+            return {'changed': ' '.join(first[:2])[:320], 'how': how_t, 'dev': hidden}
     return {}
 
 
@@ -4258,4 +4284,6 @@ wizard_switches_install(Handler)
 if __name__ == '__main__':
     secure_start()
     threading.Thread(target=refresh_loop, daemon=True).start()
+    if os.environ.get('TRACKER_WARM', '1') != '0':
+        threading.Thread(target=_warm_releases, daemon=True).start()
     ThreadingHTTPServer((os.environ.get('BIND', '0.0.0.0'), int(os.environ.get('PORT', '8799'))), Handler).serve_forever()
