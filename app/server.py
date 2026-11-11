@@ -33,7 +33,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.26.3'
+VERSION = '0.26.4'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -3054,7 +3054,12 @@ def ai_review(args, passed):
         raise Problem(403, f'AI review of this {kind} is for {who_text}, not this box\'s agent ({agent_name} of {box_person}).', 'not_ai_reviewer')
     head = f"AI review: {'pass' if passed else 'fail'} — {agent_name} (agent of {box_person})"
     gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': head + '\n\n' + note})
-    if passed:  # add Human review first, then drop AI review, so the label timeline never shows a kick-back
+    finish = passed and DEFAULT_LABEL in names and APPROVED_LABEL in names
+    if finish:  # 0.26.4: the human already approved it; the switch is removed, so it closes (Shipping until released)
+        _drop_label(acct, full, number, AI_LABEL)
+        _drop_label(acct, full, number, DEFAULT_LABEL)
+        _close(acct, full, number)
+    elif passed:  # add Human review first, then drop AI review, so the label timeline never shows a kick-back
         gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/labels', {'labels': [HUMAN_LABEL]})
         _drop_label(acct, full, number, AI_LABEL)
     else:
@@ -3064,13 +3069,13 @@ def ai_review(args, passed):
         except Problem:
             pass  # the builder relabels it when it picks it up again
     now = [l.get('name', '').lower() for l in _current(acct, full, number).get('labels') or []]
-    if AI_LABEL in now or (passed and HUMAN_LABEL not in now):
+    if AI_LABEL in now or (passed and not finish and HUMAN_LABEL not in now):
         raise Problem(403, 'The comment is saved, but GitHub did not change the labels (Triage or write access to this repo is needed).')
     with LOCK:
         _flows.pop((_tid(acct['token']), full.lower(), number), None)
         _stats.clear()  # 0.13.9: a review decision shows on the arrows at once
     return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'passed': passed, 'labels': now,
-            'stage': 'review' if passed else 'building', 'saved': True}
+            'stage': ('shipping' if finish else 'review') if passed else 'building', 'saved': True}
 
 
 def ai_review_human(*_):
@@ -3482,8 +3487,17 @@ def tested(person, args, works):
         raise Problem(403, rule, 'not_filer')
     if late and closed and (cur.get('state_reason') or '').lower() == 'not_planned':
         raise Problem(409, 'This was closed as not planned. File a new bug if it is still broken.')
+    to_default = False
+    if works and cat == 'app' and DEFAULT_LABEL not in names:
+        # 0.26.4 (Miguel, 11 Nov): an approved app feature ships always on. With a switch it stays open with
+        # switch-default; the builder removes the switch, merges, and the AI check closes it (no second human test).
+        rows = _issue_comments(acct, full, number, cur.get('comments') or 0)
+        sw, how = switch_info([b for w, b in _comment_rows(rows) if w.lower() == BUILDER], cur.get('body'))
+        to_default = bool(sw or how)
     if works:
         body = f'Tested: works \u2014 @{login}'
+        if to_default:
+            body += '\n\nBuilder: remove the switch (always on for everyone), merge, then hand back for the AI check.'
     else:
         body = f"Tested: doesn't work \u2014 @{login}\n\nWhat\u2019s wrong: {note}"
     urls, left, why = _attach(acct, shots)
@@ -3500,10 +3514,14 @@ def tested(person, args, works):
     if works:   # add the next label first, then drop ready-to-test, so the timeline never reads as a kick-back
         nxt = SHOW_LABEL if cat == 'core' else APPROVED_LABEL
         _add_label(acct, full, number, nxt)
+        if to_default:
+            _add_label(acct, full, number, DEFAULT_LABEL)
         for lab in (HUMAN_LABEL, AI_LABEL) if cat == 'bug' else (HUMAN_LABEL,):
             if lab in names:
                 _drop_label(acct, full, number, lab)
-        if nxt == APPROVED_LABEL and not closed:
+        if DEFAULT_LABEL in names:   # the switch is already gone: its approval closes it
+            _drop_label(acct, full, number, DEFAULT_LABEL)
+        if nxt == APPROVED_LABEL and not closed and not to_default:
             _close(acct, full, number)
     else:
         if closed:   # 0.19: Doesn't work on a shipped bug reopens it to Building
@@ -3525,6 +3543,7 @@ def tested(person, args, works):
         _ship.clear()
     return {'id': f'{full}#{number}', 'repo': full, 'number': number, 'works': works, 'labels': now, 'saved': True,
             'stage': ('show' if nxt == SHOW_LABEL else 'shipping') if works else 'building', 'state': after.get('state'),
+            'switch_default': to_default,
             'reopened': bool(closed and not works), 'reviews': {'done': 1 if works else 0, 'need': 1}, 'final': True,
             'screenshots': urls, 'waiting': len(left), 'warning': shot_warning}
 

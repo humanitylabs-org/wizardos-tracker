@@ -673,7 +673,7 @@ const STAGE_INFO = {
   building: 'The WizardOS Builder writes the change (a feature arrives behind a switch, off by default).',
   corebuild: 'Approved by James or Miguel. The WizardOS Builder writes the change behind a switch, off by default.',
   airev: 'The filer’s agent checks that the build matches the issue: on to Human review, or back to Building (counted as a kick-back).',
-  test: 'The person who filed it tries it on their Wizard (Update first if needed, then the switch if there is one) and says Works or Doesn’t work. Doesn’t work goes back to Building.',
+  test: 'The person who filed it tries it on their Wizard (Update first if needed, then the switch if there is one) and says Works or Doesn’t work. Works on an app feature removes its switch: it ships always on. Doesn’t work goes back to Building.',
   show: 'James sees it working. When he approves, the switch is removed (on for everyone) and it ships.',
   shipping: 'Approved, but not yet in a release everyone gets. It shows which wait it is in: Waiting for release, In For testers <version>, Waiting for Mac app build, or Waiting for <app> release.',
   done: 'In a release that reaches everyone: For everyone (stable) for WizardOS and the Mac app, the app’s latest Store release for apps. The card says Shipped in <version>.',
@@ -2329,7 +2329,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.26.3';
+const PAGE_VERSION = '0.26.4';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2374,7 +2374,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.26.3' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.26.4' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
