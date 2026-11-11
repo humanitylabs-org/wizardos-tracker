@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.30.0'
+VERSION = '0.30.1'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -439,6 +439,10 @@ def _forget(token):
             _cache.pop(k, None)
 
 
+GH_FLAKY = (500, 502, 503, 504)
+GH_RETRY_PAUSE = 0.8   # seconds before the one retry of a read GitHub answered with a 5xx
+
+
 def gh(token, method, path, body=None, cache=True, accept='application/vnd.github+json', _retry=True):
     token = _renamed.get(_tid(token), token)  # a request that still holds a token refreshed meanwhile
     url = GITHUB + path
@@ -473,6 +477,10 @@ def gh(token, method, path, body=None, cache=True, accept='application/vnd.githu
             raise Problem(e.code, 'Your GitHub token cannot do that here' + (f' ({msg}).' if msg else '.')) from None
         if e.code == 422:
             raise Problem(400, 'GitHub refused the change' + (f': {msg}' if msg else '.')) from None
+        if e.code in GH_FLAKY and method in ('GET', 'GRAPHQL') and _retry is not None:
+            # 0.30.1: GitHub answers a brief 5xx now and then (often on GraphQL); a read is safe to ask again once.
+            time.sleep(GH_RETRY_PAUSE)
+            return gh(token, method, path, body, cache, accept, _retry=None)
         raise Problem(502, f'GitHub answered {e.code}' + (f': {msg}' if msg else '.')) from None
     except (urllib.error.URLError, TimeoutError, OSError):
         raise Problem(502, 'Could not reach GitHub. Check the internet connection and try again.') from None
@@ -963,19 +971,42 @@ def _text(v, field, lo, hi):
     return v.strip()
 
 
+def _issue_from_rest(full, issue, labels=None):
+    """An item card from a REST issue (POST /repos/{full}/issues answer), when the GraphQL read-back failed."""
+    names = labels if labels is not None else [l.get('name') for l in issue.get('labels') or [] if l.get('name')]
+    node = {'repository': {'nameWithOwner': full}, 'number': issue['number'], 'title': issue.get('title'),
+            'url': issue.get('html_url'), 'state': (issue.get('state') or 'open').upper(),
+            'labels': {'nodes': [{'name': n} for n in names]}, 'author': {'login': (issue.get('user') or {}).get('login')},
+            'createdAt': issue.get('created_at'), 'updatedAt': issue.get('updated_at'), 'body': issue.get('body') or '',
+            'comments': {'totalCount': issue.get('comments') or 0}}
+    out = shape(node)
+    out['body'] = node['body']
+    out['tasks'] = tasks_of(node['body'])
+    out['comment_list'] = []
+    return out
+
+
 def _create(acct, full, title, body, label):
     """Open one issue with `label` (0.21: or a list of labels; the first one is the one the board needs)."""
     labels = list(label) if isinstance(label, (list, tuple)) else [label]
     label = labels[0]
     issue = gh(acct['token'], 'POST', f'/repos/{full}/issues', {'title': title, 'body': body, 'labels': labels})
+    relabelled = False
     have = [l.get('name', '').lower() for l in issue.get('labels') or []]
     if any(x not in have for x in labels):
         # GitHub silently drops labels for people without write access; try once more, then say so.
         try:
             gh(acct['token'], 'POST', f"/repos/{full}/issues/{issue['number']}/labels", {'labels': labels})
+            relabelled = True
         except Problem:
             pass
-    out = _read_issue(acct, full, issue['number'], True)
+    try:
+        out = _read_issue(acct, full, issue['number'], True)
+    except Problem:
+        # 0.30.1: the issue exists already. A GitHub hiccup on the read-back must not fail the request (the
+        # person would see an error and file it again), so build the card from GitHub's answer to the create.
+        out = _issue_from_rest(full, issue, labels if relabelled else None)
+        _remember(acct['token'], out)
     out['labelled'] = all(x in [l.lower() for l in out['labels']] for x in labels)
     if not out['labelled']:
         out['warning'] = f'GitHub dropped the {label} label (you may not have write access to this repo), so it will not show on the board.'
