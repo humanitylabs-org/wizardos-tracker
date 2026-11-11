@@ -43,7 +43,7 @@ const el = id => document.getElementById(id);
 const make = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 const link = (cls, href) => { const a = make('a', cls); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; return a; };
 const EMPTY = { goals: 'No open goals.', core: 'No open core features.', apps: 'No open app features.', features: 'No open features.', bugs: 'No open bugs. Nice.' };
-const GROUPS = ['test', 'show', 'james', 'airev', 'building', 'queued', 'sorting', 'shipping'];
+const GROUPS = ['test', 'answer', 'show', 'james', 'airev', 'building', 'queued', 'sorting', 'shipping'];
 const VIEWS = ['goals', 'core', 'apps', 'bugs'];
 const stage = { goals: null, core: null, apps: null, bugs: null, features: null };   // tap a bin: show only that stage (not remembered)
 const doneCache = {};   // view -> { at, items, open_ship }; filled from the device below (0.26.2)
@@ -93,6 +93,7 @@ function myTurn(i) {
   if (i.kind === 'bug' && i.shipped) return false;   // 0.26: a bug's check never waits on anyone
   if (i.group === 'test') return !!i.can_review && !i.nextrel;
   if (i.group === 'james' || i.group === 'show') return !!i.can_james;
+  if (i.group === 'answer') return !!i.turn;   // 0.28: the builder asked you a question
   if (i.group === 'goals' || i.category === 'goal') return !!i.turn;
   return false;
 }
@@ -688,31 +689,34 @@ const STAGE_INFO = {
   building: 'The WizardOS Builder writes the change (a feature arrives behind a switch, off by default).',
   corebuild: 'Approved by James or Miguel. The WizardOS Builder writes the change behind a switch, off by default.',
   airev: 'The filer’s agent checks that the build matches the issue: on to Human review, or back to Building (counted as a kick-back).',
+  answer: 'The builder asked a question and paused. It waits on whoever the question names (else the person who filed it). Answer in a comment on the item: any team member’s reply puts it back in the builder’s queue within 10 minutes.',
   test: 'The person who filed it tries it on their Wizard (Update first if needed, then the switch if there is one) and says Works or Doesn’t work. Works on an app feature removes its switch: it ships always on. Doesn’t work goes back to Building.',
   show: 'James sees it working. When he approves, the switch is removed (on for everyone) and it ships.',
   shipping: 'Approved, but not yet in a release everyone gets. It shows which wait it is in: Waiting for release, In For testers <version>, Waiting for Mac app build, or Waiting for <app> release.',
   done: 'In a release that reaches everyone: For everyone (stable) for WizardOS and the Mac app, the app’s latest Store release for apps. The card says Shipped in <version>.',
 };
 function binsOf(v) {
+  // 0.28 (Miguel, 11 Nov): Needs an answer: builder:blocked items, a person's turn like Human review, right after Building
+  const ASK = { key: 'answer', word: 'Needs an answer', groups: ['answer'], tip: 'The builder asked a question and paused' };
   const tail = [{ key: 'airev', word: 'AI review', groups: ['airev'] }, { key: 'test', word: 'Human review', groups: ['test', 'nextrel'] }];
   const end = [{ key: 'shipping', word: 'Shipping', groups: ['shipping'] }, { key: 'done', word: 'Done', groups: ['done'] }];
   if (v === 'core') return [{ key: 'james', word: 'Waiting for approval', groups: ['sorting', 'james'], tip: 'James or Miguel approves before the builder starts' },
-    { key: 'building', word: 'Build queue', groups: ['queued', 'building'], info: 'corebuild' }, ...tail,
+    { key: 'building', word: 'Build queue', groups: ['queued', 'building'], info: 'corebuild' }, ASK, ...tail,
     { key: 'show', word: 'Show-and-tell', groups: ['show'] }, ...end];
   // 0.20 (Miguel): shipping never waits on humans. Shipped = merged, on its way (AI check running); Human check = the filer's
   // sanity check, any time after Shipped; Checked = they said Works, or 7 days with no Doesn't work. Release is shown apart.
   // 0.26 (Miguel, 11 Nov): a bug's stages are where its fix is in the release cycle. Nothing after the merge waits on
   // anyone: the human check is optional (any time, by anyone on the team) and shows as a 'Checked by' tag.
-  if (v === 'bugs') return [{ key: 'queued', word: 'Queued', groups: ['sorting', 'queued'] }, { key: 'building', word: 'Building', groups: ['building'] },
+  if (v === 'bugs') return [{ key: 'queued', word: 'Queued', groups: ['sorting', 'queued'] }, { key: 'building', word: 'Building', groups: ['building'] }, ASK,
     { key: 'relwait', word: 'Merged', groups: ['relwait'], info: 'relwait', tip: 'Merged, waiting for the next release' },
     { key: 'testers', word: 'For testers', groups: ['testers'], info: 'testers', tip: 'In the For testers release' },
     { key: 'done', word: 'For everyone', groups: ['done'], info: 'everyone', tip: 'In the release for everyone (Stable), or the app’s Store release' }];
-  return [{ key: 'queued', word: 'Queued', groups: ['sorting', 'queued'] }, { key: 'building', word: 'Building', groups: ['building'] }, ...tail, ...end];
+  return [{ key: 'queued', word: 'Queued', groups: ['sorting', 'queued'] }, { key: 'building', word: 'Building', groups: ['building'] }, ASK, ...tail, ...end];
 }
 function sectionsOf(v) {
-  if (v === 'bugs') return [['testers', 'In For testers'], ['relwait', 'Merged · waiting for a release'], ['building', 'Building'], ['queued', 'Queued'],
+  if (v === 'bugs') return [['answer', 'Needs an answer'], ['testers', 'In For testers'], ['relwait', 'Merged · waiting for a release'], ['building', 'Building'], ['queued', 'Queued'],
     ['sorting', 'Sorting…'], ['done', 'In the release for everyone']];
-  return [['test', 'Human review'], ['nextrel', 'Coming in the next release'], ['show', 'Show-and-tell'], ['james', 'Waiting for approval'], ['airev', 'AI review'],
+  return [['test', 'Human review'], ['answer', 'Needs an answer'], ['nextrel', 'Coming in the next release'], ['show', 'Show-and-tell'], ['james', 'Waiting for approval'], ['airev', 'AI review'],
     ['building', 'Building'], ['queued', v === 'core' ? 'Approved · waiting for the builder' : 'Queued'], ['sorting', 'Sorting…'], ['shipping', 'Shipping'], ['done', 'Done']]
     .filter(([g]) => v === 'core' || !['show', 'james'].includes(g));
 }
@@ -1396,7 +1400,7 @@ function whereLine(i) {
   if (g === 'test') { const ob = onboxOf(i); return ob && ob.state === 'no' && ob.fix !== 'Not released yet' ? ['Update first, then check it', ''] : ['', '']; }
   if (g === 'show' || g === 'james') return ['', ''];
   if (g === 'airev') return ['Then ' + (i.opener || 'the filer') + ' checks it', ''];
-  if (i.blocked && (g === 'building' || g === 'queued')) return ['The builder asked a question and paused (see the latest comment)', 'warn'];
+  if (g === 'answer') return [i.question || 'The builder asked a question and paused (see its latest comment)', 'ask'];   // 0.28
   if (g === 'building') return ['The builder is on it', ''];
   if (g === 'queued') return [(i.category === 'core' ? 'Approved · ' : 'Queued · ') + (i.wait_reason || 'Next for the builder'), i.wait_reason === 'Oscar builds this one' ? 'oscar' : ''];
   if (g === 'sorting') return ['Sorting… the builder files it in the right place in a minute or two', ''];
@@ -1406,23 +1410,22 @@ function whereLine(i) {
 }
 // 0.25.1 (Miguel, 11 Nov): the headline of every card that waits on someone: 'Waiting on <name>', the person or
 // agent named, never a vague 'Your turn'. AI review names the agent (or the agents that may do it).
-const WAIT_WHAT = { test: 'to check it', james: 'to approve or decline', show: 'for show-and-tell', airev: 'AI review' };
+const WAIT_WHAT = { answer: 'to answer the builder', test: 'to check it', james: 'to approve or decline', show: 'for show-and-tell', airev: 'AI review' };
 function waitHead(i) {
   if (i.nextrel) return null;
   const g = i.group, wo = i.waiting_on || {};
-  const stuck = i.blocked && (g === 'queued' || g === 'building');
-  if (!(g in WAIT_WHAT) && !stuck) return null;
+  if (!(g in WAIT_WHAT)) return null;   // 0.28: a builder question is its own stage (Needs an answer), not a stuck queue
   const who = (wo.who || []).filter(Boolean);
   if (!who.length) return null;
   const me = (cache[view] || {}).me_person || '';
-  const p = make('p', 'bd-waiton' + (who.some(w => w === me) ? ' me' : '') + (stuck ? ' warn' : ''));
+  const p = make('p', 'bd-waiton' + (who.some(w => w === me) ? ' me' : ''));
   p.append(make('span', 'bd-waiton-k', 'Waiting on '));
   who.forEach((w, n) => {
     if (n) p.append(document.createTextNode(n === who.length - 1 ? ' or ' : ', '));
     p.append(make('b', '', w + (w === me ? ' (you)' : '')));
   });
   if (wo.kind === 'agent') p.append(make('span', 'bd-waiton-x', ' (AI)'));
-  p.append(make('span', 'bd-waiton-x', ' ' + (stuck ? 'to answer the builder' : WAIT_WHAT[g])));
+  p.append(make('span', 'bd-waiton-x', ' ' + WAIT_WHAT[g]));
   return p;
 }
 // 0.26: 'Checked by Miguel · 11 Nov': a person looked at this shipped bug and said Works
@@ -1574,6 +1577,16 @@ function actionArea(i, inDetail) {
     const yes = smallBtn('Works', b => askPop(b, 'Tag it Checked by you? It stays on its release path.', 'Works', () => tested(i, true, '', b)));
     yes.classList.add('bd-mini-go');
     row.append(yes, smallBtn('Doesn’t work', b => doesntWork(row, i, b)), moreBtn(i, false));
+    return row;
+  }
+  if (g === 'answer') {
+    // 0.28: Answer opens the detail (the builder's whole comment is there); a reply on GitHub by anyone on the team
+    // takes builder:blocked off within 10 minutes, so no write here
+    if (!inDetail) row.append(smallBtn('Answer', () => openDetail(i, true)));
+    const gh = link('bd-mini bd-ghlink', i.url); gh.textContent = inDetail ? 'Answer on GitHub ↗' : 'Open on GitHub ↗';
+    gh.addEventListener('pointerdown', e => e.stopPropagation()); gh.onclick = e => e.stopPropagation();
+    row.append(gh);
+    if (inDetail) row.append(make('span', 'bd-why-s', 'Reply in a comment. Any team member’s reply sends it back to the builder within 10 minutes.'));
     return row;
   }
   if (g === 'test' && i.nextrel) { row.classList.add('bd-act-quiet'); row.append(moreBtn(i, false)); return row; }
@@ -1869,7 +1882,7 @@ function updateFor(v, i) {
 // ---------- 0.18 Goals: the home tab. One larger card per goal: status light, the latest human status, owners,
 // linked bugs and features by stage, and Update status (the goal's owners or James; greyed for others) ----------
 const LIGHT = { green: 'On track', yellow: 'At risk', red: 'Blocked' };
-const STAGE_WORD = { sorting: 'sorting', test: 'human review', show: 'show-and-tell', james: 'waiting for approval', airev: 'AI review', building: 'building', queued: 'queued', shipping: 'shipping', done: 'done' };
+const STAGE_WORD = { sorting: 'sorting', answer: 'needs an answer', test: 'human review', show: 'show-and-tell', james: 'waiting for approval', airev: 'AI review', building: 'building', queued: 'queued', shipping: 'shipping', done: 'done' };
 function renderGoals(d, keep, order) {
   const list = (d.groups.goals || []).filter(keep);
   if (order) list.sort(order);
@@ -1896,7 +1909,7 @@ function statusBits(s, big) {
   return p;
 }
 function linkedLine(g) {
-  const c = g.linked_counts || {}, keys = ['test', 'show', 'james', 'airev', 'building', 'queued', 'shipping', 'done'].filter(k => c[k]);
+  const c = g.linked_counts || {}, keys = ['test', 'answer', 'show', 'james', 'airev', 'building', 'queued', 'shipping', 'done'].filter(k => c[k]);
   if (!keys.length) return make('p', 'bd-hint', 'No linked bugs or features yet');
   return make('p', 'bd-glinked', `${(g.linked || []).length} linked: ` + keys.map(k => `${c[k]} ${STAGE_WORD[k]}`).join(' · '));
 }
@@ -2043,6 +2056,7 @@ function openDetail(i, toAct) {
   if (inReview) el('d-steps').textContent = i.steps ? 'To test: ' + cap(i.steps) : i.check || '';
   el('d-steps').classList.remove('bd-chkcard'); checkMode(false);
   if (i.kind === 'bug' && i.shipped && i.can_review && i.state_reason !== 'not_planned') bugCheckLines(i);
+  if (i.group === 'answer' && i.question) { el('d-steps').hidden = false; el('d-steps').textContent = 'The builder asks: ' + i.question + ' Its full comment is below.'; }
   detailSwitch(i);
   detailGoal(i, null);
   detailAct(i);
@@ -2170,7 +2184,7 @@ function detailGoal(i, d) {
   const linked = i.linked || [];
   out.push(make('h3', 'bd-sec-h bd-d-h', `Linked bugs and features ${linked.length || ''}`));
   if (!linked.length) out.push(make('p', 'bd-meta', 'None yet. The builder links an item to a goal only on a clear match (a “Goal: owner/repo#N” line).'));
-  for (const k of ['test', 'show', 'james', 'airev', 'building', 'queued', 'shipping', 'done']) {
+  for (const k of ['test', 'answer', 'show', 'james', 'airev', 'building', 'queued', 'shipping', 'done']) {
     const xs = linked.filter(x => x.stage === k);
     if (!xs.length) continue;
     out.push(make('p', 'bd-hint bd-lk-h', cap(STAGE_WORD[k]) + ` (${xs.length})`));
@@ -2555,7 +2569,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.27.0';
+const PAGE_VERSION = '0.28.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2600,7 +2614,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.27.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.28.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

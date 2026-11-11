@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.27.0
+version: 0.28.0
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -33,6 +33,8 @@ Labels: `building`, `ai-review`, `ready-to-test` (Human review), `show-and-tell`
 
 - **Drop / Not a bug** (0.27): when someone on the team says a feature isn't needed (or a bug is not a bug / won't fix), `board_drop {issue, reason, owner_request}` with their short reason; it closes as not planned with `dropped` (or `wontfix`) and a comment naming who and why. A feature already merged behind its switch gets `switch-cleanup`; the builder files a `switch-remove` cleanup that removes the switch and its code. Turn its Try it switch off first. In the app this is the card's ⋯ menu.
 - **Report something else while testing** (0.27): `report_or_request` with the owner's words; it is always its own bug or feature, never a comment on the item under test.
+
+- **Needs an answer** (0.28): an open item labelled `builder:blocked` (the builder asked a question and paused) is in its own stage (`groups.answer` in `/api/split`), with `question` (plain words), `asked` (team names the builder @-mentioned) and `waiting_on`. To answer, comment on the issue (with the person's words); any team member's comment takes `builder:blocked` off within 10 minutes. Never remove the label yourself.
 
 Queued cards say why they wait: 'Next for the builder', or 'Oscar builds this one' (wizardos-tracker and wizardos-builder: the builder skips them).
 

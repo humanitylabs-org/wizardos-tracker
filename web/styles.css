@@ -671,6 +671,9 @@ html[data-color-scheme="light"] .bd-app { --bd-ok: var(--wz-success-light, var(-
 .bd-gmeta { margin: 0; }
 .bd-goal-min { gap: 6px; }
 .bd-where.oscar { color: var(--ink-3, var(--ink-2)); font-style: italic; }
+/* 0.28 Needs an answer: the builder's question under the title, and the GitHub link as a small button */
+.bd-where.ask { color: var(--ink); }
+a.bd-ghlink { text-decoration: none; }
 .bd-newer { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 60; display: flex; align-items: center; gap: 6px;
   padding: 6px 12px; border-radius: 999px; background: var(--ink); color: var(--wz-canvas); font-size: var(--wz-text-sm);
   box-shadow: 0 4px 16px color-mix(in srgb, var(--ink) 18%, transparent); }

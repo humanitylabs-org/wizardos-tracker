@@ -134,8 +134,8 @@ console.log(JSON.stringify([binsOf('bugs').map(b => b.word), binsOf('apps').map(
   whereLine({kind: 'bug', group: 'test', shipped: true, can_review: true})[0], whereLine({group: 'queued', wait_reason: 'Oscar builds this one'})[0],
   sectionsOf('apps').map(s => s[1]).includes('Filed')]));"""
         bins, apps, filer, queued, filed = self.run_js(src)
-        self.assertEqual(bins, ['Queued', 'Building', 'Merged', 'For testers', 'For everyone'])   # 0.26
-        self.assertEqual(apps, ['Queued', 'Building', 'AI review', 'Human review', 'Shipping', 'Done'])
+        self.assertEqual(bins, ['Queued', 'Building', 'Needs an answer', 'Merged', 'For testers', 'For everyone'])   # 0.26, 0.28
+        self.assertEqual(apps, ['Queued', 'Building', 'Needs an answer', 'AI review', 'Human review', 'Shipping', 'Done'])
         self.assertEqual(filer, 'Merged · checking releases…')   # 0.25.1: 'Waiting on <who>' is the card's headline (waitHead)
         self.assertEqual(queued, 'Queued · Oscar builds this one')
         self.assertFalse(filed)

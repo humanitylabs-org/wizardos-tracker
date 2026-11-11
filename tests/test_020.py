@@ -137,9 +137,10 @@ console.log(JSON.stringify([
     def test_bug_strip(self):
         src = 'const HUMAN_CHECK_TIP = "x";\n' + fn('binsOf') + '\nconsole.log(JSON.stringify(binsOf("bugs")));'
         bins = json.loads(subprocess.run(['node', '-e', src], capture_output=True, text=True, check=True).stdout)
-        self.assertEqual([b['word'] for b in bins], ['Queued', 'Building', 'Merged', 'For testers', 'For everyone'])
-        self.assertEqual(bins[3]['groups'], ['testers'])
-        self.assertEqual(bins[4]['groups'], ['done'])
+        self.assertEqual([b['word'] for b in bins], ['Queued', 'Building', 'Needs an answer', 'Merged', 'For testers', 'For everyone'])
+        self.assertEqual(bins[2]['groups'], ['answer'])   # 0.28
+        self.assertEqual(bins[4]['groups'], ['testers'])
+        self.assertEqual(bins[5]['groups'], ['done'])
         self.assertIn("const HUMAN_CHECK_TIP = 'A quick sanity check by whoever filed it. It never holds up shipping.';", JS)
 
     def test_checked_of(self):

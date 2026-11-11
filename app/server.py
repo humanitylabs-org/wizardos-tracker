@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.27.0'
+VERSION = '0.28.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -2043,7 +2043,8 @@ GOAL_FIELDS = (' number title url body createdAt updatedAt author { login } assi
                ' timelineItems(itemTypes: [CROSS_REFERENCED_EVENT], last: 100) { nodes { ... on CrossReferencedEvent { source { __typename'
                '  ... on Issue { number title url state stateReason repository { nameWithOwner } labels(first: 15) { nodes { name } } } } } } }')
 GOAL_PAGE = 'query($q: String!, $after: String) { ' + _PAGE % (30, GOAL_FIELDS) + ' }'
-OPEN_GROUPS = ('test', 'show', 'james', 'airev', 'building', 'queued', 'sorting', 'shipping')
+# 0.28 (Miguel, 11 Nov): 'answer' = Needs an answer: the builder asked a question and paused (label builder:blocked)
+OPEN_GROUPS = ('test', 'answer', 'show', 'james', 'airev', 'building', 'queued', 'sorting', 'shipping')
 TRIAGE_LABEL = 'triage'   # 0.21: a report waiting for the builder's triage step to move it to the right repo
 # 0.19: the builder never picks these up (Miguel, 9 Nov): Oscar builds them directly
 BUILDER_SKIPS = ('wizardos-tracker', 'wizardos-builder')
@@ -2091,11 +2092,11 @@ def waiting_on(card, base=None):
         r = card.get('ai_reviewer') or 'any team agent'
         agents = [a['name'] for tm in base['team'] for a in tm['agents']]
         who, who_kind = ((agents or ['Any team agent']) if r == 'any team agent' else r.split(' or ')), 'agent'
+    elif g == 'answer':
+        # 0.28: whoever the builder @-mentioned in its question (team names), else the person who filed it
+        who = list(card.get('asked') or []) or [card.get('opener') or 'Oscar']
     elif g in ('building', 'queued', 'sorting'):
-        if card.get('blocked'):
-            # builder:blocked = the builder asked a question and paused; the person who filed it answers (0.25.1)
-            who = [card.get('opener') or 'Oscar']
-        elif card.get('wait_reason') == 'Oscar builds this one':
+        if card.get('wait_reason') == 'Oscar builds this one':
             who = ['Oscar']
         else:
             who, who_kind = [base['builder']['name']], 'builder'
@@ -2103,7 +2104,7 @@ def waiting_on(card, base=None):
         who, who_kind = ['Release'], 'release'
     else:
         who = []
-    return {'who': who, 'kind': who_kind, 'stuck': bool(card.get('blocked'))}
+    return {'who': who, 'kind': who_kind, 'stuck': bool(card.get('blocked')) and g != 'answer'}
 
 
 def waiting_summary(groups):
@@ -2125,11 +2126,22 @@ def queue_reason(repo):
     return 'Oscar builds this one' if (repo or '').split('/')[-1].lower() in BUILDER_SKIPS else 'Next for the builder'
 
 
+BLOCKED_LABEL = 'builder:blocked'
+
+
 def item_group(repo, labels, state='open', base=None):
-    """0.18: the stage of one bug or feature from its labels (open items; closed ones are Shipping or Done)."""
+    """0.18: the stage of one bug or feature from its labels (open items; closed ones are Shipping or Done).
+    0.28: a queued, building or sorting item labelled builder:blocked is in Needs an answer ('answer')."""
     low = {str(l).lower() for l in labels or []}
     if state == 'closed':
         return 'closed'
+    g = _label_group(repo, low, base)
+    if g in ('building', 'queued', 'sorting') and any(l.startswith(BLOCKED_LABEL) for l in low):
+        return 'answer'
+    return g
+
+
+def _label_group(repo, low, base=None):
     if TRIAGE_LABEL in low:
         return 'sorting'
     if HUMAN_LABEL in low:
@@ -2225,6 +2237,10 @@ def board_split(person, args):
         total = len(kept) if total <= len(nodes) else total
         nodes = kept
     full, _ = _view_search(acct['token'], view, q.replace(' sort:', ' label:ready-to-test,ai-review,show-and-tell,approved sort:'), heavy=True, limit=80)
+    if any(BLOCKED_LABEL in {l['name'].lower() for l in (n.get('labels') or {}).get('nodes') or []} for n in nodes):
+        # 0.28: Needs an answer cards show the builder's question and whom it asked: they need its comments too
+        asks, _ = _view_search(acct['token'], view, q.replace(' sort:', f' label:"{BLOCKED_LABEL}" sort:'), heavy=True, limit=40)
+        full = full + asks
     by = {(n['repository']['nameWithOwner'], n['number']): n for n in full}
     nodes = [by.get((n['repository']['nameWithOwner'], n['number']), n) for n in nodes]
     now = time.time()
@@ -2261,6 +2277,11 @@ def board_split(person, args):
             extra = {'wait_reason': queue_reason(repo)}
         elif group == 'sorting':
             extra = {'wait_reason': SORTING_NOTE}
+        elif group == 'answer':
+            q_ = builder_question([(((c.get('author') or {}).get('login') or ''), c.get('body') or '')
+                                   for c in (n.get('comments') or {}).get('nodes') or []], base)
+            extra = {'question': q_['question'], 'asked': q_['asked'], 'asked_at': q_['at'],
+                     'turn': bool(q_['asked']) and person_of(login, base) in q_['asked']}
         if cat == 'bug' and group in ('airev', 'test'):   # 0.19: bugs are merged (on) before review: already shipping
             extra['shipped'] = True
             extra['can_fail'] = human_rule('bug', author, [], login, base)[0]
@@ -2303,7 +2324,7 @@ def board_split(person, args):
             'stats': {**stats, 'summary': None if stats.get('pending') else summarize(stats.get('items', []))},
             'total': total, 'shown': shown, 'more': total > len(nodes),
             # 0.3 shape, kept for older views and scripts
-            'test': groups['test'], 'doing': [i for g in ('show', 'james', 'airev', 'building', 'queued', 'sorting') for i in groups[g]]}
+            'test': groups['test'], 'doing': [i for g in ('answer', 'show', 'james', 'airev', 'building', 'queued', 'sorting') for i in groups[g]]}
 
 
 # ---------- bottleneck stats (label history, cached 5 min per token/org/view) ----------
@@ -3418,6 +3439,93 @@ def bug_handover(bodies):
             return {'changed': ' '.join(first[:2])[:320], 'how': how_t, 'dev': hidden}
     return {}
 
+
+# 0.28 (Miguel, 11 Nov): Needs an answer. These accounts answer the builder as themselves, though the team lists them
+# as an agent: Oscar runs Miguel's agent account and is the person a builder question to it reaches.
+ANSWER_AS_SELF = {'oscarhenrycollins': 'Oscar'}
+MENTION = re.compile(r'(?<![\w/@.-])@([A-Za-z0-9](?:[A-Za-z0-9-]{0,38}))\b')
+OPTION = re.compile(r'\s*(\(?[a-zA-Z]\)|[-*+]\s|\d+[.)]\s)')
+COMMIT_ID = re.compile(r'\b(?=[0-9a-f]*\d)(?=[0-9a-f]*[a-f])[0-9a-f]{7,64}\b')
+
+
+def mention_names(body, base=None):
+    """The team names a comment @-mentions, in order: a person's login is the person, an agent's login is its owner
+    (@defleur-agents is James), except ANSWER_AS_SELF. The builder and logins outside the team are left out."""
+    base = base or policy_base()
+    bots = {x.lower() for x in base['builder']['logins']} | {BUILDER.lower()}
+    out = []
+    for login in MENTION.findall(re.sub(r'```.*?```', ' ', body or '', flags=re.S)):
+        low = login.lower()
+        if low in bots:
+            continue
+        name = ANSWER_AS_SELF.get(low) or next((t['name'] for t in base['team'] if low in {x.lower() for x in t['logins']}
+                                                 | {a['login'].lower() for a in t['agents']}), None)
+        if name and name not in out:
+            out.append(name)
+    return out
+
+
+def _question_text(body, base):
+    """The builder's question in plain words: @logins become team names, no code blocks, links or commit ids."""
+    t = re.sub(r'```.*?```', ' ', body or '', flags=re.S)
+    # a run of @logins reads as 'Miguel or Oscar' ('@a @b which…' -> 'Miguel or Oscar: which…')
+    run = re.compile(r'@[A-Za-z0-9-]+(?:\s*(?:,|/|\band\b|\bor\b)?\s*@[A-Za-z0-9-]+)*(?P<end>\s*[:,]?)')
+
+    def names(m):
+        who = [n for x in re.findall(r'@([A-Za-z0-9-]+)', m.group(0)) for n in mention_names('@' + x, base)]
+        start = m.start() == 0 or t[m.start() - 1] == '\n'
+        joined = ' or '.join(dict.fromkeys(who))
+        word = m.end() < len(t) and t[m.end()].isalpha()
+        return joined + (': ' if start and word and joined and not m.group('end').strip() else m.group('end'))
+    t = run.sub(names, t)
+    t = re.sub(r'`([^`]*)`', lambda m: '' if COMMIT_ID.fullmatch(m.group(1).strip()) or len(m.group(1)) > 60 else m.group(1), t)
+    t = COMMIT_ID.sub('', t)
+    t = re.sub(r'(?i)\b(sha256|sha|commit|at)\s+(?=[,.;:)]|\s|$)', '', t)
+    return t
+
+
+def _q_clean(s):
+    s = _say(s, 400)
+    s = re.sub(r'(?i)^(builder\s+)?question\b[^:?]{0,60}:\s*', '', s)
+    s = re.sub(r'\(\s*\)|\s+(?=[,.;:?)])', '', s).strip(' :,;')
+    return s[:1].upper() + s[1:]
+
+
+def builder_question(rows, base=None):
+    """0.28 (Miguel, 11 Nov): the builder's question on a builder:blocked item, from its newest comment that asks one
+    (rows = [(login, body)], oldest first). -> {'question': one or two plain sentences, 'asked': [team names it
+    @-mentions], 'at': index of the comment or None}. The sentences that end in '?' (else that contain one); a short
+    question gets the sentence before it in the same paragraph. No '?': the paragraph after 'Question'."""
+    base = base or policy_base()
+    bots = {x.lower() for x in base['builder']['logins']} | {BUILDER.lower()}
+    said = [(k, b) for k, (who, b) in enumerate(rows or []) if (who or '').lower() in bots and b]
+    if not said:
+        return {'question': '', 'asked': [], 'at': None}
+    k, body = next(((k, b) for k, b in reversed(said) if '?' in b or re.search(r'(?i)\bquestion\b', b)), said[-1])
+    text = _question_text(body, base)
+    paras = [p for p in re.split(r'\n\s*\n', text) if p.strip()]
+    found = []
+    for want in (lambda x: x.rstrip(' *_)').endswith('?'), lambda x: '?' in x):
+        for p in paras:
+            lines = [x for x in p.split('\n') if not OPTION.match(x)]   # options the builder lists are not the question
+            sents = [x for x in re.split(r'(?<=[.!?])\s+|\n+', '\n'.join(lines)) if x.strip()]
+            for n, x in enumerate(sents):
+                if want(x) and len(found) < 2:
+                    if len(_q_clean(x)) < 60 and n and not found and not want(sents[n - 1]):
+                        found.append(sents[n - 1])
+                    found.append(x)
+        if found:
+            break
+    if not found:
+        m = re.search(r'(?im)^[\s#*_]*question\b[^\n]*$', text)
+        if m:
+            rest = re.sub(r'(?i)^[\s#*_]*question\b[\s*_:]*', '', m.group(0)).strip()
+            after = [p for p in re.split(r'\n\s*\n', text[m.end():]) if p.strip()]
+            found = [rest] if len(rest) > 12 else after[:1]
+    q = ' '.join(_q_clean(x) for x in found[:2] if _q_clean(x))
+    if len(q) > 320:
+        q = q[:319].rsplit(' ', 1)[0] + '…'
+    return {'question': q, 'asked': mention_names(body, base), 'at': k}
 
 def bug_check_info(bodies):
     """0.26 (Miguel, 11 Nov): what the builder handed over for a bug's optional check, from its comments (newest wins):

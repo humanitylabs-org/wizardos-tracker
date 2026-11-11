@@ -33,13 +33,15 @@ class WaitingOn(unittest.TestCase):
         w = self.who(group='airev', ai_reviewer='any team agent')
         self.assertIn('Archimedes', w['who'])
 
-    def test_blocked_waits_on_filer(self):
-        self.assertEqual(self.who(group='queued', blocked=True, opener='James')['who'], ['James'])
+    def test_blocked_waits_on_whom_the_builder_asked(self):
+        # 0.28: a builder question is its own stage (answer); it waits on whom the builder @-mentioned, else the filer
+        self.assertEqual(self.who(group='answer', blocked=True, opener='James')['who'], ['James'])
+        self.assertEqual(self.who(group='answer', blocked=True, opener='James', asked=['Miguel', 'Oscar'])['who'], ['Miguel', 'Oscar'])
 
     def test_builder_and_stuck(self):
         self.assertEqual(self.who(group='queued', wait_reason='Next for the builder')['who'], ['WizardOS Builder'])
-        w = self.who(group='queued', blocked=True)
-        self.assertEqual((w['who'], w['stuck']), (['Oscar'], True))   # no filer known
+        w = self.who(group='answer', blocked=True)
+        self.assertEqual((w['who'], w['kind'], w['stuck']), (['Oscar'], 'person', False))   # no filer known: a person's turn
 
     def test_summary(self):
         cards = [{'waiting_on': {'who': ['Miguel']}}, {'waiting_on': {'who': ['Miguel']}}, {'waiting_on': {'who': ['Jan']}},
