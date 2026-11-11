@@ -29,10 +29,17 @@ class WaitingOn(unittest.TestCase):
         w = self.who(group='airev', ai_reviewer='Archimedes')
         self.assertEqual((w['who'], w['kind']), (['Archimedes'], 'agent'))
 
+    def test_any_team_agent_lists_agents(self):
+        w = self.who(group='airev', ai_reviewer='any team agent')
+        self.assertIn('Archimedes', w['who'])
+
+    def test_blocked_waits_on_filer(self):
+        self.assertEqual(self.who(group='queued', blocked=True, opener='James')['who'], ['James'])
+
     def test_builder_and_stuck(self):
         self.assertEqual(self.who(group='queued', wait_reason='Next for the builder')['who'], ['WizardOS Builder'])
         w = self.who(group='queued', blocked=True)
-        self.assertEqual((w['who'], w['stuck']), (['Oscar'], True))
+        self.assertEqual((w['who'], w['stuck']), (['Oscar'], True))   # no filer known
 
     def test_summary(self):
         cards = [{'waiting_on': {'who': ['Miguel']}}, {'waiting_on': {'who': ['Miguel']}}, {'waiting_on': {'who': ['Jan']}},

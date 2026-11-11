@@ -17,7 +17,7 @@ def fn(name):
 
 class Sorts(unittest.TestCase):
     def test_menu_and_default(self):
-        self.assertIn("const SORTS = [['turn', 'Your turn first'], ['oldest', 'Oldest'], ['newest', 'Newest'], ['discussed', 'Most discussed'], ['active', 'Recently active']]", JS)
+        self.assertIn("const SORTS = [['turn', 'Waiting on me first'], ['oldest', 'Oldest'], ['newest', 'Newest'], ['discussed', 'Most discussed'], ['active', 'Recently active']]", JS)
         self.assertIn(": 'turn';", JS)
         self.assertIn("'Your turn'", JS)
         self.assertIn("Waiting for approval", JS)
