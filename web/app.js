@@ -336,6 +336,7 @@ async function load(which, refresh = false) {
     say('');
     if (d.stats && d.stats.pending && which !== 'goals') loadStats(which);
     if (which !== 'goals') loadDone(which, refresh);
+    if (which !== 'goals' && window.FeedbackStage) FeedbackStage.load(refresh);   // 0.26.5: Pending approval (web/feedback-stage.js)
     if (which === view) freshAt = Date.now();
   } catch (err) {
     if (err.status === 401) { const s = await api('api/status').catch(() => null); if (s) show(s); }
@@ -399,9 +400,10 @@ function render(d) {
   groups.shipping = [...groups.shipping, ...(closed || []).filter(i => i.group === 'shipping')];
   groups.done = closed ? closed.filter(i => i.group === 'done') : null;
   if (d.view === 'bugs') bucketBugs(groups, dc);
+  if (window.FeedbackStage) groups.feedback = FeedbackStage.items(d.view);   // 0.26.5: Pending approval, first
   const st = d.stats || {}, hist = (st.items || []).filter(keep);
   const doneN = st.pending || st.error ? null : hist.filter(i => i.state === 'closed').length;
-  const bins = binsOf(d.view);
+  const bins = window.FeedbackStage ? FeedbackStage.bins(d.view, binsOf(d.view)) : binsOf(d.view);
   strip(d, bins, groups);
   flow(d, groups, doneN, st, hist);
   const only = stage[d.view];
@@ -420,13 +422,13 @@ function render(d) {
     s.append(turnDivider(mine.length), l); secs.push(s, make('hr', 'bd-turn-end'));
   }
   const mineSet = new Set(mine);
-  for (const [g, title] of sectionsOf(d.view)) {
+  for (const [g, title] of [...(groups.feedback && groups.feedback.length ? [['feedback', 'Pending approval']] : []), ...sectionsOf(d.view)]) {
     const list = groups[g] && groups[g].filter(i => !mineSet.has(i));
     if (!showing(g) || !list || !list.length) continue;
     any = true;
     const s = make('section', 'bd-sec'); s.id = 'sec-' + g;
     const h = make('h2', 'bd-sec-h', title + ' '); h.append(make('span', 'bd-n', String(list.length)));
-    const l = make('div', 'bd-list'); l.replaceChildren(...list.map(itemCard));
+    const l = make('div', 'bd-list'); l.replaceChildren(...list.map(g === 'feedback' ? FeedbackStage.card : itemCard));
     s.append(h, l); secs.push(s);
   }
   if (secs.length && secs[secs.length - 1].tagName === 'HR') secs.pop();   // nothing below the 'Your turn' group
@@ -1381,6 +1383,8 @@ function itemCard(i) {
   const top = make('div', 'bd-card-top');
   const h = tapTarget('bd-title', () => openDetail(i)); h.textContent = i.title;
   top.append(h); c.append(top);
+  const fb = window.FeedbackStage && FeedbackStage.chip(i);   // 0.26.5: label from-feedback
+  if (fb) c.insertBefore(fb, top);
   const [text, cls] = whereLine(i);
   if (text) c.append(make('p', 'bd-where' + (cls ? ' ' + cls : ''), text));
   const tag = checkTag(i);
@@ -2329,7 +2333,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.26.4';
+const PAGE_VERSION = '0.26.5';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2374,7 +2378,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.26.4' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.26.5' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

@@ -27,13 +27,14 @@ import sys
 if '__file__' in globals():
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 import report as reporter  # noqa: E402  0.20: the 'Report or request' form (its own module, a future standalone app)
+import feedback_inbox  # noqa: E402  0.26.5: the Feedback app's inbox (Pending approval), through the Feedback relay
 
 ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Path(os.environ.get('APP_ROOT', '.')).resolve()
 DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.26.4'
+VERSION = '0.26.5'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1323,7 +1324,8 @@ def _card(node, tab):
            'kind': 'goal' if 'goal' in labels else 'bug' if 'bug' in labels else 'issue',
            'waiting': 'ready-to-test' in labels, 'approved': 'approved' in labels,
            'assignees': [a.get('login') for a in (node.get('assignees') or {}).get('nodes') or [] if a and a.get('login')],
-           'comments': ((node.get('comments') or {}).get('totalCount')), 'desc': describe(node.get('body'))}
+           'comments': ((node.get('comments') or {}).get('totalCount')), 'desc': describe(node.get('body')),
+           'from_feedback': feedback_inbox.FROM_LABEL in labels}   # 0.26.5: a 'From Feedback app' chip
     if out['comments'] is None:
         out['comments'] = len((node.get('comments') or {}).get('nodes') or [])
     refs = _refs(node)
@@ -3568,6 +3570,30 @@ def is_core_approver(login, base=None):
     return bool(login) and person_of(login, base).lower() in core_approver_people(base)
 
 
+def feedback_pending(person, q=None):
+    """0.26.5 GET /api/feedback/pending: the Feedback inbox (Pending approval), read with the person's own token through the
+    relay (server-side only; the token never reaches the page)."""
+    _, acct = gate(person)
+    try:
+        return feedback_inbox.pending(acct, refresh=(q or {}).get('refresh') == '1')
+    except feedback_inbox.RelayError as e:
+        raise Problem(e.code, e.message, e.reason)
+
+
+def feedback_review(person, args):
+    """0.26.5 POST /api/feedback/review {number, action approve|reject}: Approve files it in wizard-os (triage + from-feedback)
+    for the builder; Reject closes it as not planned. The relay checks the person is on the team."""
+    _, acct = gate(person)
+    try:
+        out = feedback_inbox.review(acct, args)
+    except feedback_inbox.RelayError as e:
+        raise Problem(e.code, e.message, e.reason)
+    with LOCK:
+        _stats.clear()
+    _forget(acct['token'])   # the new wizard-os item shows on the next list load
+    return out
+
+
 JAMES_RULE = {'approve': 'Only James or Miguel can approve core features.', 'show': 'Only James approves show-and-tell.'}
 
 
@@ -4094,6 +4120,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, repos(self.person()))
             if path == '/api/boxes':
                 return self.send(200, boxes(self.person()))
+            if path == '/api/feedback/pending':
+                return self.send(200, feedback_pending(self.person(), q))
             if path == '/api/avatar':
                 data, kind = avatar(self.person())
                 return self.send(200, data, kind)
@@ -4146,6 +4174,7 @@ class Handler(BaseHTTPRequestHandler):
                 '/api/test/fails': lambda: tested(who, body, False),
                 '/api/goal/status': lambda: goal_status_set(who, body),
                 '/api/james': lambda: james_decide(who, body),
+                '/api/feedback/review': lambda: feedback_review(who, body),
                 '/api/show': lambda: show_and_tell(who, body),
                 '/api/onbox': lambda: on_box(who, body),
                 '/api/builder': lambda: builder_set(who, body),
