@@ -1771,20 +1771,33 @@ function roles(i) {
   if (i.category === 'bug' || i.kind === 'bug') { r.textContent = `Reported by ${who} · merged and shipping as soon as it’s built · then an AI check by their agent and ${who}’s own check · Doesn’t work reopens it`; return; }
   r.textContent = `Filed by ${who} · AI review by their agent · ${who} tries it` + (i.category === 'core' ? ' · James or Miguel approves before building, James after a show-and-tell' : '') + ' · then Shipping until it’s in a release for everyone';
 }
-// 0.26: a shipped bug's check, in the detail: what the builder said, where to look, Before / After screenshots
+// 0.26.1 (Miguel, 11 Nov): Check it opens a short check card, not the GitHub thread: what changed and how to check
+// it in plain words (the builder's hand-back), Before / After, then Open <app> · Works · Doesn't work. The issue text,
+// comments and timeline stay one tap away under 'Show the full history'.
 function bugCheckLines(i) {
-  const p = el('d-steps'), at = i.check_at, shots = i.shots || [];
+  const p = el('d-steps'), at = i.check_at, shots = i.shots || [], fx = i.fix || {};
+  const part = (h, t) => { const d = make('div', 'bd-chk-part'); d.append(make('h3', 'bd-chk-h', h), make('p', 'bd-chk-t', cap(t))); return d; };
   const bits = [];
-  if (i.check) bits.push(make('span', '', i.check));
-  if (at && at.text) bits.push(make('span', 'bd-check-at', 'Where to look: ' + at.text));
+  if (fx.changed) bits.push(part('What changed', fx.changed));
+  const how = fx.how || (at && at.text) || '';
+  bits.push(part('How to check', how || 'Open the app where it was broken and do what the report describes; it should work now.'));
   if (shots.length) {
-    const s = make('span', 'bd-shots');
-    for (const x of shots) { const a = link('bd-shot', x.url); a.textContent = x.kind === 'before' ? 'Before' : 'After'; s.append(a); }
-    bits.push(s);
+    const s_ = make('div', 'bd-shots');
+    for (const x of shots) {
+      const a = link('bd-shot wz-button secondary', x.url); a.textContent = (x.kind === 'before' ? 'Before' : 'After') + ' screenshot ↗'; s_.append(a);
+    }
+    bits.push(s_);
   }
-  p.hidden = !bits.length;
+  p.hidden = false;
+  p.classList.add('bd-chkcard');
   p.replaceChildren(...bits);
+  checkMode(true);
 }
+function checkMode(on) {
+  el('detail').classList.toggle('bd-checkmode', on);
+  el('d-more').hidden = !on;
+}
+el('d-more').addEventListener('click', () => checkMode(false));
 function openDetail(i, toAct) {
   const dlg = el('detail');
   openId = i.id; openItem = i;
@@ -1800,7 +1813,8 @@ function openDetail(i, toAct) {
   releaseLine(i);
   el('d-steps').hidden = !(inReview && (i.steps || i.check));
   if (inReview) el('d-steps').textContent = i.steps ? 'To test: ' + cap(i.steps) : i.check || '';
-  if (i.kind === 'bug' && i.shipped) bugCheckLines(i);
+  el('d-steps').classList.remove('bd-chkcard'); checkMode(false);
+  if (i.kind === 'bug' && i.shipped && i.can_review && i.state_reason !== 'not_planned') bugCheckLines(i);
   detailSwitch(i);
   detailGoal(i, null);
   detailAct(i);
@@ -1947,7 +1961,8 @@ function detailAct(i) {
   a.hidden = false;
   const [text] = whereLine(i);
   const wh = waitHead(i);
-  a.replaceChildren(make('h3', 'bd-sec-h bd-d-h', wh ? wh.textContent : (text || 'Next')), area);
+  const chk = i.kind === 'bug' && i.shipped;
+  a.replaceChildren(make('h3', 'bd-sec-h bd-d-h', chk ? 'Does it work now?' : wh ? wh.textContent : (text || 'Next')), area);
 }
 
 // ---------- one item's own assembly line (its label timeline, fetched on tap, cached briefly) ----------
@@ -2307,7 +2322,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.26.0';
+const PAGE_VERSION = '0.26.1';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2352,7 +2367,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.26.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.26.1' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

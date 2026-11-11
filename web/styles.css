@@ -912,3 +912,13 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 .bd-d-steps .bd-check-at, .bd-d-steps .bd-shots { display: block; margin-top: 6px; }
 .bd-shots { display: flex; gap: 12px; }
 .bd-shot { font-weight: 600; color: var(--accent); }
+
+/* 0.26.1: Check it = a short check card; the GitHub thread hides behind 'Show the full history' */
+.bd-checkmode #d-labels, .bd-checkmode #d-roles, .bd-checkmode #d-flow, .bd-checkmode #d-body,
+.bd-checkmode #d-comments-h, .bd-checkmode #d-comments { display: none; }
+.bd-d-steps.bd-chkcard { display: grid; gap: var(--wz-space-3); color: var(--ink); }
+.bd-chk-h { margin: 0 0 2px; font-size: var(--wz-text-sm); font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-3); }
+.bd-chk-t { margin: 0; font-size: var(--wz-text-md, var(--wz-text-sm)); line-height: 1.5; color: var(--ink); }
+.bd-shots { display: flex; gap: var(--wz-space-3); flex-wrap: wrap; }
+.bd-shot { text-decoration: none; }
+.bd-d-more { margin: var(--wz-space-3) 0 0; padding: 0; border: 0; background: none; font: inherit; font-size: var(--wz-text-sm); color: var(--accent); cursor: pointer; }

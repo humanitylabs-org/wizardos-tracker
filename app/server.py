@@ -33,7 +33,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.26.0'
+VERSION = '0.26.1'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1347,6 +1347,7 @@ def _card(node, tab):
         out['check_from'] = 'builder' if said else ''
         out['switch'], out['switch_how'] = switch_info([c.get('body') for c in said], node.get('body'))
         out['check_at'], out['shots'] = bug_check_info([c.get('body') for c in said])   # 0.26: bugs' optional check
+        out['fix'] = bug_handover([c.get('body') for c in said])   # 0.26.1: what changed / how to check, plain words
         # 0.24.5: an app switch named the catalog way ('Switch: <app>:<id>') counts from any comment (the owner's agent
         # links an existing app switch to its issue); the newest such line wins over the builder's words.
         if not out['switch']:
@@ -3299,6 +3300,47 @@ def on_team(login, base=None):
 CHECK_AT = re.compile(r'^[\s>*_`-]*Check(?: it)?\s*:\s*[*_`]*\s*(.+?)\s*$', re.I | re.M)
 SHOT_MD = re.compile(r'!?\[([^\]]*)\]\((https://[^)\s]+)\)')
 SHOT_LINE = re.compile(r'^[\s>*_`-]*(Before|After)\s*[*_`]*\s*:\s*[*_`]*\s*(?:!?\[[^\]]*\]\()?(https://[^)\s]+)', re.I | re.M)
+
+
+_HAND_SECTION = re.compile(r'(?im)^[\s>*_#-]*(what changed|what to check|how to check|to check|what is left|left|merged|switch|not checked by me|check)\b[^:\n]*:[*_\s]*')
+
+
+def _hand_sections(body):
+    """'What changed: …' / 'What to check: …' paragraphs of a builder hand-back -> {key: text}."""
+    out, marks = {}, list(_HAND_SECTION.finditer(body or ''))
+    for n, m in enumerate(marks):
+        end = marks[n + 1].start() if n + 1 < len(marks) else len(body)
+        out.setdefault(m.group(1).lower(), body[m.end():end].strip())
+    # 'For the person who filed this: @x. What to check: …' on one line
+    for m in re.finditer(r'(?i)what to check\s*:\s*(.+)', body or ''):
+        out.setdefault('what to check', m.group(1).strip())
+    return out
+
+
+def _say(t, limit):
+    """Plain words for a person: no markdown, links, code marks, @mentions or 'For the person who filed this'."""
+    t = re.sub(r'(?i)for the person (who filed|checking)[^:]*:\s*(@[A-Za-z0-9-]+[,.:]?\s*)?', '', t or '')
+    t = re.sub(r'(?i)^\s*(@[A-Za-z0-9-]+[,.:]\s*)+', '', t)
+    t = re.sub(r'!?\[([^\]]*)\]\([^)]*\)', r'\1', t)
+    t = re.sub(r'https?://\S+', '', t)
+    t = re.sub(r'(?m)^\s*(\d+[.)]|[-*+])\s+', '', t)
+    t = re.sub(r'`+|\*{1,3}|(?<![A-Za-z0-9])_{1,2}|_{1,2}(?![A-Za-z0-9])', '', t)
+    t = re.sub(r'\s+', ' ', t).strip(' .')
+    if len(t) > limit:
+        t = t[:limit].rsplit('. ', 1)[0] if '. ' in t[:limit] else t[:limit - 1].rsplit(' ', 1)[0] + '…'
+    return t + ('.' if t and t[-1] not in '.…!?' else '')
+
+
+def bug_handover(bodies):
+    """0.26.1 (Miguel, 11 Nov): the two things a person needs to check a shipped bug, in plain words, from the
+    builder's newest hand-back: what changed, and how to check it. {} when there is no hand-back."""
+    for body in reversed([b for b in bodies or [] if b]):
+        sec = _hand_sections(body)
+        changed, how = sec.get('what changed'), sec.get('what to check') or sec.get('how to check') or sec.get('to check')
+        if changed or how:
+            first = re.split(r'(?<=[.!?])\s+', _say(changed or '', 600))
+            return {'changed': ' '.join(first[:2])[:320], 'how': _say(how or '', 520)}
+    return {}
 
 
 def bug_check_info(bodies):
