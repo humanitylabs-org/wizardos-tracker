@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.28.1
+version: 0.28.2
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -152,3 +152,5 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.28.0** (Miguel, 11 Nov) **Needs an answer**: a new stage on Core features, App features and Bugs for every open item labelled `builder:blocked` (the builder asked a question and paused), wherever it was (queued, building or sorting). It has its own box in the stage strip right after Building and its own section, next to Human review, because it is a person's turn. Each card leads with "Waiting on <name> to answer the builder": whoever the builder @-mentioned in its question, by team name (@jdefleur and @defleur-agents are James, @mistermizel is Miguel, @oscarhenrycollins is Oscar, @JanMesaric is Jan, @hacalastudio is Robert; several are joined with 'or'), else the person who filed it. Under the title, the builder's question in one or two plain sentences (`question` on the card, from `builder_question()`: the sentences with a '?', else the paragraph after 'Question'; no markdown, links or commit ids; `asked` lists the names). **Answer** opens the detail with the builder's whole comment, plus Open on GitHub; any team member's reply takes `builder:blocked` off within 10 minutes on the builder host, so there is no new write. Waiting on me first lifts the questions that name you. Blocked items no longer sit in Queued waiting on the filer (0.25.1).
 
 **0.28.1** (Miguel, 11 Nov) **Pending approval: approve as the other kind, decline with a reason.** Each card has three actions: **Approve as bug** / **Approve as idea** (the one matching what the sender chose is the primary button; the other reads 'Approve as idea instead'), and **Decline**. Approving as the other kind files it with that kind's label (an idea sent as a bug goes to the feature approval queue, never straight to the builder as a bug), and the copy's first line adds ' · changed from bug to idea by @you'; the sender's Feedback app shows the new kind. Decline opens a small sheet in place with an optional **Reason (the sender sees this)** (up to 500 characters); the sender reads it in Feedback as 'From the team'. Same as before: the tap dims the card at once, it leaves the list, a toast says what happened. Reason boxes in pop-ups stay open while the phone keyboard is up.
+
+**0.28.2** (11 Nov) Pending approval: the approve button matching what the sender chose is filled (the primary action), 'Approve as … instead' stays outlined, and Decline is quiet, so the three read in order at a glance.

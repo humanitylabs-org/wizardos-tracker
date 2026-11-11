@@ -104,6 +104,12 @@ class Page(unittest.TestCase):
     def test_reason_box_survives_keyboard(self):
         self.assertIn("/^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName)", APP)
 
+    def test_primary_secondary_quiet(self):
+        css = (ROOT / 'web' / 'feedback-stage.css').read_text()
+        self.assertIn('.bd-fbact .bd-fbyes:not(:disabled) { background: var(--accent)', css)
+        self.assertIn('.bd-fbact .bd-fbno:not(:disabled) { border-color: var(--line-2)', css)
+        self.assertNotIn('bd-fbswap:not(:disabled) { background', css)
+
     def test_js_parses(self):
         for f in ('feedback-stage.js', 'app.js'):
             r = subprocess.run(['node', '--check', str(ROOT / 'web' / f)], capture_output=True, text=True)
