@@ -15,7 +15,7 @@ Don't file Tracker changes through the Tracker's Report or request and wait: tha
 
    ```
    Reuse:
-   App kit: REUSE `WizardApp`
+   - App kit: REUSE `WizardApp`
    ```
 
    Merge it once CI is green. The Publish workflow puts the new version in the App Store.
