@@ -87,6 +87,7 @@ const SORT_FN = {
 // a goal they own that needs a status update (none yet or old; the server's `turn`).
 function myTurn(i) {
   if (!i || i.closed_at || i.state === 'closed') return false;
+  if (i.kind === 'bug' && i.shipped) return false;   // 0.26: a bug's check never waits on anyone
   if (i.group === 'test') return !!i.can_review;
   if (i.group === 'james' || i.group === 'show') return !!i.can_james;
   if (i.group === 'goals' || i.category === 'goal') return !!i.turn;
@@ -394,6 +395,7 @@ function render(d) {
   const closed = dc.items ? dc.items.filter(keep) : null;
   groups.shipping = [...groups.shipping, ...(closed || []).filter(i => i.group === 'shipping')];
   groups.done = closed ? closed.filter(i => i.group === 'done') : null;
+  if (d.view === 'bugs') bucketBugs(groups, dc);
   const st = d.stats || {}, hist = (st.items || []).filter(keep);
   const doneN = st.pending || st.error ? null : hist.filter(i => i.state === 'closed').length;
   const bins = binsOf(d.view);
@@ -434,6 +436,24 @@ function render(d) {
   if (only === 'done' && !groups.done) { el('empty').hidden = false; el('empty').textContent = dc.error || 'Loading…'; return; }
   el('empty').textContent = only ? `Nothing in ${(bin || {}).word || ''} here${whoSet.size || chosen.size ? ' with this filter' : ''}.`
     : whoSet.size || chosen.size ? 'Nothing here with this filter.' : EMPTY[d.view];
+}
+// 0.26: a shipped bug's stage from the release lookup (api/done): Merged (waiting) -> For testers -> For everyone.
+function relStage(i) {
+  const s = i.ship;
+  if (!s) return 'relwait';
+  if (s.state === 'done' || s.wait === 'done') return 'done';
+  return s.wait === 'testers' ? 'testers' : 'relwait';
+}
+function bucketBugs(groups, dc) {
+  const open = [...(groups.airev || []), ...(groups.test || []), ...(groups.shipping || [])];
+  const out = { relwait: [], testers: [], done: [] };
+  for (const i of open) {
+    if (!i.ship && dc.open_ship && dc.open_ship[i.id]) i.ship = dc.open_ship[i.id];
+    out[relStage(i)].push(i);
+  }
+  groups.airev = []; groups.test = []; groups.shipping = [];
+  groups.relwait = out.relwait; groups.testers = out.testers;
+  groups.done = groups.done ? [...out.done, ...groups.done] : out.done.length ? out.done : null;
 }
 // 0.17: 'Filtered: Jan · wizard-ux ×' only when a filter is set; × clears it.
 function filteredLine(whoSet, chosen, people, repos) {
@@ -640,6 +660,9 @@ const STAGE_INFO = {
   queued: 'Queued. Each card says why it waits: Next for the builder (it picks it up on its next run), or Oscar builds this one (the builder skips the Tracker and Builder repos).',
   shipped: 'Fixed and merged switched on: in For testers within minutes, then For everyone with the next release. Shipping never waits on a human. The filer’s agent runs a quick AI check meanwhile. Doesn’t work, at any point, sends it back to Building.',
   humancheck: 'A quick sanity check by whoever filed it. It never holds up shipping. They can do it any time after Shipped, even while it is still in For testers: Works, or Doesn’t work (back to Building).',
+  relwait: 'The fix is merged and switched on, waiting for the next release. Anyone on the team may check it any time: Works tags it Checked, Doesn’t work sends it back to Building.',
+  testers: 'The fix is in the For testers release. Checking it is optional and never holds it up: tap Check it, look, then Works (tags it Checked by you) or Doesn’t work (back to Building, kept out of Stable).',
+  everyone: 'The fix reached everyone: the Stable WizardOS release, or the app’s Store release. A Checked tag says who looked at it and when.',
   checked: 'Whoever filed it said Works, or 7 days passed with no Doesn’t work: Checked (no problems in 7 days). Each card also says which release has it.',
   james: 'James or Miguel approves before the builder starts. Core features change WizardOS for everyone. James or Miguel: Approve or Decline on the card.',
   building: 'The WizardOS Builder writes the change (a feature arrives behind a switch, off by default).',
@@ -658,15 +681,17 @@ function binsOf(v) {
     { key: 'show', word: 'Show-and-tell', groups: ['show'] }, ...end];
   // 0.20 (Miguel): shipping never waits on humans. Shipped = merged, on its way (AI check running); Human check = the filer's
   // sanity check, any time after Shipped; Checked = they said Works, or 7 days with no Doesn't work. Release is shown apart.
+  // 0.26 (Miguel, 11 Nov): a bug's stages are where its fix is in the release cycle. Nothing after the merge waits on
+  // anyone: the human check is optional (any time, by anyone on the team) and shows as a 'Checked by' tag.
   if (v === 'bugs') return [{ key: 'queued', word: 'Queued', groups: ['sorting', 'queued'] }, { key: 'building', word: 'Building', groups: ['building'] },
-    { key: 'shipped', word: 'Shipped', groups: ['airev'], tip: 'Merged and on its way to everyone. Never waits on a human.' },
-    { key: 'test', word: 'Human check', groups: ['test'], info: 'humancheck', tip: HUMAN_CHECK_TIP },
-    { key: 'done', word: 'Checked', groups: ['shipping', 'done'], info: 'checked', tip: 'Whoever filed it said Works, or 7 days passed with no Doesn’t work' }];
+    { key: 'relwait', word: 'Merged', groups: ['relwait'], info: 'relwait', tip: 'Merged, waiting for the next release' },
+    { key: 'testers', word: 'For testers', groups: ['testers'], info: 'testers', tip: 'In the For testers release' },
+    { key: 'done', word: 'For everyone', groups: ['done'], info: 'everyone', tip: 'In the release for everyone (Stable), or the app’s Store release' }];
   return [{ key: 'queued', word: 'Queued', groups: ['sorting', 'queued'] }, { key: 'building', word: 'Building', groups: ['building'] }, ...tail, ...end];
 }
 function sectionsOf(v) {
-  if (v === 'bugs') return [['test', 'Human check'], ['airev', 'Shipped · AI check'], ['building', 'Building'], ['queued', 'Queued'], ['sorting', 'Sorting…'],
-    ['shipping', 'Checked'], ['done', 'Checked · in a release for everyone']];
+  if (v === 'bugs') return [['testers', 'In For testers'], ['relwait', 'Merged · waiting for a release'], ['building', 'Building'], ['queued', 'Queued'],
+    ['sorting', 'Sorting…'], ['done', 'In the release for everyone']];
   return [['test', 'Human review'], ['show', 'Show-and-tell'], ['james', 'Waiting for approval'], ['airev', 'AI review'],
     ['building', 'Building'], ['queued', v === 'core' ? 'Approved · waiting for the builder' : 'Queued'], ['sorting', 'Sorting…'], ['shipping', 'Shipping'], ['done', 'Done']]
     .filter(([g]) => v === 'core' || !['show', 'james'].includes(g));
@@ -1296,11 +1321,9 @@ function shippedText(t) {
 function bugLine(i) {
   const g = i.group;
   const rel = g === 'shipping' || g === 'done' ? (i.ship ? i.ship.text : '') : ((onboxOf(i) || {}).release || {}).text;
-  const ship = shippedText(rel);
-  if (g === 'test') return [ship, ''];   // 0.25.1: who it waits on is the card's headline (waitHead)
-  if (g === 'airev') return [ship + ' · then ' + (i.opener || 'the filer') + ' checks it', ''];
-  const ck = i.checked ? i.checked.text : 'Checked';
-  return [ship + ' · ' + ck, g === 'done' ? 'done' : ''];
+  // 0.26: where the fix is; a human check shows as its own tag (checkTag)
+  const r = i.ship ? i.ship.text : rel;
+  return [r ? shippedText(r) : 'Merged · checking releases…', g === 'done' ? 'done' : ''];
 }
 function whereLine(i) {
   const g = i.group;
@@ -1337,6 +1360,15 @@ function waitHead(i) {
   p.append(make('span', 'bd-waiton-x', ' ' + (stuck ? 'to answer the builder' : WAIT_WHAT[g])));
   return p;
 }
+// 0.26: 'Checked by Miguel · 11 Nov': a person looked at this shipped bug and said Works
+function checkTag(i) {
+  const c = i.kind === 'bug' && i.checked;
+  if (!c || !c.by) return null;
+  const d = c.at ? new Date(c.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '';
+  const t = make('p', 'bd-checked', '✓ Checked by ' + c.by + (d ? ' · ' + d : ''));
+  t.title = 'A person checked this fix and said it works';
+  return t;
+}
 function itemCard(i) {
   const c = make('article', 'bd-card bd-card-calm bd-icard');
   const wh = waitHead(i);
@@ -1346,7 +1378,9 @@ function itemCard(i) {
   top.append(h); c.append(top);
   const [text, cls] = whereLine(i);
   if (text) c.append(make('p', 'bd-where' + (cls ? ' ' + cls : ''), text));
-  const rel = i.kind === 'bug' && /^Shipped/.test(text) ? '' : releaseOf(i);   // 0.20: a bug's line already names it
+  const tag = checkTag(i);
+  if (tag) c.append(tag);
+  const rel = i.kind === 'bug' && i.shipped ? '' : releaseOf(i);   // 0.20: a bug's line already names it
   if (rel && rel !== (i.ship && i.ship.text)) c.append(make('p', 'bd-hint bd-rel', rel));   // Shipping/Done say it above
   const act = actionArea(i);
   if (act) c.append(act);
@@ -1444,10 +1478,16 @@ function verdictBtns(i, area, wait) {
 // The one action area: exactly what is needed now, greyed with the reason for anyone else.
 function actionArea(i, inDetail) {
   const g = i.group, row = make('div', 'bd-act');
-  // 0.19: a shipped bug (AI check running, or closed and on its way to everyone): the filer can still say Doesn't work
-  if (i.kind === 'bug' && i.can_fail && (g === 'airev' || (g === 'shipping' && i.closed_at))) {
-    const no = smallBtn('Doesn’t work', b => doesntWork(row, i, b));
-    row.append(make('span', 'bd-act-l', 'Still broken?'), no);
+  // 0.26 (Miguel, 11 Nov): a shipped bug: an optional, one-tap check by anyone on the team. The card has Check it
+  // (opens the detail: what changed, where to look, Before / After); the detail has Open <app>, Works, Doesn't work.
+  if (i.kind === 'bug' && i.shipped && i.state_reason !== 'not_planned') {
+    if (!i.can_review) return null;
+    if (!inDetail) { row.append(smallBtn('Check it', () => openDetail(i, true))); return row; }
+    const at = i.check_at || {}, app = (at.app && appsById().get(at.app)) || appForRepo(i.repo);
+    if (app && app.id !== 'wizardos-tracker') row.append(smallBtn(`Open ${app.name}`, b => openApp(app.id, app.name, b, i)));
+    const yes = smallBtn('Works', b => askPop(b, 'Tag it Checked by you? It stays on its release path.', 'Works', () => tested(i, true, '', b)));
+    yes.classList.add('bd-mini-go');
+    row.append(yes, smallBtn('Doesn’t work', b => doesntWork(row, i, b)));
     return row;
   }
   if (g === 'test') {
@@ -1559,7 +1599,7 @@ function afterAct(i, msg) {
 async function tested(i, works, note, b, screenshots) {
   try {
     const r = await api(works ? 'api/test/works' : 'api/test/fails', { repo: i.repo, number: i.number, note, screenshots });
-    afterAct(i, (works ? (r.stage === 'show' ? 'Thanks — on to James’ show-and-tell.' : 'Thanks — it’s shipping.') : r.reopened ? 'Reopened: back to the builder.' : 'Sent back to the builder.') + (r.warning ? ' ' + r.warning : ''));
+    afterAct(i, (works ? (r.stage === 'show' ? 'Thanks — on to James’ show-and-tell.' : i.kind === 'bug' ? 'Thanks — tagged Checked by you.' : 'Thanks — it’s shipping.') : r.reopened ? 'Reopened: back to the builder.' : 'Sent back to the builder.') + (r.warning ? ' ' + r.warning : ''));
     return true;
   } catch (err) { pop(b, '', err.message); return false; }
 }
@@ -1731,6 +1771,20 @@ function roles(i) {
   if (i.category === 'bug' || i.kind === 'bug') { r.textContent = `Reported by ${who} · merged and shipping as soon as it’s built · then an AI check by their agent and ${who}’s own check · Doesn’t work reopens it`; return; }
   r.textContent = `Filed by ${who} · AI review by their agent · ${who} tries it` + (i.category === 'core' ? ' · James or Miguel approves before building, James after a show-and-tell' : '') + ' · then Shipping until it’s in a release for everyone';
 }
+// 0.26: a shipped bug's check, in the detail: what the builder said, where to look, Before / After screenshots
+function bugCheckLines(i) {
+  const p = el('d-steps'), at = i.check_at, shots = i.shots || [];
+  const bits = [];
+  if (i.check) bits.push(make('span', '', i.check));
+  if (at && at.text) bits.push(make('span', 'bd-check-at', 'Where to look: ' + at.text));
+  if (shots.length) {
+    const s = make('span', 'bd-shots');
+    for (const x of shots) { const a = link('bd-shot', x.url); a.textContent = x.kind === 'before' ? 'Before' : 'After'; s.append(a); }
+    bits.push(s);
+  }
+  p.hidden = !bits.length;
+  p.replaceChildren(...bits);
+}
 function openDetail(i, toAct) {
   const dlg = el('detail');
   openId = i.id; openItem = i;
@@ -1746,6 +1800,7 @@ function openDetail(i, toAct) {
   releaseLine(i);
   el('d-steps').hidden = !(inReview && (i.steps || i.check));
   if (inReview) el('d-steps').textContent = i.steps ? 'To test: ' + cap(i.steps) : i.check || '';
+  if (i.kind === 'bug' && i.shipped) bugCheckLines(i);
   detailSwitch(i);
   detailGoal(i, null);
   detailAct(i);
@@ -1984,6 +2039,7 @@ function vcmp(a, b) {
   if (pre(a) !== pre(b)) return pre(a) ? -1 : 1;
   return String(a).localeCompare(String(b), undefined, { numeric: true });
 }
+const appsById = () => new Map(((catalog && catalog.apps) || []).map(a => [a.id, a]));
 const appsByName = () => new Map(((catalog && catalog.apps) || []).map(a => [a.name.toLowerCase(), a]));
 function appForRepo(repo) {
   const r = String(repo || '').toLowerCase();
@@ -2251,7 +2307,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.25.2';
+const PAGE_VERSION = '0.26.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2296,7 +2352,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.25.2' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.26.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

@@ -33,7 +33,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.25.2'
+VERSION = '0.26.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1346,6 +1346,7 @@ def _card(node, tab):
         out['check'] = re.sub(r'^(ready (to|for) test(ing)?)[.:!\s—-]*', '', _plain(said[-1]['body'], 320), flags=re.I) if said else ''
         out['check_from'] = 'builder' if said else ''
         out['switch'], out['switch_how'] = switch_info([c.get('body') for c in said], node.get('body'))
+        out['check_at'], out['shots'] = bug_check_info([c.get('body') for c in said])   # 0.26: bugs' optional check
         # 0.24.5: an app switch named the catalog way ('Switch: <app>:<id>') counts from any comment (the owner's agent
         # links an existing app switch to its issue); the newest such line wins over the builder's words.
         if not out['switch']:
@@ -2031,6 +2032,8 @@ def waiting_on(card, base=None):
     -> {'who': [names], 'kind': person | agent | builder | release, 'stuck': bool}."""
     base = base or policy_base()
     g, who_kind = card.get('group'), 'person'
+    if card.get('category') == 'bug' and g in ('test', 'airev', 'shipping'):
+        return {'who': [], 'kind': 'release', 'stuck': False}   # 0.26: shipped; the check is optional
     if g == 'test':
         opener = card.get('opener') or ''
         on_team = any(t['name'].lower() == opener.lower() for t in base['team'])
@@ -2218,6 +2221,12 @@ def board_split(person, args):
             extra['can_fail'] = human_rule('bug', author, [], login, base)[0]
         if group == 'test':
             extra['agent_filed'] = filed_by_agent(author, base)
+        if cat == 'bug' and group in ('airev', 'test', 'shipping'):
+            # 0.26 (Miguel, 11 Nov): a shipped bug waits on nobody. Its stage is where it is in the release cycle; anyone
+            # on the team may check it (Works tags it 'Checked by'; Doesn't work sends it back to Building).
+            team = on_team(login, base)
+            extra.update(shipped=True, can_review=team, can_fail=team, turn=False, checked=checked_of(n, base),
+                         review_rule='' if team else 'Only the WizardOS team checks bugs.')
         card.update(group=group, category=cat, kind='bug' if cat == 'bug' else 'feature', mine=same_person(author, login, base),
                     can_close=same_person(author, login, base), opener=person_of(author, base), created_at=n.get('createdAt'),
                     labels=names, blocked=any(str(l).lower().startswith('builder:blocked') for l in names), **extra)
@@ -2475,7 +2484,7 @@ def done_list(person, args):
     nodes = [n for n in nodes if counts_since('closed', n.get('closedAt'), ts) and view_keeps(view, n['repository']['nameWithOwner'], base)]
     opened = []
     if view != 'goals':
-        opened, _ = _view_search(acct['token'], view, f'org:{org} is:issue is:open {VIEW_Q[view]} label:approved,switch-default sort:updated-desc', heavy=True, limit=60)
+        opened, _ = _view_search(acct['token'], view, f'org:{org} is:issue is:open {VIEW_Q[view]} label:approved,switch-default{',ai-review,ready-to-test' if view == 'bugs' else ''} sort:updated-desc', heavy=True, limit=80)
         opened = [n for n in opened if view_keeps(view, n['repository']['nameWithOwner'], base)]
     token, login = acct['token'], acct.get('login') or ''
 
@@ -2503,8 +2512,9 @@ def done_list(person, args):
                     state_reason=(n.get('stateReason') or '').lower() or None, labels=labels)
         if cat == 'bug':
             card['checked'] = checked_of(n, base)   # 0.20: Checked by <person> / (no problems in 7 days)
-        if cat == 'bug' and card['group'] == 'shipping' and card['state_reason'] != 'not_planned':
-            card['can_fail'] = human_rule('bug', author, [], login, base)[0]   # 0.19: Doesn't work reopens it
+        if cat == 'bug' and card['state_reason'] != 'not_planned':
+            card['can_fail'] = card['can_review'] = on_team(login, base)   # 0.26: anyone on the team checks a bug
+            card['shipped'] = True
         items.append(card)
     items.sort(key=lambda i: i.get('closed_at') or '', reverse=True)
     repos_wanted = _repo_list(args.get('repos'))
@@ -3280,6 +3290,44 @@ def _close(acct, full, number, reason='completed'):
 WORKS_BY = re.compile(r"^\s*Tested:\s*works\b.*?@([A-Za-z0-9-]+)", re.I | re.S)
 
 
+def on_team(login, base=None):
+    """0.26: is this login a WizardOS team member (or one of their agents)?"""
+    who = person_of(login, base).lower()
+    return bool(login) and any(t['name'].lower() == who for t in (base or policy_base())['team'])
+
+
+CHECK_AT = re.compile(r'^[\s>*_`-]*Check(?: it)?\s*:\s*[*_`]*\s*(.+?)\s*$', re.I | re.M)
+SHOT_MD = re.compile(r'!?\[([^\]]*)\]\((https://[^)\s]+)\)')
+SHOT_LINE = re.compile(r'^[\s>*_`-]*(Before|After)\s*[*_`]*\s*:\s*[*_`]*\s*(?:!?\[[^\]]*\]\()?(https://[^)\s]+)', re.I | re.M)
+
+
+def bug_check_info(bodies):
+    """0.26 (Miguel, 11 Nov): what the builder handed over for a bug's optional check, from its comments (newest wins):
+    a `Check: <app-id> <where>` line (where to look) and Before / After screenshot links."""
+    at, shots = None, {}
+    for body in bodies or []:
+        body = body or ''
+        m = None
+        for m in CHECK_AT.finditer(body):
+            pass
+        if m:
+            words = re.sub(r'[`*]+', '', m.group(1)).strip()
+            first = words.split(' ', 1)[0].lower()
+            rest = words.split(' ', 1)[1] if ' ' in words else ''
+            # the page knows which apps are installed: it opens `app` when it is one, else shows the words
+            at = {'app': first if APP_ID_RE.match(first) else None, 'where': rest[:200], 'text': words[:240]}
+        found = {}
+        for k, u in SHOT_LINE.findall(body):
+            found[k.lower()] = u
+        for alt, u in SHOT_MD.findall(body):
+            for k in ('before', 'after'):
+                if k in alt.lower() and k not in found:
+                    found[k] = u
+        if found:
+            shots = found
+    return at, [{'kind': k, 'url': shots[k]} for k in ('before', 'after') if k in shots]
+
+
 def checked_of(node, base=None):
     """0.20 (Miguel): a bug's Human check, apart from its release. 'Checked by Miguel': the newest `Tested: works — @login`
     comment (a person's agent counts as the person), else whoever closed it as fixed. Closed by the builder's 7-day sweep
@@ -3288,13 +3336,13 @@ def checked_of(node, base=None):
     for c in reversed(((node.get('comments') or {}).get('nodes')) or []):
         m = WORKS_BY.match((c or {}).get('body') or '')
         if m:
-            return {'by': person_of(m.group(1), base), 'text': 'Checked by ' + person_of(m.group(1), base)}
+            return {'by': person_of(m.group(1), base), 'text': 'Checked by ' + person_of(m.group(1), base), 'at': c.get('createdAt')}
     if not node.get('closedAt') or (node.get('stateReason') or '').lower() == 'not_planned':
         return None
     closer = next((((e or {}).get('actor') or {}).get('login') for e in reversed(((node.get('closer') or {}).get('nodes')) or []) if e), None)
     bots = {x.lower() for x in base['builder']['logins']} | {BUILDER.lower()}
     if closer and closer.lower() not in bots:
-        return {'by': person_of(closer, base), 'text': 'Checked by ' + person_of(closer, base)}
+        return {'by': person_of(closer, base), 'text': 'Checked by ' + person_of(closer, base), 'at': node.get('closedAt')}
     swept = any(((c or {}).get('author') or {}).get('login', '').lower() in bots and '7 days' in ((c or {}).get('body') or '')
                 for c in ((node.get('comments') or {}).get('nodes')) or [])
     if swept or not closer:
@@ -3330,13 +3378,19 @@ def tested(person, args, works):
     cat = category(full, names, base)
     closed = (cur.get('state') or 'open') == 'closed'
     late = cat == 'bug' and not works and (closed or AI_LABEL in names) and HUMAN_LABEL not in names
-    if HUMAN_LABEL not in names and not late:
+    if cat == 'bug':   # 0.26 (Miguel, 11 Nov): an optional check by anyone on the team, any time after the merge
+        if not on_team(login, base):
+            raise Problem(403, 'Only the WizardOS team checks bugs.', 'not_team')
+        if closed and (cur.get('state_reason') or '').lower() == 'not_planned':
+            raise Problem(409, 'This was closed as not planned. File a new bug if it is still broken.')
+        late = not works
+    elif HUMAN_LABEL not in names and not late:
         if AI_LABEL in names:
             raise Problem(409, 'This is still in AI review: the agent checks it first, then it comes to you.', 'ai_review')
         raise Problem(409, 'This is not waiting for a test any more. Refresh to see the latest.')
     if cat == 'goal':
         raise Problem(409, 'Goals are human-led: they get status updates, not Works / Doesn\u2019t work.', 'goal')
-    ok, rule = human_rule('bug', opener, [], login, base)
+    ok, rule = (True, '') if cat == 'bug' else human_rule('bug', opener, [], login, base)
     if not ok:
         raise Problem(403, rule, 'not_filer')
     if late and closed and (cur.get('state_reason') or '').lower() == 'not_planned':
@@ -3359,8 +3413,10 @@ def tested(person, args, works):
     if works:   # add the next label first, then drop ready-to-test, so the timeline never reads as a kick-back
         nxt = SHOW_LABEL if cat == 'core' else APPROVED_LABEL
         _add_label(acct, full, number, nxt)
-        _drop_label(acct, full, number, HUMAN_LABEL)
-        if nxt == APPROVED_LABEL:
+        for lab in (HUMAN_LABEL, AI_LABEL) if cat == 'bug' else (HUMAN_LABEL,):
+            if lab in names:
+                _drop_label(acct, full, number, lab)
+        if nxt == APPROVED_LABEL and not closed:
             _close(acct, full, number)
     else:
         if closed:   # 0.19: Doesn't work on a shipped bug reopens it to Building
