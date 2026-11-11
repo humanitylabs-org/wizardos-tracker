@@ -61,7 +61,7 @@ class BugFlow(unittest.TestCase):
         self.assertEqual(f.issue['state'], 'open')
         self.assertEqual(f.issue['labels'], {'bug', 'building'})
         self.assertTrue(out['reopened'])
-        self.assertTrue(f.calls[0][2]['body'].startswith("Tested: doesn't work"))
+        self.assertTrue(f.calls[0][2]['body'].startswith("Tested: still broken"))
 
     def test_doesnt_work_during_ai_check(self):
         f = self.use(labels={'bug', 'ai-review'})

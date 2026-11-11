@@ -67,9 +67,12 @@ class PopupBar(unittest.TestCase):
 class NoteRequired(unittest.TestCase):
     def test_every_doesnt_work_uses_the_required_note(self):
         self.assertNotIn("What went wrong? (optional)", JS)
-        self.assertEqual(len(re.findall(r"smallBtn\('Doesn’t work', b => doesntWork\(", JS)), 2)
+        # 0.30 (Robert): Needs changes (features) / Still broken (bugs), both through doesntWork's required note
+        self.assertEqual(len(re.findall(r"smallBtn\((?:NO_WORD\(i\)|'Still broken'), b => doesntWork\(", JS)), 2)
         self.assertIn('required: true', fn('doesntWork'))
-        self.assertIn("label: 'What’s wrong?'", JS)
+        self.assertIn("label: 'What should change?'", JS)
+        self.assertIn("label: 'What still happens?'", JS)
+        self.assertNotIn("smallBtn('Doesn’t work'", JS)
         self.assertIn('Swiping feels choppy, it should glide one day at a time', JS)
 
     def test_send_disabled_until_text(self):
