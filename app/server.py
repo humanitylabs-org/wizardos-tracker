@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.30.0'
+VERSION = '0.30.1'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -2074,11 +2074,12 @@ GOAL_PAGE = 'query($q: String!, $after: String) { ' + _PAGE % (30, GOAL_FIELDS) 
 # 0.28 (Miguel, 11 Nov): 'answer' = Needs an answer: the builder asked a question and paused (label builder:blocked)
 OPEN_GROUPS = ('test', 'answer', 'show', 'james', 'airev', 'building', 'queued', 'sorting', 'shipping')
 TRIAGE_LABEL = 'triage'   # 0.21: a report waiting for the builder's triage step to move it to the right repo
-# 0.19: the builder never picks these up (Miguel, 9 Nov): Oscar builds them directly
-BUILDER_SKIPS = ('wizardos-tracker', 'wizardos-builder')
+# 0.19: the builder never picks these up (Miguel, 9 Nov): Oscar builds them directly. 0.30.1 (Miguel, 11 Nov): the
+# Tracker itself goes through the pipeline like any app; only the Builder stays Oscar's.
+BUILDER_SKIPS = ('wizardos-builder',)
 # 0.19.1: the board never shows items of these repos at all (Oscar fixes them directly); filtered server-side, both in
 # the GitHub search (so counts match) and on every node returned.
-HIDDEN_REPOS = ('humanitylabs-org/wizardos-tracker', 'humanitylabs-org/wizardos-builder')
+HIDDEN_REPOS = ('humanitylabs-org/wizardos-builder',)   # 0.30.1: Tracker items show like any app's
 HIDDEN_Q = ''.join(f' -repo:{r}' for r in HIDDEN_REPOS)
 
 

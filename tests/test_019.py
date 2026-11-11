@@ -97,7 +97,7 @@ class Board(unittest.TestCase):
         self.saved = (S._view_search, S.view_stats, S.org_repos)
         nodes = [node(1, ['bug', 'ai-review'], author='mistermizel', repo='humanitylabs-org/wizard-messenger'),
                  node(2, ['bug', 'ready-to-test'], author='defleur-agents', repo='humanitylabs-org/wizard-messenger'),
-                 node(3, ['bug'], repo='humanitylabs-org/wizardos-tracker'),
+                 node(3, ['bug'], repo='humanitylabs-org/wizardos-builder'),
                  node(4, ['bug'], repo='humanitylabs-org/wizard-messenger')]
         S._view_search = lambda token, view, q, **kw: (nodes, len(nodes))
         S.view_stats = lambda *a, **k: None

@@ -1,5 +1,5 @@
 """0.19.1 unit tests: the Goals number is every open goal; Human review / Shipping / Done name the release that has
-the change (wizardos-tracker#7); items of wizardos-tracker and wizardos-builder never reach the board.
+the change (wizardos-tracker#7); items of wizardos-builder never reach the board (0.30.1: wizardos-tracker items do).
 Run: python3 -m unittest discover -s tests"""
 import json
 import re
@@ -21,7 +21,7 @@ def fn(name):
 class Hidden(unittest.TestCase):
     def test_query_excludes_hidden_repos(self):
         q = S.unhide_q('org:humanitylabs-org is:issue is:open label:bug')
-        self.assertIn(' -repo:humanitylabs-org/wizardos-tracker', q)
+        self.assertNotIn('wizardos-tracker', q)
         self.assertIn(' -repo:humanitylabs-org/wizardos-builder', q)
         self.assertEqual(S.unhide_q(q), q)
         self.assertEqual(S.unhide_q('repo:humanitylabs-org/wizard-ux is:issue'), 'repo:humanitylabs-org/wizard-ux is:issue')
@@ -35,8 +35,8 @@ class Hidden(unittest.TestCase):
             got, total = S._view_nodes('t', 'org:humanitylabs-org is:issue is:open')
         finally:
             S.graphql = saved
-        self.assertEqual([n['number'] for n in got], [1, 4])
-        self.assertIn('-repo:humanitylabs-org/wizardos-tracker', seen[0])
+        self.assertEqual([n['number'] for n in got], [1, 2, 4])
+        self.assertIn('-repo:humanitylabs-org/wizardos-builder', seen[0])
 
     def test_goal_links_drop_hidden(self):
         reset()
@@ -45,10 +45,11 @@ class Hidden(unittest.TestCase):
                                'repository': {'nameWithOwner': repo}, 'labels': {'nodes': [{'name': 'bug'}]}}}
         g = {'url': 'https://g/goal', 'timelineItems': {'nodes': [ref(1, 'humanitylabs-org/wizard-ux'), ref(2, 'humanitylabs-org/wizardos-tracker'),
                                                                    ref(3, 'humanitylabs-org/wizardos-builder')]}}
-        self.assertEqual([i['number'] for i in S.linked_items(g)], [1])
+        self.assertEqual([i['number'] for i in S.linked_items(g)], [1, 2])
 
     def test_queue_reason_unchanged(self):
-        self.assertEqual(S.queue_reason('humanitylabs-org/wizardos-tracker'), 'Oscar builds this one')
+        self.assertEqual(S.queue_reason('humanitylabs-org/wizardos-builder'), 'Oscar builds this one')
+        self.assertEqual(S.queue_reason('humanitylabs-org/wizardos-tracker'), 'Next for the builder')
 
 
 class Release(unittest.TestCase):
