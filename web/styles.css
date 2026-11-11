@@ -963,3 +963,13 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 .bd-pop .bd-askrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .bd-pop .bd-stillwork, .bd-pop .bd-flash { flex-basis: 100%; margin-left: 0; white-space: normal; }
 #appmodal .bd-toast { bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
+
+/* 0.29: stats follow the current stages; the kick-backs read as one line under them */
+#flow > .bd-loop.bd-loops { grid-column: 1 / -1; grid-row: 3; display: flex; flex-wrap: wrap; justify-content: center; gap: var(--wz-space-2) var(--wz-space-4); height: auto; margin: var(--wz-space-2) 0 0; }
+#flow > .bd-loop.bd-loops::before, #flow > .bd-loop.bd-loops::after, #flow .bd-loop2 { display: none; }
+#flow .bd-loops .bd-kick { position: static; height: auto; line-height: 1.4; }
+#flow.bd-noreview > .bd-loop { display: none; }
+.bd-dflow-st .bd-dflow { display: contents; }
+.bd-dflow-st .bd-dbin-w { overflow-wrap: normal; hyphens: auto; text-align: center; }
+.bd-dflow-st .bd-dbin { padding-inline: 1px; }
+#flow .bd-loops .bd-kick { transform: none; left: auto; top: auto; }
