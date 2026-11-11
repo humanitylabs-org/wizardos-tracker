@@ -129,17 +129,17 @@ console.log(JSON.stringify([
   whereLine({group: 'test', can_review: true})[0]]));"""
         got = json.loads(subprocess.run(['node', '-e', src], capture_output=True, text=True, check=True).stdout)
         self.assertEqual(got, ['Shipped in For testers 0.3.150', 'Shipped in For testers 0.3.150',
-                               'Shipped in For testers 0.3.150 · then the filer checks it', 'Shipped in For everyone 0.3.152 · Checked by Miguel',
-                               'Shipped in For testers 0.3.150 · Checked (no problems in 7 days)', 'Shipped in Messenger 0.2.1 · Checked by Jan',
+                               'Shipped in For testers 0.3.150', 'Shipped in For everyone 0.3.152',   # 0.26: the check is a tag
+                               'Shipped in For testers 0.3.150', 'Shipped in Messenger 0.2.1',
                                '', ''])
 
     @unittest.skipUnless(shutil.which('node'), 'node missing')
     def test_bug_strip(self):
         src = 'const HUMAN_CHECK_TIP = "x";\n' + fn('binsOf') + '\nconsole.log(JSON.stringify(binsOf("bugs")));'
         bins = json.loads(subprocess.run(['node', '-e', src], capture_output=True, text=True, check=True).stdout)
-        self.assertEqual([b['word'] for b in bins], ['Queued', 'Building', 'Shipped', 'Human check', 'Checked'])
-        self.assertEqual(bins[2]['groups'], ['airev'])
-        self.assertEqual(bins[4]['groups'], ['shipping', 'done'])
+        self.assertEqual([b['word'] for b in bins], ['Queued', 'Building', 'Merged', 'For testers', 'For everyone'])
+        self.assertEqual(bins[3]['groups'], ['testers'])
+        self.assertEqual(bins[4]['groups'], ['done'])
         self.assertIn("const HUMAN_CHECK_TIP = 'A quick sanity check by whoever filed it. It never holds up shipping.';", JS)
 
     def test_checked_of(self):
@@ -172,7 +172,7 @@ const apps = { test: [it(6, 'test', true)], queued: [it(7, 'queued')], building:
 const lift = (v, g) => sectionsOf(v).filter(([k]) => k !== 'done' && g[k]).flatMap(([k]) => g[k].filter(myTurn)).map(i => i.number);
 console.log(JSON.stringify([lift('bugs', bugs), lift('apps', apps)]));"""
         got = json.loads(subprocess.run(['node', '-e', src], capture_output=True, text=True, check=True).stdout)
-        self.assertEqual(got, [[2, 3], [6]])
+        self.assertEqual(got, [[], [6]])   # 0.26: a shipped bug's check never waits on anyone
 
 
 class Form(unittest.TestCase):

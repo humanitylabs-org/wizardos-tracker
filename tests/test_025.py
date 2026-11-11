@@ -49,6 +49,18 @@ class WaitingOn(unittest.TestCase):
         self.assertEqual((s['test']['n'], s['test']['stuck'], s['queued']['n']), (4, 1, 0))
 
 
+class BugCheck(unittest.TestCase):
+    def test_check_line_and_shots(self):
+        at, shots = S.bug_check_info(['Fixed it.\n\nCheck: wizard-notes open a long note and scroll\n'
+                                      'Before: https://x/a.png\n**After:** ![after](https://x/b.png)'])
+        self.assertEqual(at['app'], 'wizard-notes')
+        self.assertEqual(at['where'], 'open a long note and scroll')
+        self.assertEqual(shots, [{'kind': 'before', 'url': 'https://x/a.png'}, {'kind': 'after', 'url': 'https://x/b.png'}])
+
+    def test_shipped_bug_waits_on_nobody(self):
+        self.assertEqual(S.waiting_on({'group': 'test', 'category': 'bug', 'opener': 'James'})['who'], [])
+
+
 class RepoFilter(unittest.TestCase):
     def test_view_keeps_splits_core_and_apps(self):
         base = S.policy_base()

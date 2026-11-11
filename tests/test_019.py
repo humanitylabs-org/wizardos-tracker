@@ -69,22 +69,20 @@ class BugFlow(unittest.TestCase):
         self.assertEqual(f.issue['labels'], {'bug', 'building'})
         self.assertEqual(f.issue['state'], 'open')
 
-    def test_works_still_needs_filers_check(self):
-        self.use(labels={'bug', 'ai-review'})
-        with self.assertRaises(S.Problem) as e:
-            S.tested('m', {'repo': 'wizard-messenger', 'number': 9}, True)
-        self.assertEqual(e.exception.code, 409)
+    def test_works_any_time_after_merge(self):   # 0.26: the check is optional and never waits for AI review
+        f = self.use(labels={'bug', 'ai-review'})
+        S.tested('m', {'repo': 'wizard-messenger', 'number': 9}, True)
+        self.assertEqual(f.issue['labels'], {'bug', 'approved'})
 
     def test_features_unchanged(self):
         self.use(state='closed', labels={'feature', 'approved'})
         with self.assertRaises(S.Problem):
             S.tested('m', {'repo': 'wizard-messenger', 'number': 10, 'note': 'Still broken'}, False)
 
-    def test_only_the_filer(self):
-        self.use(state='closed', labels={'bug', 'approved'}, user='JanMesaric')
-        with self.assertRaises(S.Problem) as e:
-            S.tested('m', {'repo': 'wizard-messenger', 'number': 11, 'note': 'Still broken'}, False)
-        self.assertEqual(e.exception.code, 403)
+    def test_anyone_on_the_team(self):   # 0.26: not only the filer
+        f = self.use(state='closed', labels={'bug', 'approved'}, user='JanMesaric')
+        S.tested('m', {'repo': 'wizard-messenger', 'number': 11, 'note': 'Still broken'}, False)
+        self.assertEqual(f.issue['state'], 'open')
 
     def test_not_planned_stays_closed(self):
         self.use(state='closed', reason='not_planned', labels={'bug'})
@@ -113,7 +111,7 @@ class Board(unittest.TestCase):
         by = {i['number']: i for l in d['groups'].values() for i in l}
         self.assertTrue(by[1]['shipped'] and by[1]['can_fail'])          # Miguel filed it: may say Doesn't work in the AI check
         self.assertTrue(by[2]['shipped'] and by[2]['agent_filed'])
-        self.assertEqual(by[2]['review_rule'], 'James checks this one (his agent filed it)')
+        self.assertTrue(by[2]['can_review'])   # 0.26: anyone on the team checks a bug
         self.assertEqual(by[3]['wait_reason'], 'Oscar builds this one')
         self.assertEqual(by[4]['wait_reason'], 'Next for the builder')
         self.assertIn('Bugs (Miguel, 10 Nov)', S.policy('m')['lines'][-1])
@@ -136,9 +134,9 @@ console.log(JSON.stringify([binsOf('bugs').map(b => b.word), binsOf('apps').map(
   whereLine({kind: 'bug', group: 'test', shipped: true, can_review: true})[0], whereLine({group: 'queued', wait_reason: 'Oscar builds this one'})[0],
   sectionsOf('apps').map(s => s[1]).includes('Filed')]));"""
         bins, apps, filer, queued, filed = self.run_js(src)
-        self.assertEqual(bins, ['Queued', 'Building', 'Shipped', 'Human check', 'Checked'])   # 0.20
+        self.assertEqual(bins, ['Queued', 'Building', 'Merged', 'For testers', 'For everyone'])   # 0.26
         self.assertEqual(apps, ['Queued', 'Building', 'AI review', 'Human review', 'Shipping', 'Done'])
-        self.assertEqual(filer, 'Shipped')   # 0.25.1: 'Waiting on <who>' is the card's headline (waitHead)
+        self.assertEqual(filer, 'Merged · checking releases…')   # 0.25.1: 'Waiting on <who>' is the card's headline (waitHead)
         self.assertEqual(queued, 'Queued · Oscar builds this one')
         self.assertFalse(filed)
         self.assertNotIn("'Filed'", JS)

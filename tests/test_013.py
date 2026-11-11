@@ -234,10 +234,8 @@ class Reviews(unittest.TestCase):
         S._write('accounts.json', {'people': {'j': {'token': 'tok_james_aaaaaaaaaaaaaaaaaaaaaaa', 'login': 'jdefleur'},
                                               'm': {'token': 'tok_miguel_aaaaaaaaaaaaaaaaaaaaaa', 'login': 'mistermizel'}}, 'default': 'm'})
         GH.issues[8] = {'user': 'mistermizel', 'labels': {'bug', 'ready-to-test'}, 'comments': [('defleur-agents', 'AI review: pass — x')]}
-        with self.assertRaises(S.Problem) as e:
-            S.tested('j', {'repo': 'wizard-ux', 'number': 8}, True)
-        self.assertEqual(e.exception.reason, 'not_filer')
-        r = S.tested('m', {'repo': 'wizard-ux', 'number': 8}, True)
+        # 0.26 (Miguel, 11 Nov): anyone on the team may check a shipped bug
+        r = S.tested('j', {'repo': 'wizard-ux', 'number': 8}, True)
         self.assertTrue(r['final'])
         self.assertEqual(r['stage'], 'shipping')
         self.assertEqual(GH.issues[8]['labels'], {'bug', 'approved'})
@@ -257,9 +255,8 @@ class Reviews(unittest.TestCase):
         self.assertEqual(GH.issues[11]['labels'], {'bug', 'building'})
         self.assertEqual(GH.issues[11]['comments'][-1], ('jdefleur', "Tested: doesn't work — @jdefleur\n\nWhat’s wrong: Swiping feels choppy"))
         GH.issues[10] = {'user': 'mistermizel', 'labels': {'bug', 'ai-review'}, 'comments': []}
-        with self.assertRaises(S.Problem) as e:
-            S.tested('j', {'repo': 'wizard-ux', 'number': 10}, True)
-        self.assertEqual(e.exception.reason, 'ai_review')
+        S.tested('j', {'repo': 'wizard-ux', 'number': 10}, True)   # 0.26: a bug's check is never gated on AI review
+        self.assertEqual(GH.issues[10]['labels'], {'bug', 'approved'})
 
 
 class Device(unittest.TestCase):

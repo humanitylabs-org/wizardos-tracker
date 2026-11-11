@@ -906,3 +906,9 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 .bd-waiton-k { color: var(--ink-3); }
 .bd-waiton.me b { color: var(--accent); }
 .bd-waiton.warn b, .bd-waiton.warn .bd-waiton-x { color: var(--bd-warn); }
+
+/* 0.26: a shipped bug's optional check */
+.bd-checked { margin: 2px 0 0; font-size: var(--wz-text-sm); font-weight: 600; color: var(--bd-ok); }
+.bd-d-steps .bd-check-at, .bd-d-steps .bd-shots { display: block; margin-top: 6px; }
+.bd-shots { display: flex; gap: 12px; }
+.bd-shot { font-weight: 600; color: var(--accent); }
