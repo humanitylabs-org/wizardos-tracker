@@ -902,7 +902,7 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 
 /* 0.25.1: 'Waiting on <who>' is the headline of every card that waits on someone */
 .bd-waiton { margin: 0 0 2px; font-size: var(--wz-text-sm); color: var(--ink-2); }
-.bd-waiton b { font-size: var(--wz-text-md, 15px); font-weight: 700; color: var(--ink); }
+.bd-waiton b { font-weight: 700; color: var(--ink); }
 .bd-waiton-k { color: var(--ink-3); }
 .bd-waiton.me b { color: var(--accent); }
 .bd-waiton.warn b, .bd-waiton.warn .bd-waiton-x { color: var(--bd-warn); }
