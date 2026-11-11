@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "WizardOS Tracker",
-    "version": "0.27.0",
+    "version": "0.28.0",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged. 0.13: two-step review (Queued → Building → AI review [label ai-review] → Human review [label ready-to-test] → Done; AI review is agents-only via MCP ai_review_pass / ai_review_fail; policy human_reviews 1|2) and Sign in with GitHub via the OAuth device flow (no client secret).",
     "contact": {
       "name": "WizardOS Tracker",
@@ -870,7 +870,7 @@
     },
     "/api/split": {
       "get": {
-        "summary": "Goals or Bugs grouped by status: Waiting for review (ready-to-test, key test), Building (building), Queued (other open). Up to 300 items. Rows carry desc (first paragraph as plain text), assignees, comments (count). Also returns steps (the three workflow steps for this view), me_person, and per item opener (team name of whoever opened it); mine is true when you or your own agent opened it. 0.9: also returns targets (seconds per stage for this view: queued, building, review, done) and, for view=bugs, repos (every non-archived org repo as owner/name, cached an hour, so the Repo chips can show repos with 0 open bugs); items carry created_at and updated_at (bug age and sort are computed in the view). 0.10: names maps GitHub logins to the people names from the policy roster (owners and openers show these).",
+        "summary": "Goals or Bugs grouped by status: Waiting for review (ready-to-test, key test), Building (building), Queued (other open). Up to 300 items. Rows carry desc (first paragraph as plain text), assignees, comments (count). Also returns steps (the three workflow steps for this view), me_person, and per item opener (team name of whoever opened it); mine is true when you or your own agent opened it. 0.9: also returns targets (seconds per stage for this view: queued, building, review, done) and, for view=bugs, repos (every non-archived org repo as owner/name, cached an hour, so the Repo chips can show repos with 0 open bugs); items carry created_at and updated_at (bug age and sort are computed in the view). 0.10: names maps GitHub logins to the people names from the policy roster (owners and openers show these). 0.28: groups.answer (Needs an answer) holds open builder:blocked items, each with question (the builder's question in plain words), asked (team names it @-mentioned) and waiting_on.",
         "parameters": [
           {
             "name": "view",

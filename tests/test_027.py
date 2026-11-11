@@ -25,10 +25,10 @@ CLOSED = []
 
 class Version(unittest.TestCase):
     def test_version(self):
-        self.assertEqual(S.VERSION, '0.27.0')
-        self.assertIn('version: 0.27.0', (ROOT / 'wizard.md').read_text())
-        self.assertEqual(json.loads((ROOT / 'runtipi/config.json').read_text())['version'], '0.27.0')
-        self.assertIn("PAGE_VERSION = '0.27.0'", (ROOT / 'web/app.js').read_text())
+        self.assertGreaterEqual(tuple(map(int, S.VERSION.split('.'))), (0, 27, 0))
+        self.assertIn('version: ' + S.VERSION, (ROOT / 'wizard.md').read_text())
+        self.assertEqual(json.loads((ROOT / 'runtipi/config.json').read_text())['version'], S.VERSION)
+        self.assertIn(f"PAGE_VERSION = '{S.VERSION}'", (ROOT / 'web/app.js').read_text())
         self.assertTrue((ROOT / 'web/dist/html2canvas-pro.min.js').is_file())
 
 
