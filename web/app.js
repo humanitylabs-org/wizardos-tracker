@@ -70,7 +70,7 @@ const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } cat
 const picked = Object.fromEntries([...VIEWS, 'features'].map(v => [v, new Set(store.get('board.repos.' + v) || [])]));
 const pickedWho = Object.fromEntries([...VIEWS, 'features'].map(v => [v, new Set(store.get('board.who.' + v) || [])]));
 let repoMore = false;   // the Repo row's '+N more' is open (not remembered)
-const SORTS = [['turn', 'Your turn first'], ['oldest', 'Oldest'], ['newest', 'Newest'], ['discussed', 'Most discussed'], ['active', 'Recently active']];
+const SORTS = [['turn', 'Waiting on me first'], ['oldest', 'Oldest'], ['newest', 'Newest'], ['discussed', 'Most discussed'], ['active', 'Recently active']];
 // 0.20: ONE sort for every tab (key board.sort3, default 'Your turn first' for everyone again): a pick on one tab
 // applies on all of them, so an old per-tab pick can never hide your own items on Bugs or App features.
 const savedSort = () => { const k = store.get('board.sort3'); return SORTS.some(([x]) => x === k) ? k : 'turn'; };
@@ -94,7 +94,7 @@ function myTurn(i) {
 }
 function turnDivider(n) {
   const d = make('div', 'bd-turn-div'); d.setAttribute('role', 'separator');
-  d.append(make('span', 'bd-turn-w', 'Your turn'), make('span', 'bd-n', String(n)));
+  d.append(make('span', 'bd-turn-w', 'Waiting on you'), make('span', 'bd-n', String(n)));
   return d;
 }
 const cache = {};
@@ -399,7 +399,6 @@ function render(d) {
   const bins = binsOf(d.view);
   strip(d, bins, groups);
   flow(d, groups, doneN, st, hist);
-  waitLine(d.view, groups);
   const only = stage[d.view];
   const bin = bins.find(b => b.key === only);
   const showing = g => !only ? g !== 'done' : (bin ? bin.groups.includes(g) : false);
@@ -422,8 +421,6 @@ function render(d) {
     any = true;
     const s = make('section', 'bd-sec'); s.id = 'sec-' + g;
     const h = make('h2', 'bd-sec-h', title + ' '); h.append(make('span', 'bd-n', String(list.length)));
-    const wo = whoWaits(list);   // 0.25: whose move it is, right on the stage heading
-    if (wo) h.append(make('span', 'bd-sec-who', '· waiting on ' + wo));
     const l = make('div', 'bd-list'); l.replaceChildren(...list.map(itemCard));
     s.append(h, l); secs.push(s);
   }
@@ -437,34 +434,6 @@ function render(d) {
   if (only === 'done' && !groups.done) { el('empty').hidden = false; el('empty').textContent = dc.error || 'Loading…'; return; }
   el('empty').textContent = only ? `Nothing in ${(bin || {}).word || ''} here${whoSet.size || chosen.size ? ' with this filter' : ''}.`
     : whoSet.size || chosen.size ? 'Nothing here with this filter.' : EMPTY[d.view];
-}
-// 0.25 (Miguel, 10 Nov): every tab answers "who has it for action?" and "where is it stuck?" in one line under the strip.
-const WAIT_VERB = { test: 'to check', james: 'to approve', show: 'show-and-tell', airev: 'AI check', building: 'building', queued: 'queued', sorting: 'sorting' };
-function whoWaits(list) {
-  const by = new Map();
-  for (const i of list) { const w = ((i.waiting_on || {}).who || []).join(' or '); if (w) by.set(w, (by.get(w) || 0) + 1); }
-  const names = [...by.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
-  if (!names.length) return '';
-  return names.length === 1 ? names[0][0] : names.map(([w, n]) => `${w} ${n}`).join(', ');
-}
-function waitLine(v, groups) {
-  const p = el('waitline'); if (!p) return;
-  const people = new Map();   // who -> [[stage, n, stuck]]
-  for (const g of Object.keys(WAIT_VERB)) for (const i of groups[g] || []) {
-    const wo = i.waiting_on || {};
-    for (const w of [(wo.who || []).join(' or ')].filter(Boolean)) {   // 'James or Miguel' is one entry, not two
-      const key = wo.stuck ? 'stuck' : (v === 'bugs' && g === 'airev' ? 'airev' : g);
-      const m = people.get(w) || new Map(); m.set(key, (m.get(key) || 0) + 1); people.set(w, m);
-    }
-  }
-  const verb = k => k === 'stuck' ? 'stuck (builder gave up)' : WAIT_VERB[k];
-  const rows = [...people.entries()].map(([w, m]) => [w, [...m.values()].reduce((a, b) => a + b, 0), m]).sort((a, b) => b[1] - a[1]);
-  p.hidden = !rows.length;
-  p.replaceChildren(make('span', 'bd-wait-k', 'Waiting on '), ...rows.flatMap(([w, , m], n) => {
-    const bit = make('span', 'bd-wait-p' + (m.has('stuck') ? ' warn' : ''));
-    bit.append(make('b', '', w), document.createTextNode(' ' + [...m.entries()].map(([k, c]) => `${c} ${verb(k)}`).join(', ')));
-    return n ? [document.createTextNode(' · '), bit] : [bit];
-  }));
 }
 // 0.17: 'Filtered: Jan · wizard-ux ×' only when a filter is set; × clears it.
 function filteredLine(whoSet, chosen, people, repos) {
@@ -1328,25 +1297,19 @@ function bugLine(i) {
   const g = i.group;
   const rel = g === 'shipping' || g === 'done' ? (i.ship ? i.ship.text : '') : ((onboxOf(i) || {}).release || {}).text;
   const ship = shippedText(rel);
-  const by = ((i.waiting_on || {}).who || []).join(' or ');
-  if (g === 'test') return i.can_review ? [ship + ' · Your turn: check it', 'turn'] : [ship + ' · Waiting for ' + (by || i.opener || 'the filer') + ' to check it', ''];
-  if (g === 'airev') return [ship + ' · ' + (by && by !== 'Any team agent' ? by + '’s AI check' : 'AI check') + ', then ' + (i.opener || 'the filer') + ' checks it', ''];
+  if (g === 'test') return [ship, ''];   // 0.25.1: who it waits on is the card's headline (waitHead)
+  if (g === 'airev') return [ship + ' · then ' + (i.opener || 'the filer') + ' checks it', ''];
   const ck = i.checked ? i.checked.text : 'Checked';
   return [ship + ' · ' + ck, g === 'done' ? 'done' : ''];
 }
 function whereLine(i) {
   const g = i.group;
   if (i.kind === 'bug' && (i.shipped || ((g === 'shipping' || g === 'done') && i.state_reason !== 'not_planned'))) return bugLine(i);
-  if (g === 'test') {
-    if (!i.can_review) return [i.review_rule || `${i.opener || 'the filer'} checks this one`, ''];
-    const ob = onboxOf(i);
-    if (ob && ob.state === 'no') return ['Your turn: update, then check it', 'turn'];
-    return ['Your turn: check it', 'turn'];
-  }
-  if (g === 'show') return i.can_james ? ['Your turn: show-and-tell', 'turn'] : ['Waiting for James’ show-and-tell', ''];
-  if (g === 'james') return i.can_james ? ['Your turn: approve or decline', 'turn'] : ['Waiting for James or Miguel to approve', ''];
-  if (g === 'airev') return [i.ai_reviewer && i.ai_reviewer !== 'any team agent' ? `Waiting for ${i.ai_reviewer}’s AI check` : 'Waiting for an AI check', ''];
-  if (i.blocked && (g === 'building' || g === 'queued')) return ['Stuck: the builder gave up · waiting for Oscar', 'warn'];
+  // 0.25.1 (Miguel): review stages lead with 'Waiting on <who>' (waitHead); this line only adds what is left to say
+  if (g === 'test') { const ob = onboxOf(i); return ob && ob.state === 'no' ? ['Update first, then check it', ''] : ['', '']; }
+  if (g === 'show' || g === 'james') return ['', ''];
+  if (g === 'airev') return ['Then ' + (i.opener || 'the filer') + ' checks it', ''];
+  if (i.blocked && (g === 'building' || g === 'queued')) return ['The builder asked a question and paused (see the latest comment)', 'warn'];
   if (g === 'building') return ['The builder is on it', ''];
   if (g === 'queued') return [(i.category === 'core' ? 'Approved · ' : 'Queued · ') + (i.wait_reason || 'Next for the builder'), i.wait_reason === 'Oscar builds this one' ? 'oscar' : ''];
   if (g === 'sorting') return ['Sorting… the builder files it in the right place in a minute or two', ''];
@@ -1354,8 +1317,30 @@ function whereLine(i) {
   if (g === 'done') return [i.ship ? i.ship.text : 'Done', 'done'];
   return ['', ''];
 }
+// 0.25.1 (Miguel, 11 Nov): the headline of every card that waits on someone: 'Waiting on <name>', the person or
+// agent named, never a vague 'Your turn'. AI review names the agent (or the agents that may do it).
+const WAIT_WHAT = { test: 'to check it', james: 'to approve or decline', show: 'for show-and-tell', airev: 'AI review' };
+function waitHead(i) {
+  const g = i.group, wo = i.waiting_on || {};
+  const stuck = i.blocked && (g === 'queued' || g === 'building');
+  if (!(g in WAIT_WHAT) && !stuck) return null;
+  const who = (wo.who || []).filter(Boolean);
+  if (!who.length) return null;
+  const me = (cache[view] || {}).me_person || '';
+  const p = make('p', 'bd-waiton' + (who.some(w => w === me) ? ' me' : '') + (stuck ? ' warn' : ''));
+  p.append(make('span', 'bd-waiton-k', 'Waiting on '));
+  who.forEach((w, n) => {
+    if (n) p.append(document.createTextNode(n === who.length - 1 ? ' or ' : ', '));
+    p.append(make('b', '', w + (w === me ? ' (you)' : '')));
+  });
+  if (wo.kind === 'agent') p.append(make('span', 'bd-waiton-x', ' (AI)'));
+  p.append(make('span', 'bd-waiton-x', ' ' + (stuck ? 'to answer the builder' : WAIT_WHAT[g])));
+  return p;
+}
 function itemCard(i) {
   const c = make('article', 'bd-card bd-card-calm bd-icard');
+  const wh = waitHead(i);
+  if (wh) c.append(wh);
   const top = make('div', 'bd-card-top');
   const h = tapTarget('bd-title', () => openDetail(i)); h.textContent = i.title;
   top.append(h); c.append(top);
@@ -1906,7 +1891,8 @@ function detailAct(i) {
   if (!area) { a.hidden = true; return a.replaceChildren(); }
   a.hidden = false;
   const [text] = whereLine(i);
-  a.replaceChildren(make('h3', 'bd-sec-h bd-d-h', text || 'Next'), area);
+  const wh = waitHead(i);
+  a.replaceChildren(make('h3', 'bd-sec-h bd-d-h', wh ? wh.textContent : (text || 'Next')), area);
 }
 
 // ---------- one item's own assembly line (its label timeline, fetched on tap, cached briefly) ----------
@@ -2265,7 +2251,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.25.0';
+const PAGE_VERSION = '0.25.1';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2310,7 +2296,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.25.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.25.1' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

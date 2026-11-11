@@ -33,7 +33,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.25.0'
+VERSION = '0.25.1'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -2041,10 +2041,12 @@ def waiting_on(card, base=None):
         who = [t['name'] for t in base['team'] if t['name'].lower() in james_people(base)] or ['James']
     elif g == 'airev':
         r = card.get('ai_reviewer') or 'any team agent'
-        who, who_kind = (['Any team agent'] if r == 'any team agent' else r.split(' or ')), 'agent'
+        agents = [a['name'] for tm in base['team'] for a in tm['agents']]
+        who, who_kind = ((agents or ['Any team agent']) if r == 'any team agent' else r.split(' or ')), 'agent'
     elif g in ('building', 'queued', 'sorting'):
         if card.get('blocked'):
-            who = ['Oscar']   # builder:blocked: the builder gave up and left a note; Oscar unsticks the builder
+            # builder:blocked = the builder asked a question and paused; the person who filed it answers (0.25.1)
+            who = [card.get('opener') or 'Oscar']
         elif card.get('wait_reason') == 'Oscar builds this one':
             who = ['Oscar']
         else:

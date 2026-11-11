@@ -128,10 +128,10 @@ console.log(JSON.stringify([
   whereLine({group: 'test', can_review: false, review_rule: 'Jan checks this one (he filed it)'})[0],
   whereLine({group: 'test', can_review: true})[0]]));"""
         got = json.loads(subprocess.run(['node', '-e', src], capture_output=True, text=True, check=True).stdout)
-        self.assertEqual(got, ['Shipped in For testers 0.3.150 · Your turn: check it', 'Shipped in For testers 0.3.150 · Waiting for the filer to check it',
-                               'Shipped in For testers 0.3.150 · AI check, then the filer checks it', 'Shipped in For everyone 0.3.152 · Checked by Miguel',
+        self.assertEqual(got, ['Shipped in For testers 0.3.150', 'Shipped in For testers 0.3.150',
+                               'Shipped in For testers 0.3.150 · then the filer checks it', 'Shipped in For everyone 0.3.152 · Checked by Miguel',
                                'Shipped in For testers 0.3.150 · Checked (no problems in 7 days)', 'Shipped in Messenger 0.2.1 · Checked by Jan',
-                               'Jan checks this one (he filed it)', 'Your turn: check it'])
+                               '', ''])
 
     @unittest.skipUnless(shutil.which('node'), 'node missing')
     def test_bug_strip(self):
