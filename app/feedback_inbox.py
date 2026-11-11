@@ -5,11 +5,13 @@ humanitylabs-org/wizardos-feedback-inbox through the Feedback relay (a Cloudflar
 'WizardOS Feedback Relay' GitHub App). A team member reviews them here:
 
   GET  <relay>/v1/pending           -> {items: [{number, kind, title, text, submitter, created, screenshots}]}
-  POST <relay>/v1/review {issue, action: approve|reject}
+  POST <relay>/v1/review {issue, action: approve|reject, kind?: bug|feature, reason?: text}
 
 both with `Authorization: Bearer <the signed-in person's own GitHub token>`. The relay checks the token with GitHub
 and that the login is an active org member. Approve files a copy in wizard-os (labels triage + bug/feature +
 from-feedback; the builder's triage step takes it from there); Reject closes the inbox item as not planned.
+0.28.1 (Miguel): approve as the other kind (a 'bug' that is really an idea goes to the feature queue, labelled feature,
+'changed from bug to idea by @you'), and decline with an optional reason (≤ 500 chars) the sender sees in Feedback.
 
 The token is only ever sent server-side to the relay, never to the browser. Kept apart from server.py on purpose:
 the host passes the account (`{'token', 'login'}`) in.
@@ -26,6 +28,21 @@ RELAY_URL = (os.environ.get('FEEDBACK_RELAY_URL') or 'https://wizardos-feedback-
 FROM_LABEL = 'from-feedback'
 CACHE_SECONDS = 30
 TIMEOUT = 20
+REASON_MAX = 500
+KIND_WORD = {'bug': 'bug', 'feature': 'idea'}
+_CTRL = re.compile(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]')
+
+
+def clean_reason(s):
+    """The decline reason as the sender will read it: plain text, control characters stripped, ≤ 500 chars."""
+    if s is None:
+        return ''
+    if not isinstance(s, str):
+        raise RelayError(400, 'The reason must be text.')
+    t = _CTRL.sub('', s.replace('\r\n', '\n').replace('\r', '\n')).strip()
+    if len(t) > REASON_MAX:
+        raise RelayError(400, f'Keep the reason under {REASON_MAX} characters.')
+    return t
 
 _lock = threading.Lock()
 _cache = {}   # login -> (time, answer)
@@ -108,7 +125,8 @@ def pending(acct, refresh=False, opener=None):
 
 
 def review(acct, args, opener=None):
-    """POST /api/feedback/review {number, action: approve|reject} -> what the relay did (idempotent there)."""
+    """POST /api/feedback/review {number, action: approve|reject, kind?: bug|feature (approve as), reason?: text (reject)}
+    -> what the relay did (idempotent there)."""
     action = args.get('action')
     if action not in ('approve', 'reject'):
         raise RelayError(400, "action must be 'approve' or 'reject'.")
@@ -117,17 +135,36 @@ def review(acct, args, opener=None):
         number = int(number)
     if not isinstance(number, int) or isinstance(number, bool) or number < 1:
         raise RelayError(400, 'number must be an inbox item number.')
-    status, out = _http('POST', '/v1/review', acct['token'], {'issue': number, 'action': action}, opener=opener)
+    kind = args.get('kind')
+    if kind in ('', None):
+        kind = None
+    elif kind not in ('bug', 'feature'):
+        raise RelayError(400, "kind must be 'bug' or 'feature'.")
+    reason = clean_reason(args.get('reason')) if action == 'reject' else ''
+    body = {'issue': number, 'action': action}
+    if action == 'approve' and kind:
+        body['kind'] = kind
+    if reason:
+        body['reason'] = reason
+    status, out = _http('POST', '/v1/review', acct['token'], body, opener=opener)
     if status != 200:
         raise _problem(status, out)
     with _lock:
         _cache.clear()   # everyone's list changed
     twin = out.get('twin') if isinstance(out.get('twin'), dict) else None
     res = out.get('result') if out.get('result') in ('approved', 'rejected') else action + 'd'
-    return {'number': number, 'result': res, 'already': bool(out.get('already')),
+    got = out.get('kind') if out.get('kind') in ('bug', 'feature') else kind
+    was = out.get('changed_from') if out.get('changed_from') in ('bug', 'feature') else None
+    if res == 'approved':
+        msg = f"Approved as {'a bug' if got == 'bug' else 'an idea'}: sent to the builder queue." if got else 'Approved: sent to the builder queue.'
+        if was and got and was != got:
+            msg += f' (Changed from {KIND_WORD[was]}.)'
+    else:
+        msg = 'Declined. The sender sees your reason.' if reason and not out.get('already') else 'Declined.'
+    return {'number': number, 'result': res, 'already': bool(out.get('already')), 'kind': got, 'changed_from': was,
+            'reason': reason or None,
             'twin': {'repo': str(twin.get('repo') or ''), 'number': twin.get('number'), 'url': str(twin.get('url') or '')} if twin else None,
-            'message': ('Approved: sent to the builder queue.' if res == 'approved' else 'Rejected: not planned.')
-            + (' (It was already handled.)' if out.get('already') else '')}
+            'message': msg + (' (It was already handled.)' if out.get('already') else '')}
 
 
 def is_from_feedback(labels):

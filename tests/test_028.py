@@ -28,11 +28,11 @@ def fn(name):
 
 class Version(unittest.TestCase):
     def test_version(self):
-        self.assertEqual(S.VERSION, '0.28.0')
-        self.assertIn('version: 0.28.0', (ROOT / 'wizard.md').read_text())
-        self.assertEqual(json.loads((ROOT / 'runtipi/config.json').read_text())['version'], '0.28.0')
-        self.assertIn("PAGE_VERSION = '0.28.0'", JS)
-        self.assertIn("version: '0.28.0' })", JS)
+        self.assertGreaterEqual(tuple(map(int, S.VERSION.split('.'))), (0, 28, 0))
+        self.assertIn('version: ' + S.VERSION, (ROOT / 'wizard.md').read_text())
+        self.assertEqual(json.loads((ROOT / 'runtipi/config.json').read_text())['version'], S.VERSION)
+        self.assertIn(f"PAGE_VERSION = '{S.VERSION}'", JS)
+        self.assertIn(f"version: '{S.VERSION}' }})", JS)
 
 
 class Question(unittest.TestCase):
