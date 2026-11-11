@@ -176,7 +176,7 @@ function unpop() { el('pop').hidden = true; popFor = null; }
 document.addEventListener('pointerdown', e => { if (popFor && !el('pop').contains(e.target) && !popFor.contains(e.target)) unpop(); }, true);
 document.addEventListener('keydown', e => { if (e.key === 'Escape') unpop(); });
 // The target editor stays open while its field has focus (a phone keyboard scrolls and resizes the page).
-const editing = () => el('pop').contains(document.activeElement) && document.activeElement.tagName === 'INPUT';
+const editing = () => el('pop').contains(document.activeElement) && /^(INPUT|TEXTAREA)$/.test(document.activeElement.tagName);   // 0.28.1: reasons are textareas
 el('scroll').addEventListener('scroll', () => { if (!editing()) unpop(); }, { passive: true });
 addEventListener('resize', () => { if (!editing()) unpop(); });
 const when = iso => {
@@ -2569,7 +2569,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.28.0';
+const PAGE_VERSION = '0.28.1';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2614,7 +2614,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.28.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.28.1' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

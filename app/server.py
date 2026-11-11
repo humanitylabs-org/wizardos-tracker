@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.28.0'
+VERSION = '0.28.1'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -3713,7 +3713,8 @@ def feedback_pending(person, q=None):
 
 
 def feedback_review(person, args):
-    """0.26.5 POST /api/feedback/review {number, action approve|reject}: Approve files it in wizard-os (triage + from-feedback)
+    """0.26.5 POST /api/feedback/review {number, action approve|reject, kind?, reason?}: Approve files it in wizard-os (triage + from-feedback;
+    0.28.1: `kind` approves it as that kind), Reject declines it with an optional reason the sender sees
     for the builder; Reject closes it as not planned. The relay checks the person is on the team."""
     _, acct = gate(person)
     try:

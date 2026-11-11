@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "WizardOS Tracker",
-    "version": "0.28.0",
+    "version": "0.28.1",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged. 0.13: two-step review (Queued → Building → AI review [label ai-review] → Human review [label ready-to-test] → Done; AI review is agents-only via MCP ai_review_pass / ai_review_fail; policy human_reviews 1|2) and Sign in with GitHub via the OAuth device flow (no client secret).",
     "contact": {
       "name": "WizardOS Tracker",
@@ -44,7 +44,7 @@
     },
     "/api/feedback/review": {
       "post": {
-        "summary": "0.26.5: approve (a copy in wizard-os with triage + bug/feature + from-feedback, for the builder) or reject (closed as not planned) one Feedback inbox item. Idempotent.",
+        "summary": "0.26.5/0.28.1: approve (a copy in wizard-os with triage + bug/feature + from-feedback, for the builder; `kind` approves it as that kind, e.g. an idea sent as a bug) or decline (closed as not planned, with an optional `reason` the sender sees in Feedback) one Feedback inbox item. Idempotent.",
         "requestBody": {
           "required": true,
           "content": {
@@ -65,6 +65,19 @@
                       "approve",
                       "reject"
                     ]
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "bug",
+                      "feature"
+                    ],
+                    "description": "0.28.1: approve as this kind (default: what the sender chose)"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "maxLength": 500,
+                    "description": "0.28.1: decline reason the sender sees in their Feedback app (optional)"
                   }
                 }
               }
