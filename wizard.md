@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.26.0
+version: 0.26.1
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -136,3 +136,5 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.25.1** (Miguel, 11 Nov) "Waiting on <who>" is the headline of every card that waits on someone (Human review, AI review, approval, show-and-tell, and builder questions), above the title: the person by name ("(you)" when it's the viewer), the AI agent(s) that may review, never "Your turn". The 0.25.0 summary line under the strip and the "· waiting on" stage headings are gone. A builder:blocked item waits on the person who filed it (the builder asked them a question). Sort "Your turn first" is now "Waiting on me first".
 
 **0.26.0** (Miguel, 11 Nov) Bugs follow the release cycle, and their human check is optional. Bugs stages: Queued → Building → Merged (waiting for a release) → For testers → For everyone (Stable, or the app's Store release), from the same release lookup as Shipping. Nothing after the merge waits on anyone: no "Waiting on", no AI review step in the strip. Anyone on the team may check a shipped bug at any time: the card's **Check it** opens the detail with what changed, where to look (the builder's `Check: <app-id> <where>` line, which also gives the detail an Open <app> button), and Before / After screenshots (the builder's `Before:` / `After:` links); then **Works** tags it "✓ Checked by <person> · <date>" without moving it, and **Doesn't work** sends it back to Building (it reopens if closed). The builder no longer hands bugs to AI review after the merge.
+
+**0.26.1** (Miguel, 11 Nov) Check it on a shipped bug opens a short check card instead of the GitHub thread: "What changed" and "How to check" in plain words (from the builder's hand-back `What changed:` / `What to check:` sections, `fix` on the card via `bug_handover()`), Before / After screenshot buttons when given, then "Does it work now?" with Open <app> · Works · Doesn't work. The issue text, labels, timeline and comments are behind "Show the full history".

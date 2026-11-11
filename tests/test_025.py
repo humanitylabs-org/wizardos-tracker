@@ -57,6 +57,14 @@ class BugCheck(unittest.TestCase):
         self.assertEqual(at['where'], 'open a long note and scroll')
         self.assertEqual(shots, [{'kind': 'before', 'url': 'https://x/a.png'}, {'kind': 'after', 'url': 'https://x/b.png'}])
 
+    def test_handover_plain_words(self):
+        fx = S.bug_handover(['Fixed and merged.\n\nWhat changed: Messenger now swaps only that `bubble`. It used to '
+                             'rebuild the list. Third sentence.\n\nMerged: https://x/pull/1\n\nWhat to check:\n'
+                             'For the person who filed this: @mistermizel, open a chat and react.\n\nWhat is left: nothing.'])
+        self.assertEqual(fx['changed'], 'Messenger now swaps only that bubble. It used to rebuild the list.')
+        self.assertEqual(fx['how'], 'open a chat and react.')
+        self.assertEqual(S.bug_handover(['no sections here']), {})
+
     def test_shipped_bug_waits_on_nobody(self):
         self.assertEqual(S.waiting_on({'group': 'test', 'category': 'bug', 'opener': 'James'})['who'], [])
 
