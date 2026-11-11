@@ -27,6 +27,9 @@ else:
     for extra in sorted((root / "app").glob("*.py")):
         if extra.name not in ("server.py", "build_view.py"):
             bundle["app/" + extra.name] = extra.read_text()
+    # 0.27: vendored third-party view files (web/dist, e.g. html2canvas) ride along too
+    for extra in sorted((root / "web" / "dist").glob("*.js")):
+        bundle["web/dist/" + extra.name] = extra.read_text()
     packed = base64.b64encode(zlib.compress(json.dumps(bundle, sort_keys=True).encode(), 9)).decode()
     parts = [packed[i:i + PART] for i in range(0, len(packed), PART)]
     raw = raw.replace("import base64,json,pathlib,runpy\\n", "import base64,json,pathlib,runpy,sys,zlib\\n", 1)

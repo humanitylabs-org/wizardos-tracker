@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "WizardOS Tracker",
-    "version": "0.26.5",
+    "version": "0.27.0",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged. 0.13: two-step review (Queued → Building → AI review [label ai-review] → Human review [label ready-to-test] → Done; AI review is agents-only via MCP ai_review_pass / ai_review_fail; policy human_reviews 1|2) and Sign in with GitHub via the OAuth device flow (no client secret).",
     "contact": {
       "name": "WizardOS Tracker",
@@ -848,7 +848,7 @@
     },
     "/api/test/fails": {
       "post": {
-        "summary": "Comment what went wrong and remove ready-to-test. Body: repo, number, note (required since 0.23.1: an empty note is 400 note_required; it goes into the issue comment as 'What\u2019s wrong: <note>'). Doesn't work removes ready-to-test and adds building (back to Building).",
+        "summary": "Comment what went wrong and remove ready-to-test. Body: repo, number, note (required since 0.23.1: an empty note is 400 note_required; it goes into the issue comment as 'What’s wrong: <note>'). Doesn't work removes ready-to-test and adds building (back to Building).",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1613,7 +1613,7 @@
         }
       },
       "post": {
-        "summary": "0.21 File a report or request in two steps. Body {kind: bug|feature, text, screenshot?: {type: image/png|jpeg|webp|gif, data: base64 (4 MB max)}, wizard_version, device}. Files it in <org>/wizard-os with labels triage + bug/feature (version, device and the screenshot added); the WizardOS Builder's triage step moves it to the right repo and comments 'Filed in <repo> as a …'. Returns {sent: 'Sent. The builder files it in the right place in a minute or two.', url, repo, kind, view, warning}.",
+        "summary": "0.21 File a report or request in two steps. Body {kind: bug|feature, text, screenshot?: {type: image/png|jpeg|webp|gif, data: base64 (4 MB max)}, wizard_version, device}. Files it in <org>/wizard-os with labels triage + bug/feature (version, device and the screenshot added); the WizardOS Builder's triage step moves it to the right repo and comments 'Filed in <repo> as a …'. Returns {sent: 'Sent. The builder files it in the right place in a minute or two.', url, repo, kind, view, warning}. 0.27: optional context {repo, number, title, app, app_name} (Report something else from inside testing) adds a 'Found while testing <repo>#<n>' line linking the item under test and a found-while-testing marker; triage files it as its own item (the tested app's repo when the words name no app). The item under test is unchanged.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -1629,6 +1629,52 @@
           },
           "400": {
             "description": "missing kind or text, or a bad screenshot"
+          }
+        }
+      }
+    },
+    "/api/drop": {
+      "post": {
+        "summary": "0.27 Drop this feature (not needed) / Not a bug, won't fix. Body {repo, number, reason (3-300 chars)}. Anyone on the team. Comments who and why, labels dropped (feature) or wontfix (bug), removes stage labels, closes as not planned. A feature whose code is merged behind its switch also gets switch-cleanup: the builder files a cleanup issue (label switch-remove) that removes the switch and its code through the normal AI review. The page turns the item's switch off on this Wizard first. Returns {id, kind, label, cleanup, labels, state, by}.",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repo",
+                  "number",
+                  "reason"
+                ],
+                "properties": {
+                  "repo": {
+                    "type": "string"
+                  },
+                  "number": {
+                    "type": "integer"
+                  },
+                  "reason": {
+                    "type": "string",
+                    "minLength": 3,
+                    "maxLength": 300
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "dropped"
+          },
+          "400": {
+            "description": "missing or too short reason"
+          },
+          "403": {
+            "description": "not on the team"
+          },
+          "409": {
+            "description": "already closed, or a goal"
           }
         }
       }

@@ -922,3 +922,41 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 .bd-shots { display: flex; gap: var(--wz-space-3); flex-wrap: wrap; }
 .bd-shot { text-decoration: none; }
 .bd-d-more { margin: var(--wz-space-3) 0 0; padding: 0; border: 0; background: none; font: inherit; font-size: var(--wz-text-sm); color: var(--accent); cursor: pointer; }
+
+/* ---------- 0.27 busy feedback: a small spinner on the button that is working, 'Still working…' after 8 s, a brief result */
+.bd-busy { cursor: progress !important; }
+.bd-mini.bd-busy::before, .wz-button.bd-busy::before, .bd-btn.bd-busy::before, .bd-signin .bd-busy::before { content: ""; display: inline-block; flex: none; width: .8em; height: .8em; margin-right: 6px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: bd-spin .8s linear infinite; vertical-align: -.1em; box-sizing: border-box; }
+.bd-try.bd-busy { position: relative; }
+.bd-try.bd-busy > i::after { animation: bd-pulse .9s ease-in-out infinite alternate; }
+.bd-try.bd-busy .bd-try-s::after { content: ""; display: inline-block; width: .7em; height: .7em; margin-left: 6px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: bd-spin .8s linear infinite; vertical-align: -.1em; box-sizing: border-box; }
+@keyframes bd-pulse { to { opacity: .35; } }
+.bd-stillwork, .bd-flash { display: inline-flex; align-items: center; margin-left: 6px; font-size: .75rem; font-weight: 600; color: var(--ink-2); white-space: nowrap; }
+.bd-flash { color: var(--bd-ok, var(--accent)); animation: bd-fade .2s ease-out; }
+.bd-flash.err { color: var(--wz-danger, var(--ink)); }
+@keyframes bd-fade { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .bd-busy::before, .bd-try.bd-busy .bd-try-s::after, .bd-try.bd-busy > i::after { animation-duration: 2.4s; } }
+.bd-toast { position: fixed; z-index: 60; left: 50%; bottom: calc(20px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); max-width: min(92vw, 420px); padding: 10px 16px; border-radius: var(--r-pill); background: var(--ink); color: var(--wz-panel, var(--bg)); font-size: var(--wz-text-sm, .85rem); font-weight: 650; box-shadow: 0 6px 24px color-mix(in srgb, black 25%, transparent); pointer-events: none; animation: bd-fade .15s ease-out; }
+.bd-toast[hidden] { display: none; }
+
+/* ---------- 0.27 the '⋯' more-options menu, Drop, 'How to check', Coming in the next release */
+.bd-mini.bd-more { min-width: 36px; padding: 0 8px; justify-content: center; border-color: var(--line-2); color: var(--ink-2); font-size: 1rem; letter-spacing: .05em; }
+.bd-act-btns .bd-mini.bd-more { flex: 0 0 auto; }
+.bd-more-menu { display: grid; gap: 2px; margin: -4px -6px; }
+.bd-more-menu .bd-menu-i { display: flex; align-items: center; min-height: 40px; width: 100%; text-decoration: none; }
+@media (hover: hover) { .bd-more-menu .bd-menu-i:hover { background: var(--fill-2); } }
+.bd-drop { display: grid; gap: 8px; }
+.bd-drop .bd-area { min-height: 64px; font-size: .9rem; }
+.bd-drop-err:empty { display: none; }
+.bd-howto { flex-basis: 100%; margin: 2px 0 0; color: var(--ink-2); font-size: var(--wz-text-sm, .85rem); line-height: 1.4; }
+.bd-card.bd-next { opacity: .85; }
+.bd-card.bd-next .bd-where { color: var(--ink-2); }
+.bd-act.bd-act-quiet { justify-content: flex-end; }
+#sec-nextrel .bd-sec-h { color: var(--ink-3); }
+.rr-ctx { margin: 0 0 8px; color: var(--ink-2); font-size: var(--wz-text-sm, .85rem); }
+.rr-snap-row { margin: 8px 0 0; }
+.rr-snap-row[hidden], .rr-ctx[hidden] { display: none; }
+@media (max-width: 640px) { .bd-mini.bd-more { min-width: 44px; } }
+#appmodal .bd-appmodal-acts .bd-mini.bd-more { flex: 0 0 44px; }
+.bd-pop .bd-askrow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.bd-pop .bd-stillwork, .bd-pop .bd-flash { flex-basis: 100%; margin-left: 0; white-space: normal; }
+#appmodal .bd-toast { bottom: calc(96px + env(safe-area-inset-bottom, 0px)); }
