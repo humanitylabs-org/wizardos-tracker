@@ -33,7 +33,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.26.2'
+VERSION = '0.26.3'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1722,6 +1722,8 @@ def verdict(token, delivers, open_prs, box):
 # Store's latest release contains it. Specs and tools (wizard-os, ...) ship on merge. The first version seen is kept
 # (DATA_DIR/private/shipped.json), so 'Shipped in 0.3.134' does not move when a later release comes out.
 SHIP_SECONDS = 600
+SHIP_STALE_OK, WARM_SECONDS = 3600, 180
+_WARMING = threading.local()
 _ship = {}   # (item id, delivers key) -> (time, verdict)
 SHIP_RANK = {'waiting': 0, 'mac': 1, 'app': 1, 'testers': 2, 'unknown': 3, 'done': 4}
 
@@ -1787,7 +1789,9 @@ def ship_status(token, iid, delivers, open_prs, state, state_reason, labels, bas
     key = (iid, json.dumps(delivers, sort_keys=True), state)
     with LOCK:
         hit = _ship.get(key)
-    if hit and time.time() - hit[0] < SHIP_SECONDS:
+    # 0.26.3: stale-while-revalidate. A page load takes any answer under an hour old (the warm-up keeps them fresh);
+    # only the background warm-up re-asks once an answer is 3 minutes old.
+    if hit and time.time() - hit[0] < (WARM_SECONDS if getattr(_WARMING, 'on', False) else SHIP_STALE_OK):
         return hit[1]
     parts = [ship_one(token, d, base) for d in delivers]
     worst = min(parts, key=lambda p: SHIP_RANK[p[0]])
@@ -1892,15 +1896,13 @@ def _warm_releases():
     while True:
         try:
             key = accounts().get('default')
-            with LOCK:   # refresh lookups before they expire, so a page load never finds them cold
-                for k in [k for k, v in _ship.items() if time.time() - v[0] > SHIP_SECONDS / 2]:
-                    _ship.pop(k, None)
+            _WARMING.on = True
             if key:
                 for v in ('bugs', 'apps', 'core'):
                     done_list(key, {'view': v})
         except Exception:   # noqa: BLE001 - a warm-up miss only means the next page load does the lookup itself
             pass
-        time.sleep(240)
+        time.sleep(120)
 
 
 def board_view(person, args):
@@ -2488,7 +2490,22 @@ DONE_FIELDS = HEAVY_FIELDS + ' closedAt stateReason closer: timelineItems(itemTy
 DONE_PAGE = 'query($q: String!, $after: String) { ' + _PAGE % (40, DONE_FIELDS) + ' }'
 
 
+_done_cache = {}   # 0.26.3: (person, view) -> (time, answer); the warm-up refreshes it, page loads read it
+
+
 def done_list(person, args):
+    """0.26.3: answers from the last lookup (under an hour old) at once; the background warm-up keeps it fresh and
+    ?refresh=1 asks again."""
+    key = (person_key(person), _view(args))
+    hit = _done_cache.get(key)
+    if hit and not args.get('refresh') and not getattr(_WARMING, 'on', False) and time.time() - hit[0] < SHIP_STALE_OK:
+        return hit[1]
+    out = _done_list(person, args)
+    _done_cache[key] = (time.time(), out)
+    return out
+
+
+def _done_list(person, args):
     """GET /api/done?view=core|apps|bugs|goals: 0.18 Shipping and Done. Closed items since the reset date (newest first,
     up to 80), each with `ship` {state shipping|done, wait, text, version}, plus `open_ship` for open approved items
     (id -> ship). Release checks run in parallel and are cached (immutable answers for good)."""
@@ -2506,8 +2523,10 @@ def done_list(person, args):
         opened, _ = _view_search(acct['token'], view, f'org:{org} is:issue is:open {VIEW_Q[view]} label:approved,switch-default{',ai-review,ready-to-test' if view == 'bugs' else ''} sort:updated-desc', heavy=True, limit=80)
         opened = [n for n in opened if view_keeps(view, n['repository']['nameWithOwner'], base)]
     token, login = acct['token'], acct.get('login') or ''
+    warming = getattr(_WARMING, 'on', False)
 
     def one(n):
+        _WARMING.on = warming   # 0.26.3: the pool's threads re-ask only for the warm-up
         repo = n['repository']['nameWithOwner']
         iid = f"{repo}#{n['number']}"
         labels = [l['name'] for l in (n.get('labels') or {}).get('nodes') or []]
