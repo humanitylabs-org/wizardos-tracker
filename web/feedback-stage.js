@@ -36,7 +36,7 @@
   }
 
   function bins(v, list) {
-    if (!forView(v).length) return list;
+    // 0.30 (Miguel, 11 Nov call): always shown, even at 0, so everyone sees how many wait
     if (typeof STAGE_INFO === 'object' && !STAGE_INFO.feedback) STAGE_INFO.feedback = INFO;
     return [{ key: 'feedback', word: 'Pending approval', groups: ['feedback'], info: 'feedback', tip: 'From the Feedback app: a team member approves it (as a bug or an idea) or declines it' }, ...list];
   }

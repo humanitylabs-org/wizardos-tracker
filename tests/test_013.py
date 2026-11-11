@@ -253,7 +253,7 @@ class Reviews(unittest.TestCase):
         self.assertEqual(GH.issues[11]['labels'], {'bug', 'ready-to-test'})
         S.tested('j', {'repo': 'wizard-ux', 'number': 11, 'note': 'Swiping feels choppy'}, False)
         self.assertEqual(GH.issues[11]['labels'], {'bug', 'building'})
-        self.assertEqual(GH.issues[11]['comments'][-1], ('jdefleur', "Tested: doesn't work — @jdefleur\n\nWhat’s wrong: Swiping feels choppy"))
+        self.assertEqual(GH.issues[11]['comments'][-1], ('jdefleur', "Tested: still broken — @jdefleur\n\nWhat still happens: Swiping feels choppy"))
         GH.issues[10] = {'user': 'mistermizel', 'labels': {'bug', 'ai-review'}, 'comments': []}
         S.tested('j', {'repo': 'wizard-ux', 'number': 10}, True)   # 0.26: a bug's check is never gated on AI review
         self.assertEqual(GH.issues[10]['labels'], {'bug', 'approved'})

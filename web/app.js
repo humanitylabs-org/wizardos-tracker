@@ -580,7 +580,7 @@ function stageStat(v, key) {
       : { t: 'building', help: bug ? 'Building: the builder starts → fix merged' : 'Building: the builder starts → handed to AI review', xs: l => l.map(i => i.build) },
     answer: { t: 'answer', help: 'Needs an answer: the builder asks → someone answers', xs: l => l.flatMap(i => i.answer_rounds || []) },
     airev: { t: 'ai', help: 'AI review: handed off → passed on or sent back', xs: l => l.flatMap(i => i.ai_rounds || []) },
-    test: { t: 'review', help: 'Human review: ready to try → Works or Doesn’t work', xs: l => l.flatMap(i => i.review_rounds || []) },
+    test: { t: 'review', help: 'Human review: ready to try → Works or Needs changes', xs: l => l.flatMap(i => i.review_rounds || []) },
     show: { t: 'show', help: 'Show-and-tell: Works → James approves', xs: l => l.flatMap(i => i.show_rounds || []) },
     shipping: { t: 'shipping', help: 'Shipping: closed → in a release for everyone', xs: l => l.map(i => gap(i.closed_at, i.everyone_at)) },
     relwait: { t: 'relwait', help: 'Merged: fix merged → in For testers', xs: l => l.map(i => gap(i.handoff_at, i.testers_at)) },
@@ -700,7 +700,7 @@ function flow(d, groups, done, st, hist, bins) {
   const sn = el('still-n');   // 0.18.2
   sn.hidden = !ls;
   if (ls) {
-    sn.replaceChildren(make('b', '', 'Still not working: ' + ls.still), document.createTextNode(' · items where someone said Doesn’t work more than once'));
+    sn.replaceChildren(make('b', '', 'Sent back twice or more: ' + ls.still), document.createTextNode(' · items a person sent back to the builder more than once'));
     sn.classList.toggle('warn', ls.still > 0);
   }
 }
@@ -709,18 +709,18 @@ function flow(d, groups, done, st, hist, bins) {
 const HUMAN_CHECK_TIP = 'A quick sanity check by whoever filed it. It never holds up shipping.';
 const STAGE_INFO = {
   queued: 'Queued. Each card says why it waits: Next for the builder (it picks it up on its next run), or Oscar builds this one (the builder skips the Tracker and Builder repos).',
-  shipped: 'Fixed and merged switched on: in For testers within minutes, then For everyone with the next release. Shipping never waits on a human. The filer’s agent runs a quick AI check meanwhile. Doesn’t work, at any point, sends it back to Building.',
-  humancheck: 'A quick sanity check by whoever filed it. It never holds up shipping. They can do it any time after Shipped, even while it is still in For testers: Works, or Doesn’t work (back to Building).',
-  relwait: 'The fix is merged and switched on, waiting for the next release. Anyone on the team may check it any time: Works tags it Checked, Doesn’t work sends it back to Building.',
-  testers: 'The fix is in the For testers release. Checking it is optional and never holds it up: tap Check it, look, then Works (tags it Checked by you) or Doesn’t work (back to Building, kept out of Stable).',
+  shipped: 'Fixed and merged switched on: in For testers within minutes, then For everyone with the next release. Shipping never waits on a human. The filer’s agent runs a quick AI check meanwhile. Still broken, at any point, sends it back to Building.',
+  humancheck: 'A quick sanity check by whoever filed it. It never holds up shipping. They can do it any time after Shipped, even while it is still in For testers: Works, or Still broken (back to Building).',
+  relwait: 'The fix is merged and switched on, waiting for the next release. Anyone on the team may check it any time: Works tags it Checked, Still broken sends it back to Building.',
+  testers: 'The fix is in the For testers release. Checking it is optional and never holds it up: tap Check it, look, then Works (tags it Checked by you) or Still broken (back to Building, kept out of Stable).',
   everyone: 'The fix reached everyone: the Stable WizardOS release, or the app’s Store release. A Checked tag says who looked at it and when.',
-  checked: 'Whoever filed it said Works, or 7 days passed with no Doesn’t work: Checked (no problems in 7 days). Each card also says which release has it.',
+  checked: 'Whoever filed it said Works, or 7 days passed with no Still broken: Checked (no problems in 7 days). Each card also says which release has it.',
   james: 'James or Miguel approves before the builder starts. Core features change WizardOS for everyone. James or Miguel: Approve or Decline on the card.',
   building: 'The WizardOS Builder writes the change (a feature arrives behind a switch, off by default).',
   corebuild: 'Approved by James or Miguel. The WizardOS Builder writes the change behind a switch, off by default.',
   airev: 'The filer’s agent checks that the build matches the issue: on to Human review, or back to Building (counted as a kick-back).',
   answer: 'The builder asked a question and paused. It waits on whoever the question names (else the person who filed it). Answer in a comment on the item: any team member’s reply puts it back in the builder’s queue within 10 minutes.',
-  test: 'The person who filed it tries it on their Wizard (Update first if needed, then the switch if there is one) and says Works or Doesn’t work. Works on an app feature removes its switch: it ships always on. Doesn’t work goes back to Building.',
+  test: 'The person who filed it tries it on their Wizard (Update first if needed, then the switch if there is one) and says Works or Needs changes (with what should change). Works on an app feature removes its switch: it ships always on. Doesn’t work goes back to Building.',
   show: 'James sees it working. When he approves, the switch is removed (on for everyone) and it ships.',
   shipping: 'Approved, but not yet in a release everyone gets. It shows which wait it is in: Waiting for release, In For testers <version>, Waiting for Mac app build, or Waiting for <app> release.',
   done: 'In a release that reaches everyone: For everyone (stable) for WizardOS and the Mac app, the app’s latest Store release for apps. The card says Shipped in <version>.',
@@ -824,7 +824,7 @@ const pct = r => Math.round(r * 100) + '%';
 const times = x => (Math.round(x * 10) / 10) + '×';
 function kickLabel(ls, st) {
   // 0.13: two return arrows into Building: from AI review (fail) and from Human review (Doesn't work)
-  for (const [id, kk, from, word] of [['kick-ai', ls && ls.aiKick, 'AI review', 'AI review fail'], ['kick', ls && ls.kick, 'Human review', 'Doesn’t work']]) {
+  for (const [id, kk, from, word] of [['kick-ai', ls && ls.aiKick, 'AI review', 'AI review fail'], ['kick', ls && ls.kick, 'Human review', 'Needs changes']]) {
     const k = el(id);
     k.hidden = !!st.pending;
     if (st.pending) continue;
@@ -1581,16 +1581,20 @@ function tryToggle(i) {
   return greyTry(name, t.why || 'Not ready to try yet', false);
 }
 // Doesn't work always asks what's wrong (Miguel, 0.23.1): the note is required and goes into the issue comment
-const WRONG = { label: 'What’s wrong?', placeholder: 'e.g. Swiping feels choppy, it should glide one day at a time', send: 'Send' };
+// 0.30 (Robert, 11 Nov call): a feature that isn't quite right needs changes, not 'doesn't work'; a shipped bug that
+// still fails is 'Still broken'. The note steers the next build.
+const WRONG = { label: 'What should change?', placeholder: 'e.g. Swiping feels choppy, it should glide one day at a time', send: 'Send to the builder' };
+const BROKEN = { label: 'What still happens?', placeholder: 'e.g. The draft strip still shows 0 after a new draft', send: 'Send to the builder' };
+const NO_WORD = i => (i && (i.kind === 'bug' || i.category === 'bug') ? 'Still broken' : 'Needs changes');
 // 0.24.2: Doesn't work takes screenshots too (pick or paste, several, thumbnails); a failed send keeps the note open
-function doesntWork(area, i, b) { noteAsk(area, WRONG.placeholder, WRONG.send, (note, shots) => tested(i, false, note, b, shots), { required: true, label: WRONG.label, shots: true }); }
+function doesntWork(area, i, b) { const w = NO_WORD(i) === 'Still broken' ? BROKEN : WRONG; noteAsk(area, w.placeholder, w.send, (note, shots) => tested(i, false, note, b, shots), { required: true, label: w.label, shots: true }); }
 // Works (one tap, then the existing confirm) and Doesn't work: on the card, in the detail and in the app pop-up's bar
 function verdictBtns(i, area, wait) {
   const btns = make('span', 'bd-act-btns');
-  if (!i.can_review) { btns.append(greyBtn('Works', i.review_rule), greyBtn('Doesn’t work', i.review_rule)); return btns; }
+  if (!i.can_review) { btns.append(greyBtn('Works', i.review_rule), greyBtn(NO_WORD(i), i.review_rule)); return btns; }
   const yes = wait ? greyBtn('Works', wait, 'bd-mini bd-mini-go') : smallBtn('Works', b => askPop(b, i.category === 'core' ? 'Mark as works? It goes to James’ show-and-tell.' : i.shipped ? 'Mark as works? It closes as fixed.' : 'Mark as works? It ships with the next release.', 'Works', () => tested(i, true, '', b)));
   if (!wait) yes.classList.add('bd-mini-go');
-  const no = wait ? greyBtn('Doesn’t work', wait) : smallBtn('Doesn’t work', b => doesntWork(area, i, b));
+  const no = wait ? greyBtn(NO_WORD(i), wait) : smallBtn(NO_WORD(i), b => doesntWork(area, i, b));
   btns.append(yes, no);
   return btns;
 }
@@ -1607,7 +1611,7 @@ function actionArea(i, inDetail) {
     if (app && app.id !== 'wizardos-tracker') row.append(smallBtn(`Open ${app.name}`, b => openApp(app.id, app.name, b, i)));
     const yes = smallBtn('Works', b => askPop(b, 'Tag it Checked by you? It stays on its release path.', 'Works', () => tested(i, true, '', b)));
     yes.classList.add('bd-mini-go');
-    row.append(yes, smallBtn('Doesn’t work', b => doesntWork(row, i, b)), moreBtn(i, false));
+    row.append(yes, smallBtn('Still broken', b => doesntWork(row, i, b)), moreBtn(i, false));
     return row;
   }
   if (g === 'answer') {
@@ -1629,7 +1633,7 @@ function actionArea(i, inDetail) {
       if (r0) row.append(updPanel(r0, i));
       if (tg0) { const grp = make('div', 'bd-trygrp'); grp.append(tg0); row.append(grp); }
       if (!r0) row.append(...blockerBits(i, t0, t0.why || (t0.ob && t0.ob.state === 'no' && !t0.hit ? t0.ob.fix || ONBOX_TEXT.no : '')));
-      row.append(greyBtn('Works', i.review_rule), greyBtn('Doesn’t work', i.review_rule), moreBtn(i, false));
+      row.append(greyBtn('Works', i.review_rule), greyBtn(NO_WORD(i), i.review_rule), moreBtn(i, false));
       row.append(make('span', 'bd-why-s', i.review_rule));   // 0.20: 'James checks this one (he filed it)'
       if (!tg0 && !inDetail) row.append(...howTo(i));
       return row;
@@ -2051,7 +2055,7 @@ function bugCheckLines(i) {
   const bits = [];
   if (fx.changed) bits.push(part('What changed', fx.changed));
   const how = fx.how || (at && at.text) || '';
-  if (fx.dev) bits.push(part('How to check', 'Nothing to see by hand: this fix is behind the scenes and its automatic tests passed. Say Doesn’t work only if you still hit the problem.'));
+  if (fx.dev) bits.push(part('How to check', 'Nothing to see by hand: this fix is behind the scenes and its automatic tests passed. Say Still broken only if you still hit the problem.'));
   else bits.push(part('How to check', how || 'Open the app where it was broken and do what the report describes; it should work now.'));
   if (shots.length) {
     const s_ = make('div', 'bd-shots');
@@ -2291,7 +2295,7 @@ function drawItemFlow(f) {
   const box = el('d-flow');
   const still = el('d-still'), k2 = f.kicks || 0;
   still.hidden = !(f.still_not_working || k2 >= 2);
-  if (!still.hidden) { still.textContent = `Still not working · Doesn’t work ${k2}×`; still.title = `Someone said Doesn’t work ${k2} times on this item`; }
+  if (!still.hidden) { still.textContent = `Sent back ${k2}×`; still.title = `A person sent this back to the builder ${k2} times`; }
   const ol = make('ol', 'bd-dflow'); ol.setAttribute('aria-label', 'This item so far');
   const staged = !!f.staged, closedDate = f.closed_at ? new Date(f.closed_at * 1000) : null;
   const val = {
@@ -2326,7 +2330,7 @@ function drawStageFlow(f, v) {
   const box = el('d-flow');
   const still = el('d-still'), k2 = f.kicks || 0;
   still.hidden = !(f.still_not_working || k2 >= 2);
-  if (!still.hidden) { still.textContent = `Still not working · Doesn’t work ${k2}×`; still.title = `Someone said Doesn’t work ${k2} times on this item`; }
+  if (!still.hidden) { still.textContent = `Sent back ${k2}×`; still.title = `A person sent this back to the builder ${k2} times`; }
   const ol = make('ol', 'bd-dflow'); ol.setAttribute('aria-label', 'This item so far');
   const cur = itemStageNow(v, f), bins = binsOf(v), curAt = bins.findIndex(b => b.key === cur);
   bins.forEach((x, n) => {
@@ -2345,7 +2349,7 @@ function drawStageFlow(f, v) {
   wrap.style.gridTemplateColumns = ol.style.gridTemplateColumns;
   const back = [];
   if (f.ai_kicks) back.push(`AI review sent it back ${f.ai_kicks}×`);
-  if (f.kicks) back.push(`Doesn’t work ${f.kicks}×`);
+  if (f.kicks) back.push(`Sent back by a person ${f.kicks}×`);
   box.replaceChildren(wrap);
   if (back.length) box.append(make('p', 'bd-meta bd-dflow-note', back.join(' · ') + (f.kick_to_done != null ? ` · ${dur(f.kick_to_done)} from first kick-back to done` : '')));
   if (!f.staged && f.state === 'open' && v !== 'core') box.append(make('p', 'bd-meta bd-dflow-note', `Queued for ${dur((f.spent || {}).queued || 0)} · no build yet`));
@@ -2664,7 +2668,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.29.0';
+const PAGE_VERSION = '0.30.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2709,7 +2713,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.29.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.30.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

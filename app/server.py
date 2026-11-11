@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.29.0'
+VERSION = '0.30.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -2776,8 +2776,8 @@ STEP_TEXT = {
              'bugs': 'Anyone on the team, or their own agent, opens a bug and closes it once it works.'},
     'build': 'The WizardOS Builder writes the code, then labels it ai-review and says what to check.',
     'ai': "The opener's agent (a goal's owner's) checks the build matches the issue (for a goal: that the slice moves its next done-list item forward): pass to Human review, or back to Building.",
-    'review': {'bugs': "Whoever filed it tries it and says Works or Doesn't work.",
-               'features': "Whoever filed it tries it (with its switch) and says Works or Doesn't work.",
+    'review': {'bugs': "Whoever filed it tries it and says Works or Still broken.",
+               'features': "Whoever filed it tries it (with its switch) and says Works or Needs changes.",
                'goals': "The goal's owners, or {who}, look at the slice: Keep going (the builder takes the next done-list item) or Change direction (with a note), and tick the done-list items that are now done."},
 }
 
@@ -2964,7 +2964,7 @@ def steps_for(view, base=None):
          'except': '' ,
          'about': STEP_TEXT['review'][view].format(who=goal_names), 'reviews': base['human_reviews'],
          'next': (f"Keep going or Change direction: back to Build for the next slice. {goal_names} closes the goal once every done-list item is ticked." if view == 'goals'
-                  else "Works: Shipping until it is in a release for everyone (core features: James's show-and-tell first), then Done. Doesn't work: back to Build.")},
+                  else "Works: Shipping until it is in a release for everyone (core features: James's show-and-tell first), then Done. Needs changes: back to Build with the note.")},
     ]
 
 
@@ -3001,7 +3001,7 @@ def policy(person=None):
 
 AI_LABEL, HUMAN_LABEL = 'ai-review', 'ready-to-test'
 WORKS = re.compile(r"^\s*Tested:\s*works\b", re.I)
-RESET = re.compile(r"^\s*(Tested:\s*doesn.t work|AI review:)", re.I)
+RESET = re.compile(r"^\s*(Tested:\s*(?:doesn.t work|needs changes|still broken)|AI review:)", re.I)
 
 
 def _goal_people(base):
@@ -3687,7 +3687,9 @@ def tested(person, args, works):
         if to_default:
             body += '\n\nBuilder: remove the switch (always on for everyone), merge, then hand back for the AI check.'
     else:
-        body = f"Tested: doesn't work \u2014 @{login}\n\nWhat\u2019s wrong: {note}"
+        # 0.30 (Robert, 11 Nov call): features need changes (iteration); a shipped bug is still broken
+        body = (f"Tested: still broken \u2014 @{login}\n\nWhat still happens: {note}" if cat == 'bug'
+                else f"Tested: needs changes \u2014 @{login}\n\nWhat should change: {note}")
     urls, left, why = _attach(acct, shots)
     body += reporter.images_md(urls, len(left))
     gh(acct['token'], 'POST', f'/repos/{full}/issues/{number}/comments', {'body': body})
