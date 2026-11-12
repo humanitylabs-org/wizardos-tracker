@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.31.1'
+VERSION = '0.32.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -47,13 +47,16 @@ CLIENT_ID = re.compile(r'^[A-Za-z0-9._-]{8,80}$')
 # Only these people may open Goals in the app (GitHub logins, comma separated).
 GOAL_AUTHORS = {x.strip().lower() for x in os.environ.get('GOAL_AUTHORS', 'jdefleur').split(',') if x.strip()}
 # The builder agent's GitHub account: it labels finished work ready-to-test and says what to check.
-BUILDER = os.environ.get('BOARD_BUILDER', 'wizardosbuilder').strip().lower()
+BUILDER = os.environ.get('BOARD_BUILDER', 'wizardos-builder[bot]').strip().lower()
+# 0.32 (12 Nov): the builder is the GitHub App WizardOS Builder. REST names it wizardos-builder[bot], GraphQL
+# wizardos-builder, search app/wizardos-builder; the suspended wizardosbuilder user still counts for old items.
+BUILDERS = {BUILDER, 'wizardos-builder[bot]', 'wizardos-builder', 'app/wizardos-builder', 'wizardosbuilder'}
 DEFAULT_REPO = os.environ.get('BOARD_DEFAULT_REPO', 'wizard-ux')
 MEDIA_REPO = os.environ.get('BOARD_MEDIA_REPO', 'humanitylabs-org/wizard-issue-media')
 # 0.12: the human UI is for the team only. Signing in needs an active member of this org, and a person's
 # own GitHub account (agent and builder accounts are refused; agents use the MCP tools instead).
 TEAM_ORG = os.environ.get('BOARD_TEAM_ORG', 'humanitylabs-org').strip()
-AGENT_LOGINS = {'oscarhenrycollins', 'defleur-agents', 'wizardosbuilder'}
+AGENT_LOGINS = {'oscarhenrycollins', 'defleur-agents'} | BUILDERS
 MEMBER_SECONDS = 600
 # 0.24.0: plain one-liners a new team member understands (no org jargon up front, no token talk for GitHub sign-in)
 NOT_MEMBER = 'This is for the WizardOS team, and this GitHub account isn\'t on it yet. Ask Miguel or James to add you, then sign in again.'
@@ -281,7 +284,7 @@ def not_member_problem(token, login):
 
 def agent_logins(base=None):
     """Agent and builder accounts: the fixed set, the roster's agents and builder, and policy.json `agents`."""
-    out = set(AGENT_LOGINS) | {BUILDER}
+    out = set(AGENT_LOGINS) | BUILDERS
     try:
         base = base or policy_base()
         out |= {a['login'].lower() for t in base['team'] for a in t['agents']}
@@ -515,7 +518,7 @@ def refiled(data):
         x = stack.pop()
         if isinstance(x, dict):
             a = x.get('author')
-            if isinstance(a, dict) and (a.get('login') or '').lower() == BUILDER and isinstance(x.get('body'), str):
+            if isinstance(a, dict) and (a.get('login') or '').lower() in BUILDERS and isinstance(x.get('body'), str):
                 m = REFILED.search(x['body'])
                 if m:
                     x['author'] = {**a, 'login': m.group(1)}
@@ -1375,7 +1378,7 @@ def _card(node, tab):
         out.update(owner=assignee or author, progress=prog, status=status)
     elif tab == 'test':
         said = [c for c in (node.get('comments') or {}).get('nodes') or []
-                if ((c.get('author') or {}).get('login') or '').lower() == BUILDER]
+                if ((c.get('author') or {}).get('login') or '').lower() in BUILDERS]
         out['check'] = re.sub(r'^(ready (to|for) test(ing)?)[.:!\s—-]*', '', _plain(said[-1]['body'], 320), flags=re.I) if said else ''
         out['check_from'] = 'builder' if said else ''
         out['switch'], out['switch_how'] = switch_info([c.get('body') for c in said], node.get('body'))
@@ -2751,7 +2754,7 @@ POLICY_DEFAULT = {
         {'name': 'Jan', 'logins': ['JanMesaric'], 'agents': [], 'pronoun': 'he'},
         {'name': 'Robert', 'logins': ['hacalastudio'], 'agents': [], 'pronoun': 'he'},
     ],
-    'builder': {'name': 'WizardOS Builder', 'logins': [BUILDER]},
+    'builder': {'name': 'WizardOS Builder', 'logins': sorted(BUILDERS)},
     # Who may open and close items in each view: a list of team names, or "team" for everyone on it.
     'open': {'goals': ['James'], 'features': 'team', 'bugs': 'team'},
     # 0.9: target time per step (seconds). Drawn as a tick on each bin's range bar; the median turns
@@ -2854,7 +2857,7 @@ def policy_base():
     over = _policy_file()
     team = [x for x in (_team_entry(t) for t in (over.get('team') if isinstance(over.get('team'), list) else POLICY_DEFAULT['team'])) if x]
     b = over.get('builder') if isinstance(over.get('builder'), dict) else POLICY_DEFAULT['builder']
-    builder = {'name': str(b.get('name') or 'WizardOS Builder')[:40], 'logins': [x for x in b.get('logins') or [BUILDER] if isinstance(x, str)]}
+    builder = {'name': str(b.get('name') or 'WizardOS Builder')[:40], 'logins': sorted({x.lower() for x in b.get('logins') or [] if isinstance(x, str)} | BUILDERS)}
     opn = dict(POLICY_DEFAULT['open'])
     if isinstance(over.get('open'), dict):
         opn.update({k: v for k, v in over['open'].items() if k in VIEWS and (v == 'team' or isinstance(v, list))})
@@ -3537,7 +3540,7 @@ def mention_names(body, base=None):
     """The team names a comment @-mentions, in order: a person's login is the person, an agent's login is its owner
     (@defleur-agents is James), except ANSWER_AS_SELF. The builder and logins outside the team are left out."""
     base = base or policy_base()
-    bots = {x.lower() for x in base['builder']['logins']} | {BUILDER.lower()}
+    bots = {x.lower() for x in base['builder']['logins']} | BUILDERS
     out = []
     for login in MENTION.findall(re.sub(r'```.*?```', ' ', body or '', flags=re.S)):
         low = login.lower()
@@ -3582,7 +3585,7 @@ def builder_question(rows, base=None):
     @-mentions], 'at': index of the comment or None}. The sentences that end in '?' (else that contain one); a short
     question gets the sentence before it in the same paragraph. No '?': the paragraph after 'Question'."""
     base = base or policy_base()
-    bots = {x.lower() for x in base['builder']['logins']} | {BUILDER.lower()}
+    bots = {x.lower() for x in base['builder']['logins']} | BUILDERS
     said = [(k, b) for k, (who, b) in enumerate(rows or []) if (who or '').lower() in bots and b]
     if not said:
         return {'question': '', 'asked': [], 'at': None}
@@ -3651,7 +3654,7 @@ def checked_of(node, base=None):
     if not node.get('closedAt') or (node.get('stateReason') or '').lower() == 'not_planned':
         return None
     closer = next((((e or {}).get('actor') or {}).get('login') for e in reversed(((node.get('closer') or {}).get('nodes')) or []) if e), None)
-    bots = {x.lower() for x in base['builder']['logins']} | {BUILDER.lower()}
+    bots = {x.lower() for x in base['builder']['logins']} | BUILDERS
     if closer and closer.lower() not in bots:
         return {'by': person_of(closer, base), 'text': 'Checked by ' + person_of(closer, base), 'at': node.get('closedAt')}
     swept = any(((c or {}).get('author') or {}).get('login', '').lower() in bots and '7 days' in ((c or {}).get('body') or '')
@@ -3711,7 +3714,7 @@ def tested(person, args, works):
         # 0.26.4 (Miguel, 11 Nov): an approved app feature ships always on. With a switch it stays open with
         # switch-default; the builder removes the switch, merges, and the AI check closes it (no second human test).
         rows = _issue_comments(acct, full, number, cur.get('comments') or 0)
-        sw, how = switch_info([b for w, b in _comment_rows(rows) if w.lower() == BUILDER], cur.get('body'))
+        sw, how = switch_info([b for w, b in _comment_rows(rows) if w.lower() in BUILDERS], cur.get('body'))
         to_default = bool(sw or how)
     if works:
         body = f'Tested: works \u2014 @{login}'
@@ -3866,7 +3869,7 @@ def show_and_tell(person, args):
     if SHOW_LABEL not in names:
         raise Problem(409, 'This is not waiting for show-and-tell. Refresh to see the latest.')
     rows = _issue_comments(acct, full, number, cur.get('comments') or 0)
-    said = [b for w, b in _comment_rows(rows) if w.lower() == BUILDER]
+    said = [b for w, b in _comment_rows(rows) if w.lower() in BUILDERS]
     sw, how = switch_info(said, cur.get('body'))
     switched = bool(sw or how)
     body = f'Show-and-tell: approved \u2014 @{login}' + ('\n\nBuilder: remove the switch (on for everyone by default), merge, then close this issue.' if switched else '')
@@ -3917,7 +3920,7 @@ def drop_item(person, args, agent=False):
         _ensure_label(acct, full, WONTFIX_LABEL, 'ffffff', 'Not a bug, or won\u2019t fix (said in the Tracker)')
     else:
         rows = _issue_comments(acct, full, number, cur.get('comments') or 0)
-        sw, how = switch_info([b for w, b in _comment_rows(rows) if w.lower() == BUILDER], cur.get('body'))
+        sw, how = switch_info([b for w, b in _comment_rows(rows) if w.lower() in BUILDERS], cur.get('body'))
         cleanup = bool((sw or how) and MERGED_LABELS & set(names))
         label = DROPPED_LABEL
         body = f"Dropped (not needed) \u2014 {who} (@{login})\n\nWhy: {reason}"
