@@ -90,7 +90,7 @@ const SORT_FN = {
 // a goal they own that needs a status update (none yet or old; the server's `turn`).
 function myTurn(i) {
   if (!i || i.closed_at || i.state === 'closed') return false;
-  if (i.kind === 'bug' && i.shipped) return false;   // 0.26: a bug's check never waits on anyone
+  if (i.kind === 'bug' && (i.shipped || i.no_fix)) return false;   // 0.26: a bug's check never waits on anyone
   if (i.group === 'test') return !!i.can_review && !i.nextrel;
   if (i.group === 'james' || i.group === 'show') return !!i.can_james;
   if (i.group === 'answer') return !!i.turn;   // 0.28: the builder asked you a question
@@ -1426,6 +1426,7 @@ const CORE_NAMES = ['wizard-ux', 'wizard-app-manager', 'wizard-agent-service', '
 function whereLine(i) {
   const g = i.group;
   if (i.nextrel) return [nextLine(i), ''];
+  if (i.kind === 'bug' && i.no_fix) return [i.open_prs ? 'No fix yet · a fix is open, not merged' : 'No fix yet · nothing was merged for this', ''];   // 0.31
   if (i.kind === 'bug' && (i.shipped || ((g === 'shipping' || g === 'done') && i.state_reason !== 'not_planned'))) return bugLine(i);
   // 0.25.1 (Miguel): review stages lead with 'Waiting on <who>' (waitHead); this line only adds what is left to say
   if (g === 'test') { const ob = onboxOf(i); return ob && ob.state === 'no' && ob.fix !== 'Not released yet' ? ['Update first, then check it', ''] : ['', '']; }
@@ -1601,6 +1602,12 @@ function verdictBtns(i, area, wait) {
 // The one action area: exactly what is needed now, greyed with the reason for anyone else.
 function actionArea(i, inDetail) {
   const g = i.group, row = make('div', 'bd-act');
+  // 0.31 (Miguel, 12 Nov): a bug with no merged fix has nothing to check; one button sends it back to the builder
+  if (i.kind === 'bug' && i.no_fix) {
+    if (!i.can_fail) return null;
+    row.append(smallBtn('Send back to the builder', b => askPop(b, 'Nothing was fixed yet. Send it back to the builder?', 'Send back', () => tested(i, false, 'No fix was merged for this yet: it reached the check by mistake. Please fix it.', b))), moreBtn(i, false));
+    return row;
+  }
   // 0.26 (Miguel, 11 Nov): a shipped bug: an optional, one-tap check by anyone on the team. The card has Check it
   // (opens the detail: what changed, where to look, Before / After); the detail has Open <app>, Works, Doesn't work.
   if (i.kind === 'bug' && i.shipped && i.state_reason !== 'not_planned') {
@@ -2083,7 +2090,7 @@ function openDetail(i, toAct) {
   el('d-labels').textContent = '';
   roles(i);
   el('d-still').hidden = true;   // 0.18.2: set from the item's own flow (Doesn't work said more than once)
-  const inReview = i.group === 'test';   // 0.16
+  const inReview = i.group === 'test' && !i.no_fix;   // 0.16; 0.31: nothing shipped, nothing to look for
   el('d-onbox').hidden = !inReview || !!i.nextrel;
   if (inReview && !i.nextrel) onboxLine(el('d-onbox'), i);
   releaseLine(i);
@@ -2239,7 +2246,7 @@ function detailAct(i) {
   const [text] = whereLine(i);
   const wh = waitHead(i);
   const chk = i.kind === 'bug' && i.shipped;
-  a.replaceChildren(make('h3', 'bd-sec-h bd-d-h', chk ? 'Does it work now?' : wh ? wh.textContent : (text || 'Next')), area);
+  a.replaceChildren(make('h3', 'bd-sec-h bd-d-h', chk ? 'Does it work now?' : i.kind === 'bug' && i.no_fix ? 'No fix yet' : wh ? wh.textContent : (text || 'Next')), area);
   const ob = el('d-onbox');
   onceOnly(a, 'Not released yet', !!(ob && !ob.hidden && ob.textContent.includes('Not released yet')));
 }
@@ -2668,7 +2675,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.30.1';
+const PAGE_VERSION = '0.31.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2713,7 +2720,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.30.1' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.31.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

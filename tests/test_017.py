@@ -93,11 +93,17 @@ class CloseGoal(unittest.TestCase):
         self.assertFalse(a['all_done'])
 
 
+def FIXED(n):
+    """0.31: a merged PR that fixed item n (bugs in their check need one, or they say No fix yet)."""
+    return {'source': {'__typename': 'PullRequest', 'number': 900 + n, 'url': f'https://github.com/humanitylabs-org/wizard-ux/pull/{900 + n}',
+                       'state': 'MERGED', 'merged': True, 'mergeCommit': {'oid': 'a' * 40}, 'repository': {'nameWithOwner': 'humanitylabs-org/wizard-ux'}}}
+
+
 def _node(n, author, labels, body='', assignees=()):
     return {'number': n, 'title': f'Item {n}', 'url': f'https://github.com/humanitylabs-org/wizard-ux/issues/{n}', 'body': body,
             'createdAt': '2026-11-01T00:00:00Z', 'updatedAt': '2026-11-02T00:00:00Z', 'author': {'login': author},
             'assignees': {'nodes': [{'login': a} for a in assignees]}, 'repository': {'nameWithOwner': 'humanitylabs-org/wizard-ux'},
-            'labels': {'nodes': [{'name': l} for l in labels]}, 'comments': {'totalCount': 0, 'nodes': []}, 'timelineItems': {'nodes': []}}
+            'labels': {'nodes': [{'name': l} for l in labels]}, 'comments': {'totalCount': 0, 'nodes': []}, 'timelineItems': {'nodes': [FIXED(n)] if 'bug' in labels else []}}
 
 
 class SameForEveryone(unittest.TestCase):
