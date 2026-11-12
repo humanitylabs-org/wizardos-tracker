@@ -10,7 +10,7 @@ import unittest
 from pathlib import Path
 
 from test_013 import S, reset
-from test_017 import people
+from test_017 import people, FIXED
 from test_0182 import node
 
 JS = (Path(__file__).resolve().parent.parent / 'web/app.js').read_text()
@@ -95,8 +95,8 @@ class Board(unittest.TestCase):
         reset()
         people()
         self.saved = (S._view_search, S.view_stats, S.org_repos)
-        nodes = [node(1, ['bug', 'ai-review'], author='mistermizel', repo='humanitylabs-org/wizard-messenger'),
-                 node(2, ['bug', 'ready-to-test'], author='defleur-agents', repo='humanitylabs-org/wizard-messenger'),
+        nodes = [node(1, ['bug', 'ai-review'], author='mistermizel', repo='humanitylabs-org/wizard-messenger', timelineItems={'nodes': [FIXED(1)]}),
+                 node(2, ['bug', 'ready-to-test'], author='defleur-agents', repo='humanitylabs-org/wizard-messenger', timelineItems={'nodes': [FIXED(2)]}),
                  node(3, ['bug'], repo='humanitylabs-org/wizardos-tracker'),
                  node(4, ['bug'], repo='humanitylabs-org/wizard-messenger')]
         S._view_search = lambda token, view, q, **kw: (nodes, len(nodes))
