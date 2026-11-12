@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.31.0'
+VERSION = '0.30.1'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -2352,11 +2352,6 @@ def board_split(person, args):
             team = on_team(login, base)
             extra.update(shipped=True, can_review=team, can_fail=team, turn=False, checked=checked_of(n, base),
                          review_rule='' if team else 'Only the WizardOS team checks bugs.')
-            if group in ('airev', 'test') and not card.get('delivers'):
-                # 0.31 (Miguel, 12 Nov; wizard-os#548): no merged PR links to it, so nothing shipped and there is nothing
-                # to check. Never ask anyone 'Does it work now?' then: say No fix yet and offer Send back to the builder.
-                extra.update(shipped=False, no_fix=True, can_review=False, can_fail=team, checked=None,
-                             review_rule='Nothing to check yet: no fix was merged for this.')
         card.update(group=group, category=cat, kind='bug' if cat == 'bug' else 'feature', mine=same_person(author, login, base),
                     can_close=same_person(author, login, base), opener=person_of(author, base), created_at=n.get('createdAt'),
                     labels=names, blocked=any(str(l).lower().startswith('builder:blocked') for l in names), **extra)
