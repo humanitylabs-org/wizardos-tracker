@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.31.0
+version: 0.31.1
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -159,6 +159,6 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 
 **0.30.0** (Robert's onboarding call, 11 Nov) **Needs changes, not Doesn't work.** In Human review a feature that isn't quite right is iteration, not failure: the button reads **Needs changes** and its required note asks "What should change?" (sent to the builder). A shipped bug's optional check reads **Still broken** ("What still happens?"). The GitHub comments say the same (`Tested: needs changes` / `Tested: still broken`; the old `Tested: doesn't work` is still read). Stats say "Sent back twice or more". **Pending approval** now always shows in the strip, even at 0.
 
-**0.31.0** (Miguel, 12 Nov; Jan's report on wizard-os#548) **No fix, no check.** A bug in its AI or human check with no merged PR linked to it no longer asks "Does it work now?" with a generic "it should work now": its card says **No fix yet** (or that a fix is open, not merged), skips the on-your-Wizard line, never counts as your turn, and has one button, **Send back to the builder**, which sends it back to Building with a note.
+**0.31.1** **Reverted 0.31.0 (No fix yet).** It judged a fix by the PR links and comments GitHub shows, but GitHub hides everything from the builder's account, so it called real fixes No fix yet. Back to 0.30.1 behaviour.
 
 **0.30.1** (bug, wizardos-tracker#65) **A GitHub hiccup after filing no longer shows as a failure.** Report or request said "GitHub answered 502." although the ticket was filed, because GitHub briefly failed the read-back after the create. Reads are now asked again once on a GitHub 500/502/503/504, and once the issue exists a failed read-back uses GitHub's answer to the create, so the form says it was sent (and nobody files it twice). Creates and other writes are never retried.
