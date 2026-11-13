@@ -100,7 +100,7 @@ class RenderedToggle(unittest.TestCase):
         self.assertTrue(x['popupWhy'])
         n = self.out['app_named']   # 'Switch: movies:friendly-phone' while Movies doesn't list it
         self.assertTrue(n['cardGrey'] and n['popupGrey'])
-        self.assertIn('doesn’t list this switch yet', n['popupWhy'])
+        self.assertIn('comes with its next release', n['popupWhy'])
 
 
 if __name__ == '__main__':

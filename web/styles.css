@@ -973,3 +973,69 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 .bd-dflow-st .bd-dbin-w { overflow-wrap: normal; hyphens: auto; text-align: center; }
 .bd-dflow-st .bd-dbin { padding-inline: 1px; }
 #flow .bd-loops .bd-kick { transform: none; left: auto; top: auto; }
+
+/* ---------- 0.33 (Miguel, 13 Nov): a calm top, one-tap Try it on every card, nothing spills out of a bubble ---------- */
+/* Top: Goals | Core Apps Bugs | (Builder, only while paused) | + Report | ⋯. Stats and Refresh live in the ⋯ menu; the
+   tools row keeps Filter and Sort, plus the refresh only while it runs or when the list is old. */
+.bd-hbar > .bd-topmore { flex: none; margin-left: auto; }
+.bd-hbar > .bd-toggle:not([hidden]) ~ .bd-topmore, .bd-hbar > .bd-rr:not([hidden]) ~ .bd-topmore { margin-left: 0; }
+.bd-hbar > .bd-rr:not([hidden]) { margin-left: auto; }
+.bd-hbar > .bd-toggle:not([hidden]) ~ .bd-rr { margin-left: 0; }
+.bd-hbar > .bd-toggle { color: var(--wz-warning, var(--ink-2)); }
+.bd-tools #stats-btn[aria-expanded="false"] { display: none; }
+.bd-tools .bd-fresh[hidden], .bd-tools .bd-reload[hidden] { display: none; }
+.bd-tools .bd-fresh:not([hidden]) { margin-left: auto; }
+.bd-topmenu { min-width: 200px; }
+.bd-topmenu .bd-menu-i { display: flex; align-items: center; gap: 10px; min-height: 44px; }
+.bd-menu-t { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bd-menu-s { flex: none; color: var(--ink-3); font-size: .75rem; white-space: nowrap; }
+.bd-menu-sw .bd-track { flex: none; position: relative; width: 28px; height: 16px; border-radius: 999px; border: 1px solid var(--line-2); background: var(--fill-2); box-sizing: border-box; }
+.bd-menu-sw .bd-track > i { position: absolute; top: 2px; left: 2px; width: 10px; height: 10px; border-radius: 50%; background: var(--ink-3); transition: transform var(--wz-motion-fast) var(--wz-ease); }
+.bd-menu-sw[aria-checked="true"] .bd-track { background: var(--accent); border-color: var(--accent); }
+.bd-menu-sw[aria-checked="true"] .bd-track > i { transform: translateX(12px); background: var(--on-accent); }
+.bd-topmenu .bd-menu-i[aria-checked]::after { content: none; }
+.bd-topmenu .bd-menu-i[aria-checked="true"] { background: none; font-weight: inherit; }
+.bd-topmore.bd-busy svg { animation: bd-spin .8s linear infinite; }
+
+/* Nothing an item has to say is 'nothing': no switch says 'Already on for you — just try it' */
+.bd-live { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; max-width: 100%; padding: 0 12px 0 10px; border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--bd-ok, var(--accent)) 14%, transparent); color: var(--ink); font-size: .8rem; font-weight: 650; box-sizing: border-box; }
+.bd-live-i { flex: none; color: var(--bd-ok, var(--accent)); font-weight: 800; }
+.bd-live-t { min-width: 0; overflow-wrap: anywhere; }
+.bd-live.bd-live-steps { background: none; border: 1px dashed var(--line-2); color: var(--ink-2); }
+.bd-live.bd-live-steps .bd-live-i { color: var(--ink-3); }
+
+/* Stage tiles: labels stay inside their tile (wrap to two lines at most, centred); no ⓘ squeezing the words (each
+   stage's explanation is in Stats); the gaps carry the flow instead of arrows. */
+.bd-strip { --ga: 8px; }
+.bd-strip .bd-arrow { visibility: hidden; }
+.bd-strip .bd-i { display: none; }
+.bd-strip .bd-binx { min-width: 0; overflow: hidden; padding-inline: 6px; box-sizing: border-box; }
+.bd-strip .bd-bin-w { display: block; max-width: 100%; font-size: .72rem; line-height: 1.2; text-align: center; overflow-wrap: normal; hyphens: manual; text-wrap: balance;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.bd-strip .bd-bin-s { display: none; }
+/* Stats: the median alone under each stage (the bar shows the spread; the tooltip has the numbers), so 7-8 stages fit */
+.bd-statsx .bd-rn .lo, .bd-statsx .bd-rn .hi { display: none; }
+.bd-statsx .bd-rn { justify-content: center; }
+.bd-statsx .bd-bin-w { overflow-wrap: normal; text-wrap: balance; }
+/* The detail's per-item line: same rule, small */
+.bd-dbin { overflow: hidden; }
+.bd-dbin-w { max-width: 100%; text-align: center; line-height: 1.15; overflow-wrap: normal; text-wrap: balance; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+.bd-dbin-v { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+/* Chips, pills and buttons never spill: long words break, one-line chips end in … */
+.bd-card { overflow-wrap: anywhere; }
+.bd-mini, .bd-tool, .bd-chip { max-width: 100%; box-sizing: border-box; }
+.bd-tool { overflow: hidden; text-overflow: ellipsis; }
+.bd-why-s, .bd-sw-why, .bd-sw-name, .bd-where, .bd-hint, .bd-howto, .bd-act-l { overflow-wrap: anywhere; min-width: 0; }
+.bd-blocker { flex-wrap: wrap; min-width: 0; max-width: 100%; }
+.bd-act > .bd-why-s, .bd-trygrp + .bd-why-s { margin-left: 0; }
+@media (max-width: 599px) {
+  .bd-hbar > .bd-rr:not([hidden]) { margin-left: 0; }
+  .bd-hbar > .bd-switch ~ .bd-gear.bd-topmore { margin-left: auto; width: 44px; }
+  .bd-strip .bd-binx { padding: 0 11px; overflow: visible; }
+  .bd-strip .bd-bin-w { display: inline; -webkit-line-clamp: unset; white-space: nowrap; font-size: .78rem; }
+  .bd-dflowx { --ga: 4px; }
+  .bd-dflowx .bd-arrow { visibility: hidden; }
+  .bd-dbin { padding-inline: 1px; }
+  .bd-dbin-w { font-size: .58rem; letter-spacing: -.01em; }
+}
