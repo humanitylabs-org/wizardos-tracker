@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.33.3'
+VERSION = '0.33.4'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1698,6 +1698,35 @@ def mac_release(token, repo):
     return _timed_get(('mac', repo.lower()), get)
 
 
+RECIPE_ONLY = re.compile(r'^(runtipi/|\.github/|wizard\.md$|[^/]+\.md$)')
+
+
+def recipe_only(token, repo, code, sha):
+    """0.33.4: True when every file that changed from the image's code commit to `sha` is recipe or notes (a Store
+    recipe PR that pins the image, like Messenger's 'pin sha-…' releases): the code at `sha` is the image's code."""
+    def ask():
+        got = gh(token, 'GET', f'/repos/{repo}/compare/{code}...{sha}?per_page=100')
+        if not isinstance(got, dict) or got.get('status') not in ('ahead', 'identical'):
+            return None
+        files = got.get('files')
+        if not isinstance(files, list) or len(files) >= 300:
+            return None
+        return all(RECIPE_ONLY.match(str((f or {}).get('filename') or '')) for f in files)
+    return _forever_get(('recipe-only', repo.lower(), code, sha), ask)
+
+
+def in_build(token, repo, sha, recipe):
+    """Is merged PR `sha` in what recipe commit `recipe` installs? Its image's code commit holds it, or the PR changed
+    only the recipe and the recipe has it (a recipe PR's own merge commit is never inside the image it pins)."""
+    if not recipe:
+        return None
+    code = code_commit(token, repo, recipe)
+    got = contains(token, repo, sha, code)
+    if got is False and code and code != recipe and contains(token, repo, sha, recipe):
+        return bool(recipe_only(token, repo, code, sha))
+    return got
+
+
 def where(token, d, box):
     """One merged PR on this Wizard: ('yes'|'no'|'unknown'|'na', fix text or None, app id the box should report)."""
     repo, sha = d['repo'], d['sha']
@@ -1750,12 +1779,12 @@ def where(token, d, box):
     # 0.33.3: the recipe that set the installed version, not the listing's newest commit: an app whose recipe pins its
     # image by tag (Wizard Notes) keeps the same version while main moves on, so the listing commit over-claims.
     recipe = version_commit(token, repo, ver) or (app['commit'] if ver == app['version'] else None)
-    have = contains(token, repo, sha, code_commit(token, repo, recipe)) if recipe else None
+    have = in_build(token, repo, sha, recipe)
     if have is None:
         return 'unknown', None, app['id']
     if have:
         return 'yes', None, app['id']
-    listed = contains(token, repo, sha, code_commit(token, repo, app['commit'])) if app['commit'] else None
+    listed = in_build(token, repo, sha, app['commit'])
     return 'no', (f"Update {app['name']}" if listed else 'Not released yet'), app['id']
 
 
@@ -1823,7 +1852,7 @@ def ship_one(token, d, base=None):
         return 'done', 'Done (merged; no Store release to track)', None
     if not sha:
         return 'unknown', 'Merged; can\u2019t tell if it\u2019s released', None
-    have = contains(token, repo, sha, code_commit(token, repo, app['commit']))
+    have = in_build(token, repo, sha, app['commit'])
     if have:
         return 'done', f"Shipped in {app['name']} {app['version']}", f"{app['name']} {app['version']}"
     if have is None:

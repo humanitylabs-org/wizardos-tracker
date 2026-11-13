@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.33.3
+version: 0.33.4
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -159,6 +159,7 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 
 **0.30.0** (Robert's onboarding call, 11 Nov) **Needs changes, not Doesn't work.** In Human review a feature that isn't quite right is iteration, not failure: the button reads **Needs changes** and its required note asks "What should change?" (sent to the builder). A shipped bug's optional check reads **Still broken** ("What still happens?"). The GitHub comments say the same (`Tested: needs changes` / `Tested: still broken`; the old `Tested: doesn't work` is still read). Stats say "Sent back twice or more". **Pending approval** now always shows in the strip, even at 0.
 
+**0.33.4** A Store recipe PR that pins an app's image (Messenger's 'pin sha-…' releases) counts as in the release that carries it: an item it mentions shows Update <app> now and On your Wizard after the update, instead of Coming in the next release forever (its own merge commit is never inside the image it pins).
 **0.33.3** Every Update button works (Miguel, 13 Nov): a core switch missing from this Wizard shows 'update WizardOS' with its Update button only while a newer WizardOS is there to take; on the newest WizardOS it says plainly when it lands or that the switch was renamed or removed. 'Update first, then check it' names what to update, and a shipped bug fix that needs an app update shows that update with its Update button on the card. On your Wizard? reads the recipe that set the installed version, so an app that keeps its version while main moves on (Wizard Notes) no longer counts unreleased code as installed.
 **0.33.2** The agent skill's Switches section matches 0.33: every feature hand-over has a `Switch:` line the card can flip (`<author>/<id>`, `<app id>:<switch id>` or `none`), never `Settings › …`.
 
