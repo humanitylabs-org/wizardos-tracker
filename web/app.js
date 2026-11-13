@@ -955,9 +955,20 @@ function tryWhy(i) {
   if (!box) return 'Checking this Wizard…';
   if (!box.ok && switchTry < 3) setTimeout(loadSwitches, 4000 * switchTry);   // 0.17: a slow first answer no longer greys it for good
   if (!box.ok) return box.update ? UPDATE_NOTE : 'Open the Tracker inside your Wizard to try this.';
-  if (!box.switches[i.switch]) return 'Your Wizard doesn’t have this switch yet: update WizardOS';   // not in this box's catalog yet
+  if (!box.switches[i.switch]) return noSwitchWhy(i);   // not in this box's catalog
   if (swLocked(box.switches[i.switch])) return 'Switch to For testers in Settings to try this';
   return '';
+}
+// 0.33.3 (Miguel, 13 Nov): 'update WizardOS' only while an update is really there to take; the Update button beside
+// it then works. A WizardOS that is already the newest gets plain words instead: when it lands, or that the switch is
+// gone (renamed, folded into another switch, or made always on), never a button that can't do anything.
+function osCurrent() { return !!(updates && updates.installed && updates.update_available === false && !updates.installing); }
+function noSwitchWhy(i) {
+  if (!osCurrent()) return 'Your Wizard doesn’t have this switch yet: update WizardOS';
+  const ob = onboxOf(i), fix = (ob && ob.state === 'no' && ob.fix) || '';
+  if (/For testers/.test(fix)) return fix + ' to try this';
+  if (fix) return `Not in WizardOS ${updates.installed} yet: comes with the next ${updates.channel === 'latest' ? 'For testers' : 'Stable'} release`;
+  return `WizardOS ${updates.installed} is up to date and has no such switch: it was renamed or removed`;
 }
 // 0.17: the switch, said in words on the status line (and why it's greyed out, in place, not only on tap)
 function switchWords(i) {
@@ -1488,12 +1499,20 @@ function nextLine(i) {
   return `Merged. Shows up in the next ${core ? 'For testers' : (app ? app.name : repoName(i.repo))} release.`;
 }
 const CORE_NAMES = ['wizard-ux', 'wizard-app-manager', 'wizard-agent-service', 'wizard-os', 'try-wizard'];
+// 0.33.3: 'Update first' always names what to update (the button beside the blocker does that update)
+function firstLine(fix) {
+  const f = String(fix || '').replace(/ in Settings$/, '');
+  if (/^Update /.test(f)) return f + ' first';
+  if (/Mac app/.test(f)) return 'Update the Mac app first';
+  if (/For testers/.test(f)) return f;
+  return 'Update first';
+}
 function whereLine(i) {
   const g = i.group;
   if (i.nextrel) return [nextLine(i), ''];
   if (i.kind === 'bug' && (i.shipped || ((g === 'shipping' || g === 'done') && i.state_reason !== 'not_planned'))) return bugLine(i);
   // 0.25.1 (Miguel): review stages lead with 'Waiting on <who>' (waitHead); this line only adds what is left to say
-  if (g === 'test') { const ob = onboxOf(i); return ob && ob.state === 'no' && ob.fix !== 'Not released yet' ? ['Update first, then check it', ''] : ['', '']; }
+  if (g === 'test') { const ob = onboxOf(i); return ob && ob.state === 'no' && ob.fix !== 'Not released yet' ? [firstLine(ob.fix) + ', then check it', ''] : ['', '']; }
   if (g === 'show' || g === 'james') return ['', ''];
   if (g === 'airev') return ['Then ' + (i.opener || 'the filer') + ' checks it', ''];
   if (g === 'answer') return [i.question || 'The builder asked a question and paused (see its latest comment)', 'ask'];   // 0.28
@@ -1621,7 +1640,7 @@ function blockUpd(i, t) {
     const k = runKeyOf(ob);
     if (k) return { key: k, go: b => k === 'os' ? updateWizardOS(b, i) : updateApp(k, b, i) };
   }
-  if (/update WizardOS|^Update WizardOS|^Update to try this$/i.test(why)) return { key: 'os', go: b => updateWizardOS(b, i) };
+  if (/update WizardOS|^Update WizardOS|^Update to try this$/i.test(why) && !osCurrent()) return { key: 'os', go: b => updateWizardOS(b, i) };
   const app = t && (t.swApp || t.app);
   if (app && app.update && new RegExp('^Updat(e|ing) ' + reEsc(app.name) + '\\b').test(why)) return { key: app.id, go: b => updateApp(app.id, b, i) };
   return null;
@@ -1674,6 +1693,10 @@ function actionArea(i, inDetail) {
   // (opens the detail: what changed, where to look, Before / After); the detail has Open <app>, Works, Doesn't work.
   if (i.kind === 'bug' && i.shipped && i.state_reason !== 'not_planned') {
     if (!i.can_review) return null;
+    // 0.33.3 (Miguel, 13 Nov): a fix that needs an update on this Wizard shows that update, with its Update button
+    const ob = g === 'test' ? onboxOf(i) : null, run = ob && updRunFor(i, ob);
+    if (run) row.append(updPanel(run, i));
+    else if (ob && ob.state === 'no' && /^Update /.test(ob.fix || '')) row.append(...blockerBits(i, { ob }, firstLine(ob.fix)));
     if (i.fix && i.fix.dev && !inDetail) { row.append(make('span', 'bd-why-s', 'Behind the scenes: nothing to see by hand'), moreBtn(i, false)); return row; }
     if (!inDetail) { row.append(smallBtn('Check it', () => openDetail(i, true)), moreBtn(i, false)); return row; }
     const at = i.check_at || {}, app = (at.app && appsById().get(at.app)) || appForRepo(i.repo);
@@ -2765,7 +2788,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.33.2';
+const PAGE_VERSION = '0.33.3';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2810,7 +2833,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.33.2' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.33.3' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

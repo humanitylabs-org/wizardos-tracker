@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.33.2'
+VERSION = '0.33.3'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1747,7 +1747,9 @@ def where(token, d, box):
     ver = (box.get('apps') or {}).get(app['id'])
     if not ver:
         return 'unknown', None, app['id']
-    recipe = app['commit'] if ver == app['version'] else version_commit(token, repo, ver)
+    # 0.33.3: the recipe that set the installed version, not the listing's newest commit: an app whose recipe pins its
+    # image by tag (Wizard Notes) keeps the same version while main moves on, so the listing commit over-claims.
+    recipe = version_commit(token, repo, ver) or (app['commit'] if ver == app['version'] else None)
     have = contains(token, repo, sha, code_commit(token, repo, recipe)) if recipe else None
     if have is None:
         return 'unknown', None, app['id']
