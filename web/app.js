@@ -208,7 +208,8 @@ function show(s) {
   const on = !!s.connected;
   el('refused').hidden = true;
   el('signin').hidden = on; el('board').hidden = !on; el('loading').hidden = true;
-  for (const x of [el('report-open'), el('goals-btn'), el('builder'), document.querySelector('.bd-switch')]) x.hidden = !on;   // 0.22: the header row's board controls
+  for (const x of [el('report-open'), el('goals-btn'), document.querySelector('.bd-switch')]) x.hidden = !on;
+  if (!on) el('builder').hidden = true;   // 0.33: shown by showBuilder only while the builder is paused   // 0.22: the header row's board controls
   if (!on && s.notice) say(s.notice, 'error');
   signinMode(s);
   if (!on && s.oauth && !devTimer) api('api/device').then(r => { if (r.state === 'pending') showCode(r); }).catch(() => {});
@@ -325,13 +326,16 @@ el('goals-btn').onclick = () => pickView('goals');
 let inflight = 0, freshAt = 0;
 function freshness() {
   const f = el('fresh'), r = el('reload'); if (!f || !r) return;
-  r.hidden = !(me && me.connected); r.classList.toggle('spin', inflight > 0);
+  r.classList.toggle('spin', inflight > 0);
   r.setAttribute('aria-busy', String(inflight > 0));
-  if (inflight > 0) { f.textContent = 'updating…'; return; }
-  if (!freshAt) { f.textContent = ''; return; }
+  // 0.33: the tools row shows the refresh only while it runs or when the list is old; Refresh now is in the ⋯ menu
+  const quiet = () => { r.hidden = f.hidden = !(me && me.connected) || !(inflight > 0 || f.classList.contains('stale')); };
+  if (inflight > 0) { f.textContent = 'updating…'; return quiet(); }
+  if (!freshAt) { f.textContent = ''; return quiet(); }
   const s = Math.round((Date.now() - freshAt) / 1000);
   f.textContent = s < 10 ? 'up to date' : s < 60 ? `updated ${s}s ago` : `updated ${Math.round(s / 60)}m ago`;
   f.classList.toggle('stale', s >= 90);
+  quiet();
 }
 setInterval(freshness, 5000);
 
@@ -910,7 +914,14 @@ function adoptSwitch(i) {
   if (!i || !box || !box.ok || (i.switch && !i.switch_adopted)) return i;
   // 0.24.2: a 'Switch: <app>:<id>' line names the catalog row itself
   const named = appSwitchId(i);
-  const id = box.byIssue[String(i.id || '').toLowerCase()] || (named && box.switches[named.id] ? named.id : null);
+  let id = box.byIssue[String(i.id || '').toLowerCase()] || (named && box.switches[named.id] ? named.id : null);
+  // 0.33: or the catalog switch its hand-over names in words ('Settings › Try new features › Send and go',
+  // 'turn on "Send and go"'), so the card flips it in one tap instead of sending people to Settings
+  if (!id && !i.no_switch && i.kind !== 'bug') {
+    const how = String(i.switch_how || '').toLowerCase(), said = stepNames(i);
+    const x = Object.values(box.switches).find(x => x.name && x.name.length > 3 && (how.includes(String(x.name).toLowerCase()) || said.includes(String(x.name).toLowerCase())));
+    if (x) id = x.id;
+  }
   if (id) { i.switch = id; i.switch_adopted = true; }
   return i;
 }
@@ -1057,8 +1068,32 @@ function appSwitchFor(i, app, byIssueOnly) {
   if (!st) { loadAppSwitches(app.id); return null; }
   if (!st.ok) return null;
   const id = String(i.id || '').toLowerCase(), how = String(i.switch_how || '').toLowerCase();
+  const said = stepNames(i);   // 0.33: a switch the test steps name in quotes ('turn on "Drag to move and resize"')
   return st.switches.find(x => (x.issues || []).some(r => String(r).toLowerCase() === id))
-    || (!byIssueOnly && st.switches.find(x => x.name && how.includes(String(x.name).toLowerCase()))) || null;
+    || (!byIssueOnly && st.switches.find(x => x.name && how.includes(String(x.name).toLowerCase())))
+    || st.switches.find(x => x.name && said.includes(String(x.name).toLowerCase())) || null;
+}
+// 0.33 (Miguel, 13 Nov): trying a change is ONE tap on the card, never 'go to the app's Settings and flip a toggle'.
+// Hand-overs without a Switch: line still say how they're switched on in their test steps; read that.
+const QUOTED = /["“”«»]([^"“”«»\n]{3,60})["“”«»]/g;
+function stepNames(i) { return [...String((i && i.steps) || '').matchAll(QUOTED)].map(m => m[1].trim().toLowerCase()); }
+const FLIP_WORDS = /\bturn (?:it |them )?on\b|\bturn \S[^.;]{0,40}\bon\b|\btry changes\b|\btry new features\b|\bswitch (?:it )?on\b|[›>]\s*on\b/i;
+const saysSwitched = i => FLIP_WORDS.test(String((i && i.steps) || '')) || /^settings\b/i.test(String((i && i.switch_how) || ''));
+// The test steps without the 'open Settings and turn on X' part when the card's own Try it does that
+const FLIP_PLACE = /\b(?:settings|try changes|try new features|gear)\b/i, FLIP_ON = /\b(?:turn|switch)\b[^.;]*\bon\b|[›>]\s*on\b/i;
+function stepsAfterToggle(i) {
+  const t = String(i.steps || '').trim();
+  const segs = t.split(/(?<=[.;])\s+(?:\d[.)]\s*)?|\s+(?=\d[.)]\s)/).map(x => x.replace(/^\d[.)]\s*/, '').trim()).filter(Boolean);
+  let cut = false;
+  const kept = segs.map(x => {
+    if (cut || !FLIP_PLACE.test(x) || !FLIP_ON.test(x)) return x;
+    cut = true;   // the 'open Settings and turn X on' step: Try it does that. Keep anything else it asks ('and set …')
+    const rest = /\s+and\s+((?:set|choose|pick|add|give|allow|enter|type)\b.*)$/i.exec(x);
+    return rest ? rest[1].charAt(0).toUpperCase() + rest[1].slice(1) : '';
+  }).filter(Boolean);
+  if (!cut) return t;
+  const rest = kept.join(' ');
+  return rest ? 'Switch on Try it, then: ' + rest.charAt(0).toLowerCase() + rest.slice(1) : 'Switch on Try it and try it.';
 }
 // 0.24.2: why an app's Try it can't be flipped right now (greyed, never hidden)
 function appWhy(i, app, pl) {
@@ -1067,7 +1102,7 @@ function appWhy(i, app, pl) {
   if (!st || (st.busy && !st.at)) return `Checking ${app.name}…`;
   if (!st.ok) return st.status === 404 ? (app.update ? `Update ${app.name} first` : `${app.name} has no switches to flip yet`) : st.status === 403 || st.status === 401 ? `Open ${app.name} once, then try again` : `Can’t reach ${app.name} right now`;
   // it answers, but doesn't list this item's switch: newer in the Store, or not in this build at all
-  return app.update ? `Update ${app.name} first` : `${app.name} ${app.version || ''} doesn’t list this switch yet`.replace('  ', ' ');
+  return app.update ? `Update ${app.name} first` : `Not in ${app.name} ${app.version || ''} yet: comes with its next release`.replace('  ', ' ');
 }
 // 0.24.2: a Try it that can't be flipped right now: greyed, the reason in its label and on tap (Miguel: never hidden)
 function greyTry(name, why, on) {
@@ -1285,24 +1320,54 @@ function showBuilder(b) {
   const t = el('builder');
   t.setAttribute('aria-checked', String(builderOn));
   el('builder-state').textContent = builderOn ? 'Running' : 'Paused';
+  t.hidden = builderOn || !(me && me.connected);   // 0.33: in the header only while paused; the ⋯ menu always has it
   t.title = b.updated_by ? `Set by ${b.updated_by} ${when(new Date(b.updated_at * 1000).toISOString())}` : '';
 }
-async function setBuilder(on) {
-  const t = el('builder'); unpop(); const done = busyOn(t);
+async function setBuilder(on, anchor) {
+  const t = anchor && anchor.offsetParent ? anchor : el('builder'); unpop(); const done = busyOn(t);
   try { showBuilder(await api('api/builder', { running: on })); done(); flash(t, on ? 'Running' : 'Paused'); }
   catch (err) { done(); pop(t, '', err.status === 403 ? (err.message || 'Only team members can start or pause the builder.') : err.message); }
   finally { done(); }
 }
-el('builder').onclick = () => {
-  const t = el('builder');
-  if (!builderOn) return setBuilder(true);
+function builderTap(anchor) {
+  const t = anchor || el('builder');
+  if (!builderOn) return setBuilder(true, t);
   const yes = make('button', 'bd-btn bd-danger', 'Pause builder'), no = make('button', 'bd-btn', 'Keep running');
   yes.type = no.type = 'button';
-  yes.onclick = () => setBuilder(false); no.onclick = unpop;
+  yes.onclick = () => setBuilder(false, t); no.onclick = unpop;
   const row = make('div', 'bd-pop-actions'); row.append(no, yes);
   pop(t, 'Pause the WizardOS Builder?', ['It finishes what it is doing now, then picks up nothing new until someone turns it back on.', row]);
   no.focus();
-};
+}
+el('builder').onclick = () => builderTap(el('builder'));
+// 0.33 (Miguel, 13 Nov): the ⋯ menu top right holds what isn't needed every minute: the Builder switch, Stats, Refresh
+// and Settings. Every row shows its progress in place (the ⋯ spins while the builder switches; the list says updating…).
+function topMenu() {
+  const b = el('top-more'), on = !!(me && me.connected);
+  const m = make('div', 'bd-more-menu bd-topmenu'); m.setAttribute('role', 'menu');
+  const item = (text, sub, fn) => {
+    const x = make('button', 'bd-menu-i'); x.type = 'button'; x.setAttribute('role', 'menuitem');
+    x.append(make('span', 'bd-menu-t', text)); if (sub) x.append(make('span', 'bd-menu-s', sub));
+    x.onclick = e => { e.preventDefault(); e.stopPropagation(); fn(x); }; return x;
+  };
+  if (on) {
+    const bl = item('Builder', builderOn ? 'Running' : 'Paused', () => { unpop(); builderTap(b); });
+    bl.setAttribute('role', 'menuitemcheckbox'); bl.setAttribute('aria-checked', String(builderOn)); bl.classList.add('bd-menu-sw');
+    const tr = make('span', 'bd-track'); tr.setAttribute('aria-hidden', 'true'); tr.append(make('i')); bl.prepend(tr);
+    m.append(bl);
+    const st = el('stats-btn').getAttribute('aria-expanded') === 'true';
+    m.append(item(st ? 'Hide stats' : 'Show stats', '', () => { unpop(); el('stats-btn').click(); }));
+    m.append(item('Refresh now', el('fresh').textContent || '', () => { unpop(); if (!inflight) { load(view, true); loadSide(); } }));
+  }
+  m.append(item('Settings', '', () => el('settings-btn').click()));
+  m.addEventListener('keydown', e => {
+    const xs = [...m.querySelectorAll('.bd-menu-i')], n = xs.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); xs[(n + (e.key === 'ArrowDown' ? 1 : xs.length - 1)) % xs.length].focus(); }
+  });
+  pop(b, '', [m]);
+  m.querySelector('.bd-menu-i').focus();
+}
+el('top-more').onclick = e => { e.stopPropagation(); topMenu(); };
 function loadSide() {
   api('api/builder').then(showBuilder).catch(() => {});
   loadSwitches();
@@ -1512,7 +1577,11 @@ function tryState(i) {
   let swApp = pl && pl.kind === 'app' ? appForRepo(pl.repo) : null;
   let hit = (i.switch_adopted && box && box.ok && box.switches[i.switch]) || (swApp ? appSwitchFor(i, swApp) : null);
   // 0.24.2: no Switch line, but the item's own app serves a switch naming its issue: that is its switch
-  if (!hit && !i.switch && !swApp && i.group === 'test') { const a = appForRepo(i.repo); const h = a && appSwitchFor(i, a, true); if (h) { hit = h; swApp = a; } }
+  if (!hit && !i.switch && !swApp && i.group === 'test') { const a = appForRepo(i.repo); const h = a && appSwitchFor(i, a); if (h) { hit = h; swApp = a; } }
+  // 0.33: no Switch line and no switch found, but the steps say it is switched on in the app ('Settings › Try changes ›
+  // turn on "…"'): the switch is in a newer build of that app. Try it shows, greyed, with 'Update <app> first' + Update.
+  let implied = false;
+  if (!hit && !i.switch && !swApp && !i.no_switch && i.kind !== 'bug' && i.category !== 'core' && i.group === 'test' && saysSwitched(i)) { const a = appForRepo(i.repo); if (a && a.id !== 'wizardos-tracker') { swApp = a; implied = true; } }
   // 0.24.2: 'Switch: <app>:<id>' (not in the box catalog): that app's own switch
   const named = !i.switch ? appSwitchId(i) : null;
   if (named && !hit) {
@@ -1529,7 +1598,7 @@ function tryState(i) {
   // 0.27 (Miguel, wizard-notes#18): never a toggle that can never work. Try it shows only when the item declares a
   // switch (core 'Switch:', 'Switch: <app>:<id>', or an in-app 'Switch: Settings > …') or the catalog links one. Bugs,
   // and items that say they have no switch (an install-time setting), get 'How to check' instead.
-  const has = i.kind !== 'bug' && !i.no_switch && !!(i.switch || hit || named || (pl && pl.kind === 'app'));
+  const has = i.kind !== 'bug' && !i.no_switch && !!(i.switch || hit || named || implied || (pl && pl.kind === 'app'));
   let why = '';
   if (has) {
     if (wait) {
@@ -1539,7 +1608,7 @@ function tryState(i) {
     } else if (i.switch) why = tryWhy(i);
     else if (!hit) why = appWhy(i, swApp, pl);
   }
-  return { ob, pl, swApp, hit, run, wait, has, why, app: swApp || appForRepo(i.repo) };
+  return { ob, pl, swApp, hit, run, wait, has, why, implied, app: swApp || appForRepo(i.repo) };
 }
 // 0.24.5 (Miguel): whenever an update is what blocks an item, the Update button sits right next to that blocker text on
 // EVERY card (reviewer or not, card, detail, the app pop-up's bar and Settings), and becomes the in-place progress panel
@@ -1631,7 +1700,8 @@ function actionArea(i, inDetail) {
       // blocker (with its Update button) show here too
       const t0 = tryState(i), tg0 = tryToggle(i), r0 = t0.run;
       if (r0) row.append(updPanel(r0, i));
-      if (tg0) { const grp = make('div', 'bd-trygrp'); grp.append(tg0); row.append(grp); }
+      const n0 = !tg0 && liveNote(i, t0);
+      if (tg0 || n0) { const grp = make('div', 'bd-trygrp'); grp.append(tg0 || n0); row.append(grp); }
       if (!r0) row.append(...blockerBits(i, t0, t0.why || (t0.ob && t0.ob.state === 'no' && !t0.hit ? t0.ob.fix || ONBOX_TEXT.no : '')));
       row.append(greyBtn('Works', i.review_rule), greyBtn(NO_WORD(i), i.review_rule), moreBtn(i, false));
       row.append(make('span', 'bd-why-s', i.review_rule));   // 0.20: 'James checks this one (he filed it)'
@@ -1657,6 +1727,7 @@ function actionArea(i, inDetail) {
     const tg = tryToggle(i);
     if (tg) { grp.append(tg); why = t.why; }
     else if (!wait && pl && pl.kind !== 'app') grp.append(...placeBits(i));
+    else { const n = liveNote(i, t); if (n) grp.append(n); }
     const app = t.app;
     if (app && app.id !== 'wizardos-tracker') grp.append(openKey(smallBtn(`Open ${app.name}`, b => openApp(app.id, app.name, b, i)), i));
     else if (pl && pl.kind === 'app' && !swApp) grp.append(openKey(smallBtn('Open', b => pop(b, '', `Open ${repoName(pl.repo)} on your Wizard, then ${pl.text}.`)), i));
@@ -1683,6 +1754,25 @@ function actionArea(i, inDetail) {
     row.append(yes); return row;
   }
   return null;
+}
+// 0.33 (Miguel, 13 Nov): an item in Human review with nothing to switch on says so plainly, instead of nothing:
+// 'Already on for you — just try it' (it's on this Wizard), else 'No switch needed — just try it'. Items that say there
+// is no Try it switch (an install-time setting) point at the steps. Not when an update is missing (that line says it).
+function liveNote(i, t) {
+  if (!i || i.kind === 'bug' || i.group !== 'test' || (t && (t.has || t.wait || t.run))) return null;
+  if (i.switch_place && i.switch_place.kind !== 'app') return null;   // a Mac default or a box knob: placeBits says where
+  const ob = t && t.ob;
+  if (ob && ob.state === 'no') return null;
+  if (saysSwitched(i) && i.category !== 'core') {   // its steps switch something on, in an app this Wizard doesn't have
+    const n = make('span', 'bd-live bd-live-steps');
+    n.append(make('span', 'bd-live-i', '→'), make('span', 'bd-live-t', `Needs ${repoName(i.repo).replace(/^wizard-/, '').replace(/^./, c => c.toUpperCase())} installed first`));
+    return n;
+  }
+  const text = i.no_switch ? 'Nothing to switch on — follow the steps' : ob && ob.state === 'yes' ? 'Already on for you — just try it' : 'No switch needed — just try it';
+  const n = make('span', 'bd-live' + (i.no_switch ? ' bd-live-steps' : ''));
+  n.append(make('span', 'bd-live-i', i.no_switch ? '→' : '✓'), make('span', 'bd-live-t', text));
+  n.querySelector('.bd-live-i').setAttribute('aria-hidden', 'true');
+  return n;
 }
 // 0.27: no toggle (a bug fix, or an item with no switch): its 'Human test:' line as one short plain instruction
 function howTo(i) {
@@ -2088,7 +2178,7 @@ function openDetail(i, toAct) {
   if (inReview && !i.nextrel) onboxLine(el('d-onbox'), i);
   releaseLine(i);
   el('d-steps').hidden = !(inReview && (i.steps || i.check));
-  if (inReview) el('d-steps').textContent = i.steps ? 'To test: ' + cap(i.steps) : i.check || '';
+  if (inReview) el('d-steps').textContent = i.steps ? 'To test: ' + cap(tryState(i).has ? stepsAfterToggle(i) : i.steps) : i.check || '';
   el('d-steps').classList.remove('bd-chkcard'); checkMode(false);
   if (i.kind === 'bug' && i.shipped && i.can_review && i.state_reason !== 'not_planned') bugCheckLines(i);
   if (i.group === 'answer' && i.question) { el('d-steps').hidden = false; el('d-steps').textContent = 'The builder asks: ' + i.question + ' Its full comment is below.'; }
@@ -2165,10 +2255,17 @@ el('detail').addEventListener('close', () => { openId = null; openItem = null; u
 // 0.17: the switch in the detail: a real toggle with its name and state, or the exact place to flip it.
 function detailSwitch(i) {
   const box_ = el('d-switch');   // 0.18: the switch sits in the one action area (card and detail); this only explains it
-  if (i.group !== 'test' || (!i.switch && !i.switch_place)) { box_.hidden = true; return box_.replaceChildren(); }
+  const t = i.group === 'test' ? tryState(i) : null;
+  // 0.33: an app switch the card flips itself: its own name and description, never 'a setting inside the app'
+  const hit = t && !i.switch && t.hit;
+  if (i.group !== 'test' || (!i.switch && !i.switch_place && !hit)) { box_.hidden = true; return box_.replaceChildren(); }
   box_.hidden = false;
   const txt = make('div', 'bd-d-swtxt');
-  if (i.switch) {
+  if (hit) {
+    txt.append(make('b', '', 'Switch: ' + (hit.name || hit.id)), make('span', 'bd-meta', hit.description || `A switch in ${t.swApp ? t.swApp.name : 'the app'}; Try it flips it.`));
+  } else if (t && t.has && !i.switch && i.switch_place && i.switch_place.kind === 'app') {
+    txt.append(make('b', '', 'Switch: ' + String(i.switch_how || '').replace(/^settings\s*›\s*/i, '')), make('span', 'bd-meta', 'Try it flips it here once ' + (t.swApp ? t.swApp.name : 'the app') + ' has it.'));
+  } else if (i.switch) {
     const sw = box && box.ok && box.switches[i.switch];
     txt.append(make('b', '', 'Switch: ' + ((sw && sw.name) || i.switch)), make('span', 'bd-meta', sw && sw.description ? sw.description : 'Feature switch ' + i.switch));
   } else {
@@ -2668,7 +2765,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.32.0';
+const PAGE_VERSION = '0.33.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2713,7 +2810,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.32.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.33.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
