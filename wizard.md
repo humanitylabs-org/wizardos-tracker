@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.33.0
+version: 0.33.1
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -158,6 +158,8 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.29.0** (Miguel, 11 Nov) **The stats follow the current stages.** Show stats now has one column per stage the tab shows (Core: Waiting for approval → Build queue → Needs an answer → AI review → Human review → Show-and-tell → Shipping → Done; Apps and Bugs likewise), each with its typical time, its target and the ⓘ explaining exactly what is timed. Kick-backs read as one line under them ("Sent back from AI review: 8% · 1×"). Release stages (Merged → For testers → For everyone, and Shipping) count from when the Tracker first saw the change in that release (kept in `release_at.json`; For everyone falls back to the Shipped-in record). Each item's own line in its detail uses the same stages as its tab, with the time it spent in each and the current one outlined. The bug detail's summary line describes the current bug flow (no AI check after merge; the check is optional).
 
 **0.30.0** (Robert's onboarding call, 11 Nov) **Needs changes, not Doesn't work.** In Human review a feature that isn't quite right is iteration, not failure: the button reads **Needs changes** and its required note asks "What should change?" (sent to the builder). A shipped bug's optional check reads **Still broken** ("What still happens?"). The GitHub comments say the same (`Tested: needs changes` / `Tested: still broken`; the old `Tested: doesn't work` is still read). Stats say "Sent back twice or more". **Pending approval** now always shows in the strip, even at 0.
+
+**0.33.1** Core's nine stage tiles: labels fit inside their tile at desktop widths (smaller type, up to three lines), no clipped letters.
 
 **0.33.0** **Try it is one tap on every Human review card; a calmer, tidier screen** (Miguel, 13 Nov). An app feature whose hand-over says "Settings › …" or names its switch only in the test steps ("turn on \"Drag to move and resize\"") gets the real Try it toggle (flipped through the app's own `/api/switches` via the App Manager catalog), or a greyed one with "Update <app> first" + Update when the switch comes with a newer build; a shell tweak named in words is linked the same way. The detail's steps drop the "open Settings and turn it on" part when Try it does that. An item with nothing to switch on says so: "Already on for you — just try it", "No switch needed — just try it", "Nothing to switch on — follow the steps", or "Needs <app> installed first". Labels never spill out of the stage tiles, chips or cards (wrap or …) at phone and desktop widths; Stats shows the median under each stage. The top is calmer: Builder, Show stats, Refresh now and Settings move into one ⋯ menu (the Builder shows in the header only while it is paused; the refresh shows only while it runs or when the list is old).
 

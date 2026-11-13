@@ -1007,12 +1007,13 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 
 /* Stage tiles: labels stay inside their tile (wrap to two lines at most, centred); no ⓘ squeezing the words (each
    stage's explanation is in Stats); the gaps carry the flow instead of arrows. */
-.bd-strip { --ga: 8px; }
+.bd-strip { --ga: 6px; }
 .bd-strip .bd-arrow { visibility: hidden; }
 .bd-strip .bd-i { display: none; }
-.bd-strip .bd-binx { min-width: 0; overflow: hidden; padding-inline: 6px; box-sizing: border-box; }
+.bd-strip .bd-binx { min-width: 0; overflow: hidden; padding-inline: 2px; box-sizing: border-box; }
 .bd-strip .bd-bin-w { display: block; max-width: 100%; font-size: .72rem; line-height: 1.2; text-align: center; overflow-wrap: normal; hyphens: manual; text-wrap: balance;
   display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.bd-strip:has(.bd-stepli:nth-child(15)) .bd-bin-w { font-size: .66rem; letter-spacing: -.01em; -webkit-line-clamp: 3; }   /* 8+ stages (Core) */
 .bd-strip .bd-bin-s { display: none; }
 /* Stats: the median alone under each stage (the bar shows the spread; the tooltip has the numbers), so 7-8 stages fit */
 .bd-statsx .bd-rn .lo, .bd-statsx .bd-rn .hi { display: none; }
