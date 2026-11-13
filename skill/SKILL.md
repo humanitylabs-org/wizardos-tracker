@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.33.1
+version: 0.33.2
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -54,7 +54,7 @@ Oscar's box runs a 30-minute cron doing its own AI reviews: re-read the item (`b
 Every person sees the exact same UI: the same tabs, lists, items, buttons and switches. Nothing is hidden or added per person; anything a viewer can't do is greyed out with the reason in place ("Only James closes a goal.", "Only Miguel tests this: they filed it.", "Only Jan or James review this goal."). Human review lists your own items too. Keep it that way in every change.
 
 ## Switches
-Name the switch in the hand-over with one `Switch:` line. A shell tweak (`Switch: <author>/<id>`) becomes a real toggle on the card, in the detail and in Settings › Try changes. Anything else is shown as the exact place to flip it: a Mac user default (write the full `defaults write …` command in the hand-over; the Tracker shows it with Copy), a setting inside an app (`Switch: Settings › <place>`, with an Open <app> button), or a box knob for whoever runs the box.
+Every feature hand-over names its switch with one `Switch:` line (0.33, Miguel: trying a change is one tap on the Human review card, never "go to Settings"): a shell tweak `Switch: <author>/<id>`, an app switch `Switch: <app id>:<switch id>` (the app serves it at its `/api/switches`, `wizard.app-switches/1`, with the issue in `issues`), or `Switch: none` when it ships on (say why). Each becomes a real Try it toggle on the card, in the detail and in Settings › Try changes; greyed with "Update <app> first" + Update while the installed build doesn't have it yet. Only genuinely non-togglable knobs are shown as instructions: a Mac user default (full `defaults write …` command; the Tracker shows it with Copy) or a box env knob. Items with nothing to switch on say "Already on for you — just try it". Write the test steps as what to do after the switch is on.
 
 ## Your turn first (0.18.2)
 The default list sort is **Your turn first**: what the viewer can act on now (their Human review, approvals for James or Miguel, show-and-tell for James, goals they own with no status or an old one) sits on top under a small 'Your turn' divider, then everything else oldest first. Oldest, Newest, Most discussed and Recently active stay in the Sort menu.
