@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.33.5'
+VERSION = '0.33.6'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1784,7 +1784,8 @@ def where(token, d, box):
         return 'unknown', None, app['id']
     if have:
         return 'yes', None, app['id']
-    listed = in_build(token, repo, sha, app['commit'])
+    # 0.33.6: the Store's newest version is the one installed, so no Update can bring it (its listing commit is main)
+    listed = app.get('version') != ver and in_build(token, repo, sha, app['commit'])
     return 'no', (f"Update {app['name']}" if listed else 'Not released yet'), app['id']
 
 
