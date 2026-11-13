@@ -2790,7 +2790,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.33.6';
+const PAGE_VERSION = '0.33.7';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2812,16 +2812,34 @@ setTimeout(checkVersion, 5000);
 // ---------- 0.24.0: a newer Tracker in the Store -> one clear 'Update' on the main screen (signed in or not) ----------
 // The same path as Settings › Update (the box's own App Manager, owner-only same-origin route); one tap, no confirm:
 // the Tracker restarts for a moment and the page reloads itself. Agents send the owner here instead of running wam.
+// 0.33.7 (Miguel, 13 Nov): one 'Update all' at the top whenever anything on this Wizard has an update (apps, WizardOS,
+// the Tracker itself), so everything is current before a review starts. One tap, no confirm; it runs them one by one with
+// progress in place, the Tracker last (it reloads the page).
+let allBusy = false;
+function pendingUpdates() {
+  // the Tracker's own entry is judged by the version this page runs (runningSelf), never a stale catalog
+  const apps = ((catalog && catalog.apps) || []).map(a => a.id === 'wizardos-tracker' && me && me.version ? runningSelf(a) : a)
+    .filter(a => a && a.update && !wizBusy.has(a.id));
+  const self = apps.find(a => a.id === 'wizardos-tracker');
+  const list = apps.filter(a => a.id !== 'wizardos-tracker').map(a => ({ key: a.id, name: a.name }));
+  if (updates && updates.update_available && !updates.installing) list.push({ key: 'os', name: 'WizardOS' });
+  if (self) list.push({ key: self.id, name: 'the Tracker' });
+  return list;
+}
 function selfUpdate() {
   const box = el('selfupd'); if (!box) return;
-  const a0 = ((catalog && catalog.apps) || []).find(a => a.id === 'wizardos-tracker');
-  const a = a0 && me && me.version ? runningSelf(a0) : a0;
-  const r = runs.get('wizardos-tracker');
-  if (r) { box.hidden = false; box.className = 'bd-selfupd'; box.replaceChildren(updPanel(r, null)); return; }
-  if (!a || !a.update) { box.hidden = true; return box.replaceChildren(); }
-  const t = make('span', 'bd-selfupd-t', `A new version of the Tracker is ready (${a.latest}).`);
-  const go = make('button', 'wz-button bd-selfupd-go', 'Update'); go.type = 'button'; go.id = 'selfupd-go';
-  go.onclick = () => { go.disabled = true; updateApp('wizardos-tracker', go).finally(() => { go.disabled = false; selfUpdate(); }); };
+  const running = [...runs.entries()].find(([, r]) => r && r.state !== 'done' && r.state !== 'failed');
+  if (running) { box.hidden = false; box.className = 'bd-selfupd'; box.replaceChildren(updPanel(running[1], null)); return; }
+  const list = pendingUpdates();
+  if (!list.length) { box.hidden = true; return box.replaceChildren(); }
+  const names = list.map(x => x.name);
+  const t = make('span', 'bd-selfupd-t', list.length === 1 ? `An update is ready: ${names[0]}.` : `${list.length} updates ready: ${names.join(', ')}.`);
+  const go = make('button', 'wz-button bd-selfupd-go', list.length === 1 ? 'Update' : 'Update all'); go.type = 'button'; go.id = 'selfupd-go';
+  go.onclick = async () => {
+    if (allBusy) return; allBusy = true; go.disabled = true;
+    try { for (const x of pendingUpdates()) { await (x.key === 'os' ? updateWizardOS(go, null) : updateApp(x.key, go)); selfUpdate(); } }
+    finally { allBusy = false; go.disabled = false; checkSelfUpdate(true); }
+  };
   box.className = 'bd-selfupd'; box.hidden = false; box.replaceChildren(t, go);
 }
 async function checkSelfUpdate(force) {
@@ -2835,7 +2853,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.33.6' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.33.7' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

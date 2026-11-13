@@ -117,14 +117,15 @@ class OneTapUpdate(unittest.TestCase):
         self.assertLess(HTML.index('id="selfupd"'), HTML.index('<div id="board"'))
 
     def test_banner_uses_the_app_manager_update(self):
-        f = fn('selfUpdate')
+        # 0.33.7: the banner is 'Update all' for every pending update, the Tracker last; still one tap
+        f = fn('selfUpdate') + fn('pendingUpdates')
         self.assertIn("a.id === 'wizardos-tracker'", f)
-        self.assertIn('runningSelf(a0)', f)
-        self.assertIn('A new version of the Tracker is ready', f)
-        self.assertIn("'Update'", f)
-        self.assertIn("updateApp('wizardos-tracker', go)", f)
+        self.assertIn('runningSelf(a)', f)
+        self.assertIn("'Update all'", f)
+        self.assertIn("updateApp(x.key, go)", f)
+        self.assertIn("updateWizardOS(go, null)", f)
         self.assertNotIn('askPop', f)   # one tap
-        self.assertIn('updPanel(r, null)', f)
+        self.assertIn('updPanel(running[1], null)', f)
         self.assertIn("STORE_INSTALL + encodeURIComponent(id)", fn('updateApp_'))
 
     def test_checked_at_open_and_periodically(self):
