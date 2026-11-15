@@ -2790,7 +2790,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.33.8';
+const PAGE_VERSION = '0.34.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2853,7 +2853,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.33.8' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.34.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
@@ -2873,7 +2873,7 @@ async function openLinked() {
   } catch (err) { say(`Couldn’t open ${id}: ${err.message}`, 'error'); }
 }
 window.addEventListener('hashchange', () => { if (ITEM_RE.test(location.hash)) openLinked(); });
-api('api/status').then(s => { show(s); if (s.connected) { load(view).then(openLinked); loadSide(); setTimeout(() => { for (const other of VIEWS) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; if (other === 'goals') goalsBadge(); }).catch(() => {}); }, 600); } })
+api('api/status').then(s => { show(s); needsBadge(); if (s.connected) { load(view).then(openLinked); loadSide(); setTimeout(() => { for (const other of VIEWS) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; if (other === 'goals') goalsBadge(); }).catch(() => {}); }, 600); } })
   .catch(err => { el('loading').hidden = true; say(err.message, 'error'); });
 const quiet = () => me && me.connected && !document.hidden && !typing() && !sheetOpen() && !popFor;
 const tick = () => { if (quiet() && Date.now() - lastLoad > 20000) load(view, true); };
@@ -2881,6 +2881,21 @@ window.addEventListener('focus', tick);
 document.addEventListener('visibilitychange', tick);
 setInterval(() => { if (quiet()) load(view, true); }, 30000);
 el('reload').onclick = () => { if (!inflight) { load(view, true); loadSide(); } };
+
+// ---------- 0.34.0 Needs you badge (switch needs-you-badge, humanitylabs-org/wizardos-tracker#87) ----------
+// The Wizard app badge shows how many items actually wait on the signed-in person (GET api/needs-you: the server's
+// counting rule over the board's own 'your turn' marks). Switch off (or signed out) -> badge 0. Nothing on the page
+// changes; the count is per person, the screen is the same for everyone.
+let needsGen = 0;
+async function needsBadge() {
+  const b = window.WizardApp && WizardApp.badge; if (!b || typeof b.set !== 'function') return;
+  const mine = ++needsGen;
+  let n = 0;
+  if (me && me.connected) { try { const d = await api('api/needs-you'); n = d && d.on ? Math.max(0, d.count | 0) : 0; } catch (_) { return; } }
+  if (mine === needsGen) b.set(n);
+}
+setInterval(needsBadge, 5 * 60000);
+document.addEventListener('visibilitychange', () => { if (!document.hidden) needsBadge(); });   // the switch may have flipped
 
 // ---------- 0.20 Report or request: the WizardOS Reporter (web/report.js) lives in its own module; the Tracker only
 // reloads the tab the item landed on and offers its WizardOS Update button for the 'update first' warning ----------

@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.33.8
+version: 0.34.0
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -58,6 +58,11 @@ Every feature hand-over names its switch with one `Switch:` line (0.33, Miguel: 
 
 ## Your turn first (0.18.2)
 The default list sort is **Your turn first**: what the viewer can act on now (their Human review, approvals for James or Miguel, show-and-tell for James, goals they own with no status or an old one) sits on top under a small 'Your turn' divider, then everything else oldest first. Oldest, Newest, Most discussed and Recently active stay in the Sort menu.
+
+## Needs you badge (0.34.0, switch `needs-you-badge`, off by default)
+- `GET /api/needs-you` gives the signed-in person's count and items (`why` in plain words, `link` to the exact card). It counts only what really waits on them: features in Human review they filed, builder questions asked of them, core approvals (James; or ideas they filed themselves), show-and-tell (James), goals they own with no or an old status. Shipped bugs never count.
+- With the switch on, the Tracker's app badge shows that number and the Tracker itself sends a Notifications alert for each new item (first time: one summary). Don't `notify` the owner again about the same items; to answer "what's waiting on me?" read `/api/needs-you` and give each item's link.
+- `Switch: wizardos-tracker:needs-you-badge` (issue humanitylabs-org/wizardos-tracker#87). It's the owner's: he turns it on in the Tracker's Settings › Try changes; flip it for him only when he asks.
 
 ## Getting started and updates (for the owner)
 - First open: the owner taps **Sign in with GitHub**, copies the short code, taps **Open GitHub ↗**, pastes it and taps Authorize; the Tracker signs in by itself. Nothing to set up. Only WizardOS team members (humanitylabs-org) get in; the card says plainly what to do otherwise (ask Miguel or James to be added, or join through the team invite waiting on GitHub).

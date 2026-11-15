@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.33.8'
+VERSION = '0.34.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -2421,6 +2421,176 @@ def board_split(person, args):
             'test': groups['test'], 'doing': [i for g in ('answer', 'show', 'james', 'airev', 'building', 'queued', 'sorting') for i in groups[g]]}
 
 
+# ---------- 0.34.0 Needs you badge (Miguel, 15 Nov: "anything that's actually waiting on me ... as a badge") ----------
+# One small, meaningful count from board_split's own 'turn' marks, behind the app switch `needs-you-badge`
+# (humanitylabs-org/wizardos-tracker#87). The page shows it as the Wizard app badge; while the switch is on the server
+# also tells the box's signed-in person about each new item through the Notifications app (Money's route: its MCP
+# `notify` tool at http://notifications:8080/mcp, `uses: [notifications]`).
+NEEDS_SWITCH = 'needs-you-badge'
+NEEDS_VIEWS = ('core', 'apps', 'bugs', 'goals')
+NEEDS_SECONDS = 120          # per-person answer cache (board_split's GitHub reads are cached 60 s on top)
+NEEDS_EVERY = 600            # background check
+NEEDS_FILE = 'needs-you-notified.json'
+NEEDS_KEEP = 500
+NEEDS_BURST = 3              # more new items than this at once -> one summary instead of one alert each
+NOTIFY_URL = os.environ.get('WIZARD_NOTIFY_URL', 'http://notifications:8080/mcp').strip()
+_needs = {}
+
+
+def item_link(iid):
+    repo, _, n = (iid or '').partition('#')
+    return f'/{APP_ID}/#item/{repo}/{n}'
+
+
+def needs_you_items(splits):
+    """The counting rule over board_split answers (pure; tests feed it fixtures). Per card:
+    - test   (Human review): the viewer filed it and it's their turn; shipped bugs have turn False and never count;
+    - answer (builder question): asked of the viewer's person;
+    - james  (core approval): only when the viewer is James, or the viewer's person filed it (and may approve it), so
+      Miguel's badge never counts James's approvals of other people's ideas;
+    - show   (show-and-tell): James only;
+    - goals: the viewer owns it and its status is missing or stale."""
+    out, seen = [], set()
+    for d in splits:
+        james = bool(d.get('james'))
+        for g, cards in (d.get('groups') or {}).items():
+            for c in cards or []:
+                turn, mine = bool(c.get('turn')), bool(c.get('mine'))
+                why = None
+                if g == 'test' and turn and not c.get('shipped'):
+                    why = 'Your feature to try'
+                elif g == 'answer' and turn:
+                    why = 'Builder asked you a question'
+                elif g == 'james' and turn and (james or mine):
+                    why = 'Approve your idea' if mine else 'Approve this core feature'
+                elif g == 'show' and turn and james:
+                    why = 'Show-and-tell for you'
+                elif g == 'goals' and turn:
+                    why = 'Your goal needs a status'
+                iid = c.get('id')
+                if why and iid and iid not in seen:
+                    seen.add(iid)
+                    out.append({'id': iid, 'title': c.get('title') or iid, 'why': why, 'link': item_link(iid)})
+    return out
+
+
+def needs_you(person, args=None):
+    """GET /api/needs-you -> {count, items: [{id, title, why, link}], on}: what waits on the signed-in person."""
+    args = args or {}
+    key = person_key(person)
+    now = time.time()
+    hit = _needs.get(key)
+    if hit and now - hit[0] < NEEDS_SECONDS and not args.get('refresh'):
+        return {**hit[1], 'on': switch_on(NEEDS_SWITCH)}
+    splits, missed = [], []
+    for v in NEEDS_VIEWS:
+        try:
+            splits.append(board_split(person, {'view': v}))
+        except Problem as e:
+            if e.code in (401, 403):
+                raise
+            missed.append(v)
+    items = needs_you_items(splits)
+    out = {'count': len(items), 'items': items, 'login': splits[0].get('login') if splits else None,
+           'missed': missed, 'at': int(now)}
+    if not missed:
+        _needs[key] = (now, out)
+    return {**out, 'on': switch_on(NEEDS_SWITCH)}
+
+
+def _shell_link():
+    # the box's first listed shell origin with a port (Money's _open_link): opens the Tracker inside Wizard
+    listed = [x.strip() for x in os.environ.get('WIZARD_TRUSTED_ORIGINS', '').split(',') if x.strip().startswith('https://')]
+    listed.sort(key=lambda o: urlsplit(o).port is None)
+    return listed[0].rstrip('/') + f'/wizard-os-home/?open={APP_ID}' if listed else ''
+
+
+def notify_owner(title, message, priority='default'):
+    """One alert through the Notifications app's `notify` tool. True only when it answered that it was sent."""
+    u = urlsplit(NOTIFY_URL)
+    if u.scheme != 'http' or u.username or u.password or not u.hostname:
+        return False
+    args = {'title': title[:120], 'message': message[:600], 'priority': priority, 'app': APP_ID}
+    link = _shell_link()
+    if link:
+        args['link'] = link
+    body = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {'name': 'notify', 'arguments': args}}).encode()
+    req = urllib.request.Request(NOTIFY_URL, data=body, method='POST', headers={
+        'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream', 'User-Agent': USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=8) as r:
+            raw = r.read(65536).decode('utf-8', 'replace')
+    except (OSError, urllib.error.URLError, ValueError):
+        return False
+    m = re.search(r'\{.*\}', raw, re.S)   # plain JSON or one SSE data line
+    try:
+        res = (json.loads(m.group(0)).get('result') or {}) if m else {}
+    except ValueError:
+        return False
+    return bool(res) and not res.get('isError')
+
+
+def _box_person():
+    a = accounts()
+    people = a['people']
+    return a.get('default') if a.get('default') in people else next(iter(people), None)
+
+
+def needs_you_tick(post=None, now=None):
+    """One background round: what waits on the box's signed-in person; alert only items never alerted before.
+    First round: one summary ('N things wait for you in the Tracker') and remember them all."""
+    post = post or notify_owner
+    now = now or time.time()
+    if not switch_on(NEEDS_SWITCH):
+        return {'skipped': 'off'}
+    key = _box_person()
+    if not key:
+        return {'skipped': 'nobody signed in'}
+    got = needs_you(key, {'refresh': True})
+    if got.get('missed'):
+        return {'skipped': 'GitHub did not answer for ' + ', '.join(got['missed'])}
+    state = _read(NEEDS_FILE, None)
+    first = not isinstance(state, dict) or not isinstance(state.get('ids'), list)
+    told = [] if first else [str(x) for x in (state or {}).get('ids') or []]
+    new = [i for i in got['items'] if i['id'] not in told]
+    sent = []
+    if first or len(new) > NEEDS_BURST:
+        if new:
+            n = len(new)
+            what = f'{n} thing{"s" if n != 1 else ""} wait{"" if n != 1 else "s"} for you in the Tracker'
+            lines = '\n'.join(f"• {i['why']}: {i['title']}" for i in new[:8]) + (f'\n…and {n - 8} more' if n > 8 else '')
+            if post(what, lines):
+                sent = [i['id'] for i in new]
+            elif first:
+                sent = [i['id'] for i in new]   # unreachable Notifications on the very first round: seed silently
+    else:
+        for i in new:
+            if post(i['why'], f"{i['title']} ({i['id']})"):
+                sent.append(i['id'])
+    ids = (told + [x for x in sent if x not in told])[-NEEDS_KEEP:]
+    out = {'ids': ids, 'last_run': int(now), 'first': first, 'count': got['count'], 'new': [i['id'] for i in new],
+           'sent': sent, 'login': got.get('login')}
+    _write(NEEDS_FILE, out)
+    print(f"needs-you: {got['count']} waiting for {got.get('login')}, {len(new)} new, {len(sent)} told"
+          f"{' (first round)' if first else ''}", flush=True)
+    return out
+
+
+def needs_you_loop(sleep=time.sleep, rounds=None, now=time.time):
+    """Looks at the switch every minute; while it is on, one needs_you_tick every NEEDS_EVERY seconds (the first
+    one about a minute after start or after the switch is turned on). Off: no GitHub reads, nothing sent."""
+    n, last = 0, 0
+    while rounds is None or n < rounds:
+        n += 1
+        sleep(60)
+        try:
+            if switch_on(NEEDS_SWITCH) and now() - last >= NEEDS_EVERY:
+                last = now()
+                needs_you_tick()
+        except Exception as e:  # noqa: BLE001 - one bad round never stops the loop
+            print(f'needs-you: round failed: {type(e).__name__}', flush=True)
+
+
 # ---------- bottleneck stats (label history, cached 5 min per token/org/view) ----------
 
 _stats = {}
@@ -4409,6 +4579,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, issue_detail(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
             if path == '/api/split':
                 return self.send(200, board_split(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
+            if path == '/api/needs-you':
+                return self.send(200, needs_you(self.person(), {'refresh': q.get('refresh') == '1'}))
             if path == '/api/stats':
                 return self.send(200, stats_view(self.person(), q))
             if path == '/api/flow':
@@ -4541,7 +4713,13 @@ import threading as _sw_threading
 from pathlib import Path as _SwPath
 from urllib.parse import urlsplit as _sw_urlsplit
 
-SWITCHES = []
+SWITCHES = [
+    {'id': 'needs-you-badge', 'name': 'Needs you badge',
+     'description': "A number on the Tracker's app badge for what's actually waiting on you (your features to try, "
+                    "builder questions for you, your ideas to approve, your goals' status), and a notification when "
+                    "something new waits on you.",
+     'default': False, 'issues': ['humanitylabs-org/wizardos-tracker#87']},
+]
 _SW_CONTRACT = 'wizard.app-switches/1'
 _SW_ROUTE = _sw_re.compile(r'(?:/[a-z0-9][a-z0-9-]{0,62})?/api/switches/?')
 _SW_LOCAL = {'localhost', '127.0.0.1', '::1', '[::1]', '0.0.0.0'}
@@ -4675,6 +4853,7 @@ wizard_switches_install(Handler)
 if __name__ == '__main__':
     secure_start()
     threading.Thread(target=refresh_loop, daemon=True).start()
+    threading.Thread(target=needs_you_loop, daemon=True).start()   # 0.34.0: idles while needs-you-badge is off
     if os.environ.get('TRACKER_WARM', '1') != '0':
         threading.Thread(target=_warm_releases, daemon=True).start()
     ThreadingHTTPServer((os.environ.get('BIND', '0.0.0.0'), int(os.environ.get('PORT', '8799'))), Handler).serve_forever()
