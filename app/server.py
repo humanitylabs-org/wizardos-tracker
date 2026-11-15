@@ -34,7 +34,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.34.2'
+VERSION = '0.35.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -2201,6 +2201,100 @@ def waiting_on(card, base=None):
     return {'who': who, 'kind': who_kind, 'stuck': bool(card.get('blocked')) and g != 'answer'}
 
 
+# ---------- 0.35.0 Waiting on someone else (Miguel, 15 Nov) ----------
+# A Human review item the filer can't try yet because another person has to act first stays off the filer's Needs you
+# badge and says so on its card: 'Waiting on James: Mac build'. Structured signals only, newest words first:
+#  - mac:     it was delivered in a Mac repo (MAC_REPOS) and no published Mac release contains it yet;
+#  - phone:   the hand-over (or a later comment) names the Android/phone app version it needs, and the newest published
+#             phone release (wizard-ux `android-v<version>`, not a pre-release) is older;
+#  - mention: the newest comment @-mentions a team person other than the filer with a question ('?') or says it
+#             waits on them ('waits on @jdefleur').
+# Who does Mac builds and phone releases: policy `release_people` (team names), default James (he holds both keys).
+PHONE_REPO = 'wizard-ux'
+PHONE_TAG = re.compile(r'^android-v(\d+\.\d+\.\d+)$')
+PHONE_NEED = re.compile(r'(?i)\b(?:android|phone)(?:\s+app)?\s*(?:to\s+|version\s+|v(?=\d)|\(\s*)?(\d+\.\d+\.\d+)\b')
+MAC_NEED = re.compile(r'(?i)\bnext\s+mac\s+(?:app\s+)?build\b|\bneeds?\s+a\s+(?:new\s+)?mac\s+(?:app\s+)?build\b|\bcut\s+on\s+a\s+mac\b')
+WAITS_ON = re.compile(r'(?i)\b(?:wait(?:s|ing)?\s+(?:for|on)|needs?|blocked\s+on)\s+(?:@[A-Za-z0-9-]+(?:\s*(?:,|/|\bor\b|\band\b)\s*)?)+')
+
+
+def _vkey(v):
+    return tuple(int(x) for x in re.findall(r'\d+', v or '')[:3])
+
+
+def phone_needed(bodies):
+    """The newest, highest phone app version these comments say the change needs ('0.10.46'), or None."""
+    for body in reversed([b for b in bodies or [] if isinstance(b, str)]):
+        found = PHONE_NEED.findall(re.sub(r'```.*?```', ' ', body, flags=re.S))
+        if found:
+            return max(found, key=_vkey)
+    return None
+
+
+def phone_latest(token):
+    """The newest published phone release version (wizard-ux android-v<version>, not a draft or pre-release)."""
+    repo = f"{settings()['org']}/{PHONE_REPO}"
+
+    def get():
+        rows = gh(token, 'GET', f'/repos/{repo}/releases?per_page=30')
+        vs = []
+        for r in rows if isinstance(rows, list) else []:
+            m = PHONE_TAG.match(str(r.get('tag_name') or '')) if isinstance(r, dict) else None
+            if m and not r.get('draft') and not r.get('prerelease'):
+                vs.append(m.group(1))
+        return max(vs, key=_vkey) if vs else None
+    return _timed_get(('phone', repo.lower()), get)
+
+
+def mac_built(token, delivers):
+    """True when the newest published Mac release has every merged Mac-repo PR, False when it lacks one, None unknown."""
+    mac = [d for d in delivers or [] if d['repo'].split('/')[-1].lower() in MAC_REPOS]
+    if not mac or not all(d.get('sha') for d in mac):
+        return None
+    try:
+        return all(ship_one(token, d)[0] == 'done' for d in mac)
+    except Problem:
+        return None
+
+
+def other_wait(repo, delivers, rows, opener, base=None, mac=None, phone=None):
+    """0.35.0: who else an item in Human review waits on before its filer can try it -> {'who': [names], 'what': str,
+    'why': mac|phone|mention} or None. rows = [(login, body)] oldest first; mac() -> bool|None (a published Mac
+    build has it) and phone() -> newest published phone version or None are looked up only when a signal needs them."""
+    base = base or policy_base()
+    people = base.get('release_people') or POLICY_DEFAULT['release_people']
+    bots = {x.lower() for x in base['builder']['logins']} | BUILDERS
+    rows = [(w or '', b) for w, b in rows or [] if isinstance(b, str) and b.strip()]
+    last_hand = max((k for k, (w, _) in enumerate(rows) if w.lower() in bots), default=None)
+    recent = [b for _, b in rows[last_hand:]] if last_hand is not None else [b for _, b in rows[-2:]]
+    me = person_of(opener, base) if opener else ''
+    name = (repo or '').split('/')[-1].lower()
+    in_mac = name in MAC_REPOS or any(d['repo'].split('/')[-1].lower() in MAC_REPOS for d in delivers or [])
+    if in_mac or any(MAC_NEED.search(b) for b in recent):
+        got = mac() if mac and in_mac else None
+        if got is not True:
+            who = [p for p in people.get('mac') or [] if p != me]
+            if who:
+                return {'who': who, 'what': 'Mac build', 'why': 'mac'}
+    need = phone_needed(recent)
+    if need:
+        have = phone() if phone else None
+        if not have or _vkey(have) < _vkey(need):
+            who = [p for p in people.get('phone') or [] if p != me]
+            if who:
+                return {'who': who, 'what': f'Android app {need}', 'why': 'phone'}
+    if rows:
+        body = re.sub(r'```.*?```', ' ', rows[-1][1], flags=re.S)
+        author = person_of(rows[-1][0], base)
+        for sent in re.split(r'(?<=[.!?])\s+|\n+', body):
+            names = [n for n in mention_names(sent, base) if n != me and n != author]
+            if names and ('?' in sent or WAITS_ON.search(sent)):
+                what = _q_clean(_question_text(sent, base))
+                if len(what) > 80:
+                    what = what[:79].rsplit(' ', 1)[0] + '…'
+                return {'who': names, 'what': what or 'an answer', 'why': 'mention'}
+    return None
+
+
 def waiting_summary(groups):
     """0.25: per stage, how many items wait on whom (most first) and how many are stuck: the bottleneck line."""
     out = {}
@@ -2391,6 +2485,13 @@ def board_split(person, args):
                     can_close=same_person(author, login, base), opener=person_of(author, base), created_at=n.get('createdAt'),
                     labels=names, blocked=any(str(l).lower().startswith('builder:blocked') for l in names), **extra)
         card['waiting_on'] = waiting_on(card, base)
+        if group == 'test' and cat != 'bug':
+            # 0.35.0: the filer can't try it until someone else acts (a Mac build, a phone release, a question)
+            rows = [(((c.get('author') or {}).get('login') or ''), c.get('body') or '') for c in (n.get('comments') or {}).get('nodes') or []]
+            dl, tok = card.get('delivers') or [], acct['token']
+            ow = other_wait(repo, dl, rows, author, base, mac=lambda: mac_built(tok, dl), phone=lambda: phone_latest(tok))
+            if ow:
+                card['waiting_on'] = {'who': ow['who'], 'kind': 'person', 'stuck': False, 'what': ow['what'], 'why': ow['why']}
         groups[group].append(card)
     have = {i['id'] for g in groups.values() for i in g}
     for _, _, it in made:
@@ -2437,17 +2538,20 @@ def item_link(iid):
     return f'/{APP_ID}/#item/{repo}/{n}'
 
 
-def needs_you_items(splits):
-    """The counting rule over board_split answers (pure; tests feed it fixtures). Per card:
+def needs_you_split(splits):
+    """The counting rule over board_split answers (pure; tests feed it fixtures) -> (items, waiting). Per card:
     - test   (Human review): the viewer filed it and it's their turn; shipped bugs have turn False and never count;
     - answer (builder question): asked of the viewer's person;
     - james  (core approval): only when the viewer is James, or the viewer's person filed it (and may approve it), so
       Miguel's badge never counts James's approvals of other people's ideas;
     - show   (show-and-tell): James only;
-    - goals: the viewer owns it and its status is missing or stale."""
-    out, seen = [], set()
+    - goals: the viewer owns it and its status is missing or stale.
+    0.35.0: a card that would count but waits on someone else first (its waiting_on has a `what`: a Mac build, a phone
+    release, a question to another person) goes to `waiting` [{id, title, who, what, link}] instead of the count."""
+    out, waiting, seen = [], [], set()
     for d in splits:
         james = bool(d.get('james'))
+        me = str(d.get('me_person') or '')
         for g, cards in (d.get('groups') or {}).items():
             for c in cards or []:
                 turn, mine = bool(c.get('turn')), bool(c.get('mine'))
@@ -2463,14 +2567,26 @@ def needs_you_items(splits):
                 elif g == 'goals' and turn:
                     why = 'Your goal needs a status'
                 iid = c.get('id')
-                if why and iid and iid not in seen:
-                    seen.add(iid)
-                    out.append({'id': iid, 'title': c.get('title') or iid, 'why': why, 'link': item_link(iid)})
-    return out
+                if not (why and iid) or iid in seen:
+                    continue
+                seen.add(iid)
+                wo = c.get('waiting_on') or {}
+                who = [str(w) for w in wo.get('who') or [] if w]
+                if wo.get('what') and who and me not in who:
+                    waiting.append({'id': iid, 'title': c.get('title') or iid, 'who': ' or '.join(who), 'what': wo['what'],
+                                    'link': item_link(iid)})
+                    continue
+                out.append({'id': iid, 'title': c.get('title') or iid, 'why': why, 'link': item_link(iid)})
+    return out, waiting
+
+
+def needs_you_items(splits):
+    return needs_you_split(splits)[0]
 
 
 def needs_you(person, args=None):
-    """GET /api/needs-you -> {count, items: [{id, title, why, link}], on}: what waits on the signed-in person."""
+    """GET /api/needs-you -> {count, items: [{id, title, why, link}], waiting: [{id, title, who, what, link}], on}: what
+    waits on the signed-in person (count = len(items)), and what would but waits on someone else first (0.35.0)."""
     args = args or {}
     key = person_key(person)
     now = time.time()
@@ -2485,8 +2601,8 @@ def needs_you(person, args=None):
             if e.code in (401, 403):
                 raise
             missed.append(v)
-    items = needs_you_items(splits)
-    out = {'count': len(items), 'items': items, 'login': splits[0].get('login') if splits else None,
+    items, waiting = needs_you_split(splits)
+    out = {'count': len(items), 'items': items, 'waiting': waiting, 'login': splits[0].get('login') if splits else None,
            'missed': missed, 'at': int(now)}
     if not missed:
         _needs[key] = (now, out)
@@ -2878,6 +2994,8 @@ POLICY_DEFAULT = {
     # 0.18.2 (wizard-os#423): who approves core features before the builder starts (team names). Show-and-tell stays
     # James's (open.goals). DATA_DIR/policy.json `core_approvers` overrides.
     'core_approvers': ['James', 'Miguel'],
+    # 0.35.0: who cuts a Mac build and signs a phone release (team names): a Human review item that needs one waits on them
+    'release_people': {'mac': ['James'], 'phone': ['James']},
 }
 TARGET_KEYS = {'approval': 'approval', 'james': 'approval', 'answer': 'answer', 'show': 'show', 'shipping': 'shipping',
                'relwait': 'relwait', 'testers': 'testers', 'buildq': 'buildq', 'queued': 'queued', 'open': 'queued', 'building': 'building', 'build': 'building', 'ai': 'ai', 'ai-review': 'ai',
@@ -2970,8 +3088,12 @@ def policy_base():
     core = [str(x).split('/')[-1].lower() for x in core if isinstance(x, str) and NAME.match(str(x).split('/')[-1])] if isinstance(core, list) else list(CORE_REPOS)
     ca = over.get('core_approvers')
     ca = [str(x) for x in ca if isinstance(x, str) and x.strip()] if isinstance(ca, list) and ca else list(POLICY_DEFAULT['core_approvers'])
+    rp = {k: list(v) for k, v in POLICY_DEFAULT['release_people'].items()}
+    if isinstance(over.get('release_people'), dict):
+        rp.update({k: [str(x) for x in v if isinstance(x, str) and x.strip()] for k, v in over['release_people'].items()
+                   if k in rp and isinstance(v, list)})
     return {'team': team, 'builder': builder, 'open': opn, 'targets': _targets(over.get('targets')), 'core_repos': core,
-            'core_approvers': ca,
+            'core_approvers': ca, 'release_people': rp,
             'since': _since(over.get('since'))[0],
             'human_reviews': hr if isinstance(hr, int) and not isinstance(hr, bool) and hr in (1, 2) else POLICY_DEFAULT['human_reviews']}
 

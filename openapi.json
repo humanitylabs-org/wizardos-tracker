@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "WizardOS Tracker",
-    "version": "0.34.2",
+    "version": "0.35.0",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged. 0.13: two-step review (Queued → Building → AI review [label ai-review] → Human review [label ready-to-test] → Done; AI review is agents-only via MCP ai_review_pass / ai_review_fail; policy human_reviews 1|2) and Sign in with GitHub via the OAuth device flow (no client secret).",
     "contact": {
       "name": "WizardOS Tracker",
@@ -1694,7 +1694,7 @@
     },
     "/api/needs-you": {
       "get": {
-        "summary": "0.34.0 Needs you badge: what actually waits on the signed-in person. count, items [{id, title, why, link}] (link = /wizardos-tracker/#item/<owner>/<repo>/<n>), on (switch needs-you-badge), login, missed (views GitHub didn't answer). Rule: features in Human review you filed (never shipped bugs), builder questions asked of you, core approvals only for James or ones you filed, show-and-tell for James, goals you own with no/stale status. Cached 2 min; refresh=1 skips it.",
+        "summary": "0.34.0 Needs you badge: what actually waits on the signed-in person. count, items [{id, title, why, link}] (link = /wizardos-tracker/#item/<owner>/<repo>/<n>), on (switch needs-you-badge), login, missed (views GitHub didn't answer). Rule: features in Human review you filed (never shipped bugs), builder questions asked of you, core approvals only for James or ones you filed, show-and-tell for James, goals you own with no/stale status. 0.35.0: waiting [{id, title, who, what, link}] = items that would count but wait on someone else first (Mac build, phone release, a question to another person); they are not in count. Cached 2 min; refresh=1 skips it.",
         "parameters": [
           {
             "name": "refresh",

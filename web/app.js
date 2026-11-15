@@ -1542,6 +1542,13 @@ function waitHead(i) {
   const who = (wo.who || []).filter(Boolean);
   if (!who.length) return null;
   const me = (cache[view] || {}).me_person || '';
+  if (g === 'test' && wo.what) {
+    // 0.35.0: a Human review item someone else has to act on first: 'Waiting on James: Mac build'
+    const p = make('p', 'bd-waiton bd-waiton-other' + (who.some(w => w === me) ? ' me' : ''));
+    p.append(make('span', 'bd-waiton-k', 'Waiting on '), make('b', '', who.join(' or ')), make('span', 'bd-waiton-x', ': ' + wo.what));
+    p.title = 'You can try this once ' + who.join(' or ') + ' has done this';
+    return p;
+  }
   const p = make('p', 'bd-waiton' + (who.some(w => w === me) ? ' me' : ''));
   p.append(make('span', 'bd-waiton-k', 'Waiting on '));
   who.forEach((w, n) => {
@@ -2799,7 +2806,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.34.2';
+const PAGE_VERSION = '0.35.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2862,7 +2869,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.34.2' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.35.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
