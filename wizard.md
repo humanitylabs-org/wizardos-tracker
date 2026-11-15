@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.34.0
+version: 0.34.1
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -32,7 +32,7 @@ view:
     dist: web
 provides: [project-board]
 system: false
-uses: [notifications]
+uses: []
 needs: []
 health: /healthz
 switches:
@@ -159,7 +159,9 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 
 **0.30.0** (Robert's onboarding call, 11 Nov) **Needs changes, not Doesn't work.** In Human review a feature that isn't quite right is iteration, not failure: the button reads **Needs changes** and its required note asks "What should change?" (sent to the builder). A shipped bug's optional check reads **Still broken** ("What still happens?"). The GitHub comments say the same (`Tested: needs changes` / `Tested: still broken`; the old `Tested: doesn't work` is still read). Stats say "Sent back twice or more". **Pending approval** now always shows in the strip, even at 0.
 
-**0.34.0** (Miguel, 15 Nov: "anything that's actually waiting on me ... as a badge") **Needs you badge**, behind the app switch `needs-you-badge` (off by default, humanitylabs-org/wizardos-tracker#87). `GET /api/needs-you` -> `{count, items: [{id, title, why, link}], on}` for the signed-in person, from the board's own 'your turn' marks over Core, Apps, Bugs and Goals: features in Human review you filed (shipped bugs never count), builder questions asked of you, core approvals only for James or ones you filed yourself, show-and-tell for James, and goals you own with no or an old status. With the switch on the page sets the Wizard app badge to that count (on load, every 5 min and when the window comes back), 0 when off; nothing else on screen changes. While it is on, the server also checks every 10 min for the box's signed-in GitHub account and sends a Notifications alert (its `notify` tool, `uses: [notifications]`) for each item it hasn't told about before; the first round sends one summary ("N things wait for you in the Tracker"), more than 3 new at once also go as one summary, and what was told is kept in `needs-you-notified.json`.
+**0.34.1** (Miguel, 15 Nov: "badge only") The Tracker no longer sends Notifications alerts: each app's news goes to one place, and for the Tracker that is its badge. The background check, `needs-you-notified.json` and `uses: [notifications]` are gone; `/api/needs-you` and the badge are unchanged.
+
+**0.34.0** (Miguel, 15 Nov: "anything that's actually waiting on me ... as a badge") **Needs you badge**, behind the app switch `needs-you-badge` (off by default, humanitylabs-org/wizardos-tracker#87). `GET /api/needs-you` -> `{count, items: [{id, title, why, link}], on}` for the signed-in person, from the board's own 'your turn' marks over Core, Apps, Bugs and Goals: features in Human review you filed (shipped bugs never count), builder questions asked of you, core approvals only for James or ones you filed yourself, show-and-tell for James, and goals you own with no or an old status. With the switch on the page sets the Wizard app badge to that count (on load, every 5 min and when the window comes back), 0 when off; nothing else on screen changes. While it is on, the server also checks every 10 min for the box's signed-in GitHub account and sends a Notifications alert (its `notify` tool, `uses: []`) for each item it hasn't told about before; the first round sends one summary ("N things wait for you in the Tracker"), more than 3 new at once also go as one summary, and what was told is kept in `needs-you-notified.json`.
 
 **0.33.8** (Miguel) Item links: `/wizardos-tracker/#item/<owner>/<repo>/<number>` opens that item's card in its own tab, so agents can send a link to the exact item.
 

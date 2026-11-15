@@ -64,9 +64,6 @@ class Fixture(unittest.TestCase):
         os.environ['WIZARD_SWITCHES_DIR'] = DATA
         if self.sw.exists():
             self.sw.unlink()
-        f = Path(DATA) / 'private' / S.NEEDS_FILE
-        if f.exists():
-            f.unlink()
 
     def tearDown(self):
         S._view_search, S._view_nodes, S.view_stats, S.org_repos, S.view_repos = self.saved
@@ -131,7 +128,8 @@ class Switch(Fixture):
         self.assertFalse(sw['default'])
         self.assertEqual(sw['issues'], ['humanitylabs-org/wizardos-tracker#87'])
         self.assertIn('switches:\n  contract: wizard.app-switches/1', (ROOT / 'wizard.md').read_text())
-        self.assertIn('uses: [notifications]', (ROOT / 'wizard.md').read_text())
+        self.assertIn('uses: []', (ROOT / 'wizard.md').read_text())   # 0.34.1: badge only, no alerts
+        self.assertFalse(hasattr(S, 'needs_you_tick'))
 
     def test_on_shows_in_answer(self):
         S._sw_set('needs-you-badge', True)
@@ -142,90 +140,6 @@ class Switch(Fixture):
         self.assertIn('d && d.on ? Math.max(0, d.count | 0) : 0', JS)
         self.assertIn('b.set(n)', JS)
         self.assertIn('setInterval(needsBadge, 5 * 60000)', JS)
-
-
-class Notify(Fixture):
-    def post(self, title, message):
-        self.sent.append((title, message))
-        return True
-
-    def test_off_sends_nothing(self):
-        self.sent = []
-        self.assertEqual(S.needs_you_tick(post=self.post), {'skipped': 'off'})
-        self.assertEqual(self.sent, [])
-
-    def test_first_summary_then_only_new(self):
-        S._sw_set('needs-you-badge', True)
-        self.sent = []
-        out = S.needs_you_tick(post=self.post)
-        self.assertTrue(out['first'])
-        self.assertEqual(len(self.sent), 1)
-        self.assertEqual(self.sent[0][0], '7 things wait for you in the Tracker')
-        self.assertIn('Builder asked you a question: Q for Miguel', self.sent[0][1])
-        S._needs.clear()
-        self.sent = []
-        out = S.needs_you_tick(post=self.post)
-        self.assertEqual((out['first'], out['new'], self.sent), (False, [], []))   # nothing repeats
-        # a new question for Miguel -> exactly one alert for it
-        CORE.append(node(10, ['feature', 'james-approved', 'builder:blocked'], author='JanMesaric', comments=ASK_MIGUEL,
-                         title='New Q'))
-        try:
-            S._needs.clear()
-            out = S.needs_you_tick(post=self.post)
-        finally:
-            CORE.pop()
-        self.assertEqual(self.sent, [('Builder asked you a question', 'New Q (humanitylabs-org/wizard-ux#10)')])
-        saved = json.loads((Path(DATA) / 'private' / S.NEEDS_FILE).read_text())
-        self.assertIn('humanitylabs-org/wizard-ux#10', saved['ids'])
-        self.assertEqual(oct((Path(DATA) / 'private' / S.NEEDS_FILE).stat().st_mode & 0o777), '0o600')
-
-    def test_failed_post_is_retried(self):
-        S._sw_set('needs-you-badge', True)
-        S.needs_you_tick(post=lambda t, m: True)
-        CORE.append(node(11, ['feature', 'james-approved', 'builder:blocked'], author='JanMesaric', comments=ASK_MIGUEL, title='R'))
-        try:
-            S._needs.clear()
-            self.assertEqual(S.needs_you_tick(post=lambda t, m: False)['sent'], [])
-            S._needs.clear()
-            self.sent = []
-            S.needs_you_tick(post=self.post)
-        finally:
-            CORE.pop()
-        self.assertEqual(len(self.sent), 1)
-
-    def test_notify_owner_speaks_mcp(self):
-        import http.server
-        import threading
-        got = {}
-
-        class H(http.server.BaseHTTPRequestHandler):
-            def do_POST(self):
-                got['body'] = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-                b = b'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"content":[],"isError":false}}\n\n'
-                self.send_response(200)
-                self.send_header('Content-Type', 'text/event-stream')
-                self.send_header('Content-Length', str(len(b)))
-                self.end_headers()
-                self.wfile.write(b)
-
-            def log_message(self, *a):
-                pass
-        srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), H)
-        threading.Thread(target=srv.serve_forever, daemon=True).start()
-        old = S.NOTIFY_URL
-        S.NOTIFY_URL = f'http://127.0.0.1:{srv.server_address[1]}/mcp'
-        os.environ['WIZARD_TRUSTED_ORIGINS'] = 'https://box.ts.net,https://box.ts.net:8444'
-        try:
-            self.assertTrue(S.notify_owner('Hi', 'There'))
-        finally:
-            S.NOTIFY_URL = old
-            os.environ.pop('WIZARD_TRUSTED_ORIGINS', None)
-            srv.shutdown()
-            srv.server_close()
-        p = got['body']['params']
-        self.assertEqual(p['name'], 'notify')
-        self.assertEqual(p['arguments']['app'], 'wizardos-tracker')
-        self.assertEqual(p['arguments']['link'], 'https://box.ts.net:8444/wizard-os-home/?open=wizardos-tracker')
 
 
 if __name__ == '__main__':

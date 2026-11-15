@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.34.0
+version: 0.34.1
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -61,7 +61,7 @@ The default list sort is **Your turn first**: what the viewer can act on now (th
 
 ## Needs you badge (0.34.0, switch `needs-you-badge`, off by default)
 - `GET /api/needs-you` gives the signed-in person's count and items (`why` in plain words, `link` to the exact card). It counts only what really waits on them: features in Human review they filed, builder questions asked of them, core approvals (James; or ideas they filed themselves), show-and-tell (James), goals they own with no or an old status. Shipped bugs never count.
-- With the switch on, the Tracker's app badge shows that number and the Tracker itself sends a Notifications alert for each new item (first time: one summary). Don't `notify` the owner again about the same items; to answer "what's waiting on me?" read `/api/needs-you` and give each item's link.
+- With the switch on, the Tracker's app badge shows that number (0.34.1, Miguel: badge only, no Notifications alerts; don't `notify` him about these items either); to answer "what's waiting on me?" read `/api/needs-you` and give each item's link.
 - `Switch: wizardos-tracker:needs-you-badge` (issue humanitylabs-org/wizardos-tracker#87). It's the owner's: he turns it on in the Tracker's Settings › Try changes; flip it for him only when he asks.
 
 ## Getting started and updates (for the owner)
