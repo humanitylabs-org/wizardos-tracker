@@ -1414,8 +1414,17 @@ function loadFacts() {
     macVersion().then(v => { facts.mac = v; })]);
   return factsReady;
 }
+// 0.34.2 (Miguel, 15 Nov: 'Update Messenger first' + Update -> 'already the latest'): the installed version comes from
+// the App Manager, the same source as the Update button, so the two never disagree. An app's own /healthz can lag
+// (Messenger reported 0.2.0-unified.16.35 while 16.50 was installed); it is only the fallback for apps the App Manager
+// doesn't list.
 async function appVersion(id) {
   appsTried.add(id);
+  try {
+    const c = await loadCatalog();
+    const a = c && (c.apps || []).find(x => x.id === id);
+    if (a && a.version) { facts.apps[id] = a.version; return; }
+  } catch (_) {}
   try {
     const r = await fetch('/' + encodeURIComponent(id) + '/healthz', { credentials: 'same-origin', cache: 'no-store' });
     const b = r.ok ? await r.json() : null;
@@ -2790,7 +2799,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.34.1';
+const PAGE_VERSION = '0.34.2';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -2853,7 +2862,7 @@ setInterval(() => { if (!document.hidden) checkSelfUpdate(true); }, 30 * 60000);
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.34.1' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.34.2' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

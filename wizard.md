@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.34.1
+version: 0.34.2
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -158,6 +158,8 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.29.0** (Miguel, 11 Nov) **The stats follow the current stages.** Show stats now has one column per stage the tab shows (Core: Waiting for approval → Build queue → Needs an answer → AI review → Human review → Show-and-tell → Shipping → Done; Apps and Bugs likewise), each with its typical time, its target and the ⓘ explaining exactly what is timed. Kick-backs read as one line under them ("Sent back from AI review: 8% · 1×"). Release stages (Merged → For testers → For everyone, and Shipping) count from when the Tracker first saw the change in that release (kept in `release_at.json`; For everyone falls back to the Shipped-in record). Each item's own line in its detail uses the same stages as its tab, with the time it spent in each and the current one outlined. The bug detail's summary line describes the current bug flow (no AI check after merge; the check is optional).
 
 **0.30.0** (Robert's onboarding call, 11 Nov) **Needs changes, not Doesn't work.** In Human review a feature that isn't quite right is iteration, not failure: the button reads **Needs changes** and its required note asks "What should change?" (sent to the builder). A shipped bug's optional check reads **Still broken** ("What still happens?"). The GitHub comments say the same (`Tested: needs changes` / `Tested: still broken`; the old `Tested: doesn't work` is still read). Stats say "Sent back twice or more". **Pending approval** now always shows in the strip, even at 0.
+
+**0.34.2** (Miguel, 15 Nov: an Update button that then says "already the latest" makes no sense) **Installed versions come from the App Manager.** Is it on my Wizard? now reads each app's installed version from the App Manager (the same list the Update buttons use) instead of the app's own `/healthz`, which can lag behind (Messenger said 0.2.0-unified.16.35 while 16.50 was installed, so cards said "Update Messenger first" while Update said it was already the latest). `/healthz` stays the fallback for apps the App Manager doesn't list.
 
 **0.34.1** (Miguel, 15 Nov: "badge only") The Tracker no longer sends Notifications alerts: each app's news goes to one place, and for the Tracker that is its badge. The background check, `needs-you-notified.json` and `uses: [notifications]` are gone; `/api/needs-you` and the badge are unchanged.
 
