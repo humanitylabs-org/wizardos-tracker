@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.46.1'
+VERSION = '0.47.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1774,7 +1774,8 @@ def _card(node, tab):
            'comments': ((node.get('comments') or {}).get('totalCount')), 'desc': describe(node.get('body')),
            'from_feedback': feedback_inbox.FROM_LABEL in labels,   # 0.26.5: a 'From Feedback app' chip
            'ux_tweak': 'ux-tweak' in labels,   # 0.37.0: a 'UX tweak · auto-approved' chip
-           'dupe': dupes.LABEL in labels}   # 0.41.0: 'Possible duplicate' chip + Not a duplicate
+           'dupe': dupes.LABEL in labels,   # 0.41.0: 'Possible duplicate' chip + Not a duplicate
+           'owner_correction': OC_LABEL in labels}   # 0.47.0: one of James's own corrections (wizardos-tracker#117)
     if out['comments'] is None:
         out['comments'] = len((node.get('comments') or {}).get('nodes') or [])
     refs = _refs(node)
@@ -2710,6 +2711,30 @@ def unhide_q(q):
 # builder host's sweep, builder-tick); the clock starts no earlier than the rule itself, so older items get 7 days too.
 BUG_ACCEPT_SECONDS = 7 * 86400
 BUG_RULE_SINCE = '2026-11-10T00:00:00Z'
+# 0.47.0 owner corrections (wizardos-tracker#117; James, 18 Nov: "Guard, sounds great"): a bug labelled owner-correction
+# fixes one of James's own corrections. It never closes on 7 quiet days nor on the builder tester's pass; it waits on
+# James in its Human check until he says Works (the Tracker closes it) or an AI check on his real box is posted: a
+# comment by any account but the builder, newer than the newest merged fix, holding `<!-- real-box-check -->` and the
+# lines `Box:`, `Version served:` and `Seen:`, with no Still broken / Doesn't work in it or after it. The builder's
+# sweep (builder-tick) then closes it as "Checked on the owner's box"; the card says "Checked on James's box".
+OC_LABEL = 'owner-correction'
+OC_TIP = "One of James's own corrections: it closes only when James says Works or a check on his box is posted."
+OC_MARK = '<!-- real-box-check -->'
+_OC_LINE = lambda k: re.compile(r'(?:^|\n)[ \t>*-]*' + k + r':[ \t*]*[^ \t\r\n*]')
+OC_LINES = [_OC_LINE(k) for k in ('Box', 'Version served', 'Seen')]
+OC_KICK = re.compile(r"(?i)still broken|doesn.t work|does not work|needs changes")
+
+
+def real_box_check(body):
+    """0.47.0: True when one comment body is a valid real-box check (marker + Box / Version served / Seen lines, and it
+    does not itself say the fix is still broken)."""
+    b = body or ''
+    return OC_MARK in b and all(r.search(b) for r in OC_LINES) and not OC_KICK.search(b)
+
+
+def james_names(base=None):
+    base = base or policy_base()
+    return [t['name'] for t in base['team'] if t['name'].lower() in james_people(base)] or ['James']
 
 
 def waiting_on(card, base=None):
@@ -2718,6 +2743,11 @@ def waiting_on(card, base=None):
     base = base or policy_base()
     g, who_kind = card.get('group'), 'person'
     if card.get('category') == 'bug' and g in ('test', 'airev', 'shipping'):
+        if (card.get('owner_correction') or OC_LABEL in {str(x).lower() for x in card.get('labels') or []}) \
+                and card.get('state') != 'closed':
+            # 0.47.0: one of James's own corrections waits on James (his Works) or a check on his box
+            return {'who': james_names(base), 'kind': 'person', 'stuck': False, 'owner_correction': True,
+                    'what': 'Works, or a check on his box', 'why': OC_TIP}
         return {'who': [], 'kind': 'release', 'stuck': False}   # 0.26: shipped; the check is optional
     if g == 'test':
         opener = card.get('opener') or ''
@@ -4024,6 +4054,10 @@ def policy(person=None):
              "the builder skips it until a team member comments or taps Not a duplicate",
              "Bugs (Miguel, 21 Nov): Open, Building, tested by the builder's tester before merge, merged switched on, closed "
              "automatically by the builder. Nobody checks it by hand. Doesn't work or reopening sends it back to Building.",
+             f"Owner corrections (label {OC_LABEL}, James's own corrections; James 18 Nov): never closed on 7 quiet days "
+             "or the tester's pass; they wait on James until he says Works, or an AI check on his real box is posted "
+             f"({OC_MARK} with Box:, Version served:, Seen: lines, by any account but the builder, newer than the "
+             "newest merged fix). Then the builder closes it: Checked on James's box",
              "Goals: human-led by James (unchanged)",
              "The builder parks only real decisions (builder:blocked) and rechecks them every 10 minutes"]
     login = None
@@ -4045,7 +4079,21 @@ def policy(person=None):
                               # 0.43.0 (Miguel, 21 Nov 2026): the tester is the only check; the builder closes the bug.
                               'bug_flow': {'merge': "switched on, after the builder's tester passed it", 'tested_by': 'builder tester (before merge)',
                                            'hand_back': HUMAN_LABEL, 'closed_by': 'builder', 'filer_check': None, 'ai_review': None,
-                                           'auto_accept_seconds': None, 'reopen': "Doesn't work or reopening sends it back to Building"},
+                                           'auto_accept_seconds': None, 'reopen': "Doesn't work or reopening sends it back to Building",
+                                           # 0.47.0 (wizardos-tracker#117): James's own corrections
+                                           'owner_correction': {
+                                               'label': OC_LABEL, 'waits_on': james_names(base), 'tip': OC_TIP,
+                                               'never_closes_on': ['7 quiet days (bug sweep)', "the builder tester's pass (bug-pass)"],
+                                               'closes_on': ['Works by James (Tracker: Tested: works — @jdefleur)',
+                                                             'a real-box check comment newer than the newest merged fix'],
+                                               'real_box_check': {'marker': OC_MARK, 'lines': ['Box:', 'Version served:', 'Seen:'],
+                                                                  'not_from': sorted(BUILDERS),
+                                                                  'after': 'the newest merged fix',
+                                                                  'blocked_by': 'Still broken / Doesn\'t work in it or after it'},
+                                               'closed_text': "Checked on James's box",
+                                               'detect': ['label owner-correction',
+                                                          'a merged PR naming the issue adds a line '
+                                                          '"owner-correction: humanitylabs-org/<repo>#<n>" (bug-pass adds the label)']}},
                               'feature_flow': {'tested_by': 'builder tester (before merge)', 'hand_back': HUMAN_LABEL, 'ai_review': None,
                                                'app': {'switch': 'off until the filer says yes', 'then': SHOW_LABEL, 'person': 'filer',
                                                        'decider': 'the person who filed it (agent -> its person; builder bot -> '
@@ -4702,6 +4750,14 @@ def checked_of(node, base=None):
     bots = {x.lower() for x in base['builder']['logins']} | BUILDERS
     if closer and closer.lower() not in bots:
         return {'by': person_of(closer, base), 'text': 'Checked by ' + person_of(closer, base), 'at': node.get('closedAt')}
+    # 0.47.0: an owner correction the builder's sweep closed on a real-box check: 'Checked on James's box'
+    cs = [c or {} for c in ((node.get('comments') or {}).get('nodes')) or []]
+    box = [c for c in cs if ((c.get('author') or {}).get('login') or '').lower() not in bots and real_box_check(c.get('body'))]
+    swept_box = [c for c in cs if ((c.get('author') or {}).get('login') or '').lower() in bots
+                 and (c.get('body') or '').lstrip().startswith('Checked on the owner')]
+    if box or swept_box:
+        return {'by': None, 'box': True, 'text': f"Checked on {james_names(base)[0]}'s box",
+                'at': (box[-1] if box else swept_box[-1]).get('createdAt') or node.get('closedAt')}
     # 0.41.1: the builder-tick sweep writes 'Checked (no problems in 7 days): ...'; its 15-20 Nov comments (3-day rule)
     # started 'Closed automatically:' and showed as 'Closed on merge (no human check)' here.
     notes = [((c or {}).get('body') or '') for c in ((node.get('comments') or {}).get('nodes')) or []

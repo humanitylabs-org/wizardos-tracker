@@ -793,12 +793,15 @@ function flow(d, groups, done, st, hist, bins) {
 
 // 0.18: each list tab has its own stage strip; every stage has a small ⓘ saying what happens there and who does it.
 const HUMAN_CHECK_TIP = 'Tried by the builder’s tester before it merged. Nobody checks it by hand; Still broken sends it back to Building.';   // 0.43.0
+// 0.47.0 (wizardos-tracker#117): a bug labelled owner-correction is the exception: it waits on James
+const OWNER_CHECK_TIP = 'One of James’s own corrections: it closes only when James says Works or a check on his box is posted.';
+const OWNER_NOTE = ' Except James’s own corrections (label owner-correction): those wait for his Works or a check on his box.';
 const STAGE_INFO = {
   queued: 'Queued. Each card says why it waits: Next for the builder (it picks it up on its next run), or Oscar builds this one (the builder skips the Tracker and Builder repos).',
   shipped: 'Fixed and merged switched on: in For testers within minutes, then For everyone with the next release. Shipping never waits on a human. The filer’s agent runs a quick AI check meanwhile. Still broken, at any point, sends it back to Building.',
   humancheck: 'No person checks it (Miguel, 21 Nov): the builder’s tester tried the fix before it merged, and the builder closes it. Still broken, any time, sends it back to Building.',
-  relwait: 'The builder’s tester tried the fix before it merged; it is merged switched on, waiting for the next release, and the builder closes it. Nobody checks it by hand. Still broken, any time, sends it back to Building.',
-  testers: 'The fix is in the For testers release. The builder’s tester already tried it before it merged; nobody checks it by hand. Still broken, any time, sends it back to Building (kept out of Stable).',
+  relwait: 'The builder’s tester tried the fix before it merged; it is merged switched on, waiting for the next release, and the builder closes it. Nobody checks it by hand. Still broken, any time, sends it back to Building.' + OWNER_NOTE,
+  testers: 'The fix is in the For testers release. The builder’s tester already tried it before it merged; nobody checks it by hand. Still broken, any time, sends it back to Building (kept out of Stable).' + OWNER_NOTE,
   everyone: 'The fix reached everyone: the Stable WizardOS release, or the app’s Store release. A Checked tag says who looked at it and when.',
   checked: 'Whoever filed it said Works, or 7 days passed with no Still broken: Checked (no problems in 7 days). Each card also says which release has it.',
   james: 'Older core features only: James or Miguel approves before the builder starts. New ones go straight to the builder.',
@@ -1630,6 +1633,14 @@ const WAIT_WHAT = { answer: 'to answer the builder', james: 'to approve or decli
 function waitHead(i) {
   if (i.nextrel) return null;
   const g = i.group, wo = i.waiting_on || {};
+  if (wo.owner_correction && (wo.who || []).length) {
+    // 0.47.0: 'Waiting on James: Works, or a check on his box' (one of his own corrections; never closes by itself)
+    const me = (cache[view] || {}).me_person || '';
+    const p = make('p', 'bd-waiton bd-waiton-other bd-waiton-oc' + (wo.who.some(w => w === me) ? ' me' : ''));
+    p.append(make('span', 'bd-waiton-k', 'Waiting on '), make('b', '', wo.who.join(' or ')), make('span', 'bd-waiton-x', ': ' + (wo.what || 'Works, or a check on his box')));
+    p.title = wo.why || OWNER_CHECK_TIP;
+    return p;
+  }
   if (!(g in WAIT_WHAT)) return null;   // 0.28: a builder question is its own stage (Needs an answer), not a stuck queue
   const who = (wo.who || []).filter(Boolean);
   if (!who.length) return null;
@@ -1651,11 +1662,22 @@ function waitHead(i) {
   p.append(make('span', 'bd-waiton-x', ' ' + WAIT_WHAT[g]));
   return p;
 }
+// 0.47.0: the plain-words reason under an open owner-correction bug (phones show no tooltips)
+function ocHint(i) {
+  const wo = i.waiting_on || {};
+  if (!wo.owner_correction || i.state === 'closed') return null;
+  return make('p', 'bd-hint bd-oc', wo.why || OWNER_CHECK_TIP);
+}
 // 0.26: 'Checked by Miguel · 11 Nov': a person looked at this shipped bug and said Works
 function checkTag(i) {
   const c = i.kind === 'bug' && i.checked;
+  const d = c && c.at ? new Date(c.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '';
+  if (c && c.box) {   // 0.47.0: an AI check on James's real box saw the fix working
+    const t = make('p', 'bd-checked', '✓ ' + c.text + (d ? ' · ' + d : ''));
+    t.title = 'An AI check on James’s own Wizard saw this fix working';
+    return t;
+  }
   if (!c || !c.by) return null;
-  const d = c.at ? new Date(c.at).toLocaleDateString(undefined, { day: 'numeric', month: 'short' }) : '';
   const t = make('p', 'bd-checked', '✓ Checked by ' + c.by + (d ? ' · ' + d : ''));
   t.title = 'A person checked this fix and said it works';
   return t;
@@ -1682,6 +1704,8 @@ function itemCard(i) {
   if (dp) c.append(dp);
   const tag = checkTag(i);
   if (tag) c.append(tag);
+  const oc = ocHint(i);   // 0.47.0
+  if (oc) c.append(oc);
   const rel = i.kind === 'bug' && i.shipped ? '' : releaseOf(i);   // 0.20: a bug's line already names it
   if (rel && rel !== (i.ship && i.ship.text)) c.append(make('p', 'bd-hint bd-rel', rel));   // Shipping/Done say it above
   const act = actionArea(i);
@@ -3531,7 +3555,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.46.1';
+const PAGE_VERSION = '0.47.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3614,7 +3638,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.46.1' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.47.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
