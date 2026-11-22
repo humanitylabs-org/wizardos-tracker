@@ -28,6 +28,7 @@ if '__file__' in globals():
     sys.path.insert(0, str(Path(__file__).resolve().parent))
 import report as reporter  # noqa: E402  0.20: the 'Report or request' form (its own module, a future standalone app)
 import dupes  # noqa: E402  0.41.0: the duplicate check at filing
+import watches  # noqa: E402  0.55.0: agent watches (switch agent-watches, issue 146)
 import feedback_inbox  # noqa: E402  0.26.5: the Feedback app's inbox (Pending approval), through the Feedback relay
 
 ROOT = Path(__file__).resolve().parent.parent if '__file__' in globals() else Path(os.environ.get('APP_ROOT', '.')).resolve()
@@ -35,7 +36,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.54.2'
+VERSION = '0.55.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -2595,6 +2596,10 @@ def on_box(person, args):
     _, acct = account_for(person)
     box = _box_facts(args.get('box'))
     raw = args.get('items') if isinstance(args.get('items'), list) else []
+    try:
+        _note_box(box)   # 0.55.0: what this box runs, for a watch's end-on-installed
+    except OSError:
+        pass
     items = []
     for it in raw[:60]:
         if not isinstance(it, dict) or not isinstance(it.get('id'), str) or len(it['id']) > 220:
@@ -5984,6 +5989,303 @@ def report_file(person, args, agent=False):
             'warning': ' '.join(x for x in (warning, made.get('warning')) if x) or None}
 
 
+# ---------- 0.55.0 Agent watches (switch agent-watches, humanitylabs-org/wizardos-tracker#146; logic in app/watches.py) ----------
+# An agent files with `watch_thread` (its own Wizard thread id); the Tracker looks at the item every 5 minutes with the
+# agent account's GitHub sign-in (no model turns), within the same rate-limit rules as everything else (budget_ok, and a
+# limited budget fails fast in gh()), and wakes that thread only when the item moves. Watches live in
+# DATA_DIR/private/watches.json. "Installed here" uses the box facts the page last sent to /api/onbox (WizardOS release,
+# channel, each app's installed version from the App Manager), kept in DATA_DIR/private/box_facts.json.
+WATCH_PR = 'number url state merged headRefOid mergeable mergeStateStatus mergeCommit { oid } repository { nameWithOwner }'
+WATCH_ONE = ('query($o: String!, $r: String!, $n: Int!) { repository(owner: $o, name: $r) { issue(number: $n) {'
+             ' number title url state stateReason repository { nameWithOwner } labels(first: 30) { nodes { name } }'
+             ' comments(last: 100) { totalCount nodes { id author { login } } }'
+             ' recent: comments(last: 10) { nodes { author { login } body } }'
+             ' timelineItems(itemTypes: [CROSS_REFERENCED_EVENT, CONNECTED_EVENT], last: 60) { nodes {'
+             '  ... on CrossReferencedEvent { source { __typename ... on PullRequest { ' + WATCH_PR + ' } } }'
+             '  ... on ConnectedEvent { subject { __typename ... on PullRequest { ' + WATCH_PR + ' } } } } } } } }')
+WATCH_HANDOVER_MAX = 4        # PRs named only in the builder's hand-over comments, read per look
+WATCH_KEEP_ENDED = 7 * 86400  # an ended watch stays listed this long
+WATCH_OFF = 'Agent watches are switched off on this Wizard (switch agent-watches), so nothing watches this item.'
+ISSUE_LINK = re.compile(r'https://github\.com/([\w.-]+/[\w.-]+)/issues/(\d+)|(?<![\w./-])([\w.-]+/[\w.-]+)#(\d+)\b')
+WAKE = watches.NoAppWakeRoute()   # the one place a wake leaves the Tracker (see app/watches.py)
+_watch_lock = threading.RLock()
+_mcp_caller = threading.local()   # the calling agent's label (the Wizard gateway's X-Wizard-Agent-Label), per request
+
+
+def _watches():
+    kept = _read('watches.json', {})
+    ws = kept.get('watches') if isinstance(kept, dict) else None
+    return {k: v for k, v in ws.items() if isinstance(v, dict) and v.get('id') and v.get('thread')} if isinstance(ws, dict) else {}
+
+
+def _watches_save(ws, now=None):
+    now = time.time() if now is None else now
+    ws = {k: v for k, v in ws.items() if not v.get('ended') or now - (v['ended'].get('at') or now) < WATCH_KEEP_ENDED}
+    _write('watches.json', {'watches': ws})
+    return ws
+
+
+def _watch_pr(x):
+    repo = (x.get('repository') or {}).get('nameWithOwner') or ''
+    return {'id': f"{repo}#{x.get('number')}", 'url': x.get('url'), 'state': (x.get('state') or '').lower(),
+            'merged': bool(x.get('merged')), 'head': x.get('headRefOid') or '', 'mergeable': x.get('mergeable'),
+            'merge_state': x.get('mergeStateStatus'), 'repo': repo, 'number': x.get('number'),
+            'sha': ((x.get('mergeCommit') or {}).get('oid') or '').lower()}
+
+
+def watch_snapshot(token, full, number, org=None):
+    """One watched item as app/watches.py reads it: state, labels, comments (ids and authors), linked PRs (GitHub's links
+    from `Fixes` / `Part of` lines and the builder's hand-over comment), merged deliveries, or moved_to when the item
+    now lives elsewhere (transferred, or copied by the builder's triage)."""
+    org = (org or settings()['org']).lower()
+    owner, name = full.split('/')
+    node = ((graphql(token, WATCH_ONE, {'o': owner, 'r': name, 'n': number}, cache=False).get('data') or {}).get('repository') or {}).get('issue')
+    if not node:
+        cur = gh(token, 'GET', f'/repos/{full}/issues/{number}', cache=False)   # REST follows a transferred issue
+        at = '/'.join((cur.get('repository_url') or '').split('/')[-2:]) if isinstance(cur, dict) else ''
+        if at and cur.get('number') and f"{at}#{cur['number']}".lower() != f'{full}#{number}'.lower():
+            return {'moved_to': f"{at}#{cur['number']}"}
+        raise Problem(404, f'{full}#{number} was not found, or this account cannot see it.')
+    labels = [l['name'] for l in (node.get('labels') or {}).get('nodes') or [] if l and l.get('name')]
+    prs = {}
+    for t in (node.get('timelineItems') or {}).get('nodes') or []:
+        x = (t or {}).get('source') or (t or {}).get('subject')
+        if x and x.get('__typename') == 'PullRequest' and (x.get('repository') or {}).get('nameWithOwner'):
+            p = _watch_pr(x)
+            prs[p['id'].lower()] = p
+    bots = {b.lower() for b in BUILDERS} | {x.lower() for x in policy_base()['builder']['logins']}
+    said = [c.get('body') or '' for c in (node.get('recent') or {}).get('nodes') or []
+            if ((c or {}).get('author') or {}).get('login', '').lower() in bots]
+    extra = []
+    for body in reversed(said):
+        for r, n in PR_URL.findall(body):
+            k = f'{r}#{int(n)}'.lower()
+            if k not in prs and r.split('/')[0].lower() == org and k not in [e.lower() for e in extra]:
+                extra.append(f'{r}#{int(n)}')
+    if extra:
+        parts = []
+        for i, k in enumerate(extra[:WATCH_HANDOVER_MAX]):
+            (o, r), n = k.split('#')[0].split('/'), int(k.split('#')[1])
+            parts.append(f'p{i}: repository(owner: {json.dumps(o)}, name: {json.dumps(r)}) {{ pullRequest(number: {n}) {{ {WATCH_PR} }} }}')
+        try:
+            got = (graphql(token, 'query { ' + ' '.join(parts) + ' }', {}, cache=False).get('data') or {})
+        except Problem as e:
+            if e.reason == 'rate_limited':
+                raise
+            got = {}
+        for v in got.values():
+            x = (v or {}).get('pullRequest')
+            if x:
+                p = _watch_pr(x)
+                prs[p['id'].lower()] = p
+    moved = None
+    if (node.get('state') or '').lower() == 'closed' and TRIAGE_LABEL in {l.lower() for l in labels}:
+        me = f'{full}#{number}'.lower()
+        for body in reversed(said):   # the builder's triage copied it: its comment names the new item
+            for m in ISSUE_LINK.finditer(body):
+                r, n = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+                if r.split('/')[0].lower() == org and f'{r}#{int(n)}'.lower() != me and f'{r}#{int(n)}'.lower() not in prs:
+                    moved = f'{r}#{int(n)}'
+                    break
+            if moved:
+                break
+    if moved:
+        return {'moved_to': moved}
+    comments = (node.get('comments') or {})
+    plist = sorted(prs.values(), key=lambda p: p['id'])
+    return {'id': f"{node['repository']['nameWithOwner']}#{node['number']}", 'title': node.get('title'), 'url': node.get('url'),
+            'state': (node.get('state') or '').lower(), 'reason': (node.get('stateReason') or '').lower() or None,
+            'labels': labels, 'comments_total': comments.get('totalCount') or 0,
+            'comments': [{'id': c.get('id'), 'author': ((c or {}).get('author') or {}).get('login') or ''} for c in comments.get('nodes') or []],
+            'prs': plist, 'open_prs': sum(1 for p in plist if p['state'] == 'open'),
+            'delivers': [{'repo': p['repo'], 'number': p['number'], 'sha': p['sha'] if SHA40.match(p['sha']) else ''}
+                         for p in plist if p['merged']][:12]}
+
+
+def _note_box(box):
+    """0.55.0: remember the box facts the page sent (for end-on-installed), merged with what it sent before."""
+    if not (box.get('release') or box.get('apps') or box.get('mac')) or not switch_on(watches.SWITCH):
+        return
+    with _watch_lock:
+        kept = _read('box_facts.json', {})
+        old = _box_facts(kept.get('box') if isinstance(kept, dict) else None)
+        apps = {**old['apps'], **box['apps']}
+        merged = {'release': box['release'] or old['release'], 'channel': box['channel'] or old['channel'],
+                  'mac': box['mac'] or old['mac'], 'apps': dict(list(apps.items())[-40:])}
+        _write('box_facts.json', {'box': merged, 'at': int(time.time())})
+
+
+def watch_installed(token, snap):
+    """The merged fix is in the version this Wizard runs (Settings > Update's installed versions), nothing still open."""
+    if not snap.get('delivers') or snap.get('open_prs'):
+        return False
+    kept = _read('box_facts.json', {})
+    box = _box_facts(kept.get('box') if isinstance(kept, dict) else None)
+    if not (box['release'] or box['apps'] or box['mac']):
+        return False
+    try:
+        return verdict(token, snap['delivers'], 0, box)['state'] == 'yes'
+    except Problem:
+        return False
+
+
+def watch_public(w):
+    return {'id': w['id'], 'url': w.get('url'), 'title': w.get('title'), 'thread': w['thread'], 'agent': w.get('agent') or None,
+            'note': w.get('note') or None, 'since': w.get('since'), 'checked_at': w.get('checked_at'),
+            'last_wake': w.get('last_wake'), 'wakes': w.get('wakes') or 0, 'pending': list(w.get('pending') or []),
+            'held': [{k: h.get(k) for k in ('at', 'name', 'final', 'text')} for h in (w.get('held') or [])[-5:]],
+            'ended': w.get('ended'), 'error': w.get('error')}
+
+
+def watch_add(item, thread, note, by, agent_label='', now=None):
+    """Watch one just-filed item for `thread`. Switch off: nothing is saved (the answer says so)."""
+    if not switch_on(watches.SWITCH):
+        return {'on': False, 'saved': False, 'why': WATCH_OFF}
+    now = time.time() if now is None else now
+    iid = item.get('id') or f"{item.get('repo')}#{item.get('number')}"
+    repo, _, n = iid.partition('#')
+    if not REPO_FULL.match(repo) or not n.isdigit():
+        return {'on': True, 'saved': False, 'why': 'The filed item has no issue number to watch.'}
+    with _watch_lock:
+        ws = _watches()
+        if sum(1 for w in ws.values() if not w.get('ended')) >= watches.MAX_ACTIVE and (ws.get(iid) or {'ended': 1}).get('ended'):
+            return {'on': True, 'saved': False, 'why': f'This Wizard already watches {watches.MAX_ACTIVE} items: stop one with watch_stop first.'}
+        ws[iid] = {'id': iid, 'repo': repo, 'number': int(n), 'url': item.get('url') or f'https://github.com/{repo}/issues/{n}',
+                   'title': item.get('title') or '', 'thread': thread, 'note': note or '', 'by': by or '',
+                   'agent': (agent_label or '')[:60], 'since': now, 'fp': None, 'first_seen': None, 'last_wake': None,
+                   'pending': [], 'wakes': 0, 'held': [], 'ended': None}
+        _watches_save(ws, now)
+    return {'on': True, 'saved': True, 'id': iid, 'thread': thread, 'wakes': 'sent' if WAKE.available else 'held',
+            'why': None if WAKE.available else WAKE.why}
+
+
+def _filed_with_watch(file, args):
+    """A filing tool with the optional watch: a bad watch_thread / watch_note is refused before anything is filed."""
+    try:
+        thread, note = watches.watch_args(args)
+    except watches.WatchError as e:
+        raise Problem(400, str(e)) from None
+    out = file({k: v for k, v in args.items() if k not in ('watch_thread', 'watch_note')})
+    if thread:
+        item = out.get('item') if isinstance(out.get('item'), dict) else out
+        by = item.get('author') or ''
+        if not by:
+            try:
+                by = account_for(None, agent=True)[1].get('login') or ''
+            except Problem:
+                by = ''
+        try:
+            out['watch'] = watch_add(item, thread, note, by, getattr(_mcp_caller, 'label', ''))
+        except OSError:
+            out['watch'] = {'on': True, 'saved': False, 'why': 'The watch could not be saved on this Wizard.'}
+    return out
+
+
+def watch_list(args=None):
+    """watch_list {thread?} / GET /api/watches: this Wizard's watches (newest first)."""
+    args = args or {}
+    thread = args.get('thread')
+    if thread is not None and (not isinstance(thread, str) or not watches.THREAD_RE.match(thread.strip())):
+        raise Problem(400, 'thread must be a Wizard thread id.')
+    ws = sorted(_watches().values(), key=lambda w: -(w.get('since') or 0))
+    if thread:
+        ws = [w for w in ws if w['thread'] == thread.strip()]
+    return {'on': switch_on(watches.SWITCH), 'wake_route': 'available' if WAKE.available else 'missing',
+            'why': None if WAKE.available else WAKE.why, 'watches': [watch_public(w) for w in ws]}
+
+
+def watch_stop(args, now=None):
+    """watch_stop {issue}: stop watching one item (no last wake)."""
+    full, number = _target(args)
+    iid = f'{full}#{number}'.lower()
+    now = time.time() if now is None else now
+    with _watch_lock:
+        ws = _watches()
+        key = next((k for k, w in ws.items() if k.lower() == iid and not w.get('ended')), None)
+        if not key:
+            raise Problem(404, f'Nothing watches {full}#{number} on this Wizard.')
+        ws[key] = {**ws[key], 'ended': {'at': now, 'why': 'stopped'}, 'pending': []}
+        _watches_save(ws, now)
+    return {'stopped': True, 'id': key, 'thread': ws[key]['thread']}
+
+
+def watches_view(person):
+    """GET /api/watches (the page's 'Watched by' chips): the active watches, the same for everyone."""
+    account_for(person)
+    if not switch_on(watches.SWITCH):
+        return {'on': False, 'watches': []}
+    return {'on': True, 'wake_route': 'available' if WAKE.available else 'missing', 'watches': [{k: v for k, v in watch_public(w).items() if k in ('id', 'thread', 'agent', 'note', 'since', 'last_wake')}
+                                    for w in _watches().values() if not w.get('ended')]}
+
+
+def watch_round(now=None, snapshot=None, installed=None, wake=None):
+    """One look at every active watch. Switch off: returns at once (no GitHub, no wake). Skips the round while the
+    agent account's GitHub budget is low or limited, and stops at the first rate-limit answer."""
+    if not switch_on(watches.SWITCH):
+        return {'ran': False, 'why': 'off', 'checked': 0, 'woke': 0}
+    now = time.time() if now is None else now
+    active = sorted((w for w in _watches().values() if not w.get('ended')), key=lambda w: w.get('checked_at') or 0)
+    if not active:
+        return {'ran': True, 'checked': 0, 'woke': 0}
+    try:
+        _, acct = account_for(None, agent=True)
+    except Problem:
+        return {'ran': False, 'why': 'signed_out', 'checked': 0, 'woke': 0}
+    token, own = acct['token'], acct.get('login') or ''
+    snapshot = snapshot or (lambda w: watch_snapshot(token, w['repo'], w['number']))
+    installed = installed or (lambda snap: watch_installed(token, snap))
+    wake = wake or WAKE
+    checked = woke = 0
+    for w in active:
+        if not budget_ok(token):
+            break
+        try:
+            snap = snapshot(w)
+        except Problem as e:
+            with _watch_lock:
+                ws = _watches()
+                if w['id'] in ws:
+                    ws[w['id']] = {**ws[w['id']], 'checked_at': now, 'error': e.message}
+                    _watches_save(ws, now)
+            if e.reason == 'rate_limited':
+                break
+            continue
+        checked += 1
+        new, out = watches.step(w, snap, now, w.get('by') or own, False if snap.get('moved_to') else installed(snap))
+        new.update(checked_at=now, error=None)
+        if out:
+            try:
+                sent = wake.send(new['thread'], out['name'], out['text'], f"{new['id']}:{new['wakes']}") or {}
+            except Exception as e:   # noqa: BLE001 - a failed wake is kept on the watch, never lost silently
+                sent = {'sent': False, 'why': str(e)[:200]}
+            if not sent.get('sent'):
+                new['held'] = (new.get('held') or [])[-4:] + [{'at': now, 'name': out['name'], 'final': out['final'],
+                                                               'text': out['text'][:2000], 'why': sent.get('why')}]
+            woke += 1
+        with _watch_lock:
+            ws = _watches()
+            cur = ws.get(w['id'])
+            if not cur or cur.get('ended'):   # stopped while we looked
+                continue
+            if new['id'] != w['id']:
+                ws.pop(w['id'], None)
+            ws[new['id']] = new
+            _watches_save(ws, now)
+    return {'ran': True, 'checked': checked, 'woke': woke}
+
+
+def _watch_loop(sleep=time.sleep, rounds=None):
+    sleep(60)
+    n = 0
+    while rounds is None or n < rounds:
+        n += 1
+        try:
+            watch_round()
+        except Exception:   # noqa: BLE001 - one bad round never stops the watches
+            pass
+        sleep(watches.POLL_SECONDS)
+
+
 # ---------- MCP ----------
 
 FILTERS = {'repo': {'type': 'string', 'description': 'Repo name in the org, or owner/name.'},
@@ -6017,15 +6319,25 @@ TOOLS = [
     {'name': 'decisions_list', 'description': "The show-and-tell queue: features waiting for a yes or no from your person (the decider: James for core repos, the person who filed it for app repos; an agent's filing belongs to its person). Each item has id, title, pitch (two plain lines from the builder's Show-and-tell), before/after screenshot links and its switch. for: another team name, or 'all'. counts: how many each person has. Pieces of one idea (same switch, or a 'Part of: <repo>#<n>' line) share idea (the root's id) and parts; counts and ideas count ideas, not pieces.", 'inputSchema': {'type': 'object', 'properties': {'for': {'type': 'string'}, 'refresh': {'type': 'boolean'}}}},
     {'name': 'board_decide', 'description': "Say yes or no at a feature's show-and-tell for your person, only when they told you to (pass their words as owner_request). Allowed only when your person is that item's decider (decisions_list). yes: label switch-default (the builder turns it on for everyone and closes it), show-and-tell removed. no: closed as not planned with label dropped (plus switch-cleanup when it is merged behind a switch, so the builder removes it). note: optional one-line reason. Deciding any part decides the whole idea: every item in its parts gets the same yes or no, and the answer lists parts [{id, ok, error?}].", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'decision': {'type': 'string', 'enum': ['yes', 'no']}, 'note': {'type': 'string', 'maxLength': 300}, 'on_behalf': {'type': 'boolean', 'description': "0.53.0/0.54.0: yes or no on James's behalf (core items) after he said so; the comment names who pressed it."}, **ASKED}, 'required': ['decision', 'owner_request']}},
     {'name': 'board_reopen', 'description': 'Reopen a Bug when a human asked you to (pass their words). Goals are refused: only humans reopen goals.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, **ASKED}, 'required': ['owner_request']}},
+    {'name': 'watch_list', 'description': "0.55.0 (switch agent-watches): the items this Wizard's Tracker watches for agent threads: id, thread, note, last_wake, wakes, pending (moved, waiting for the 10-minute gap), held (wakes kept because this Wizard can't wake a thread from an app yet: wake_route missing), ended {why installed|not_planned|closed|expired|stopped}. thread: only that thread's.", 'inputSchema': {'type': 'object', 'properties': {'thread': {'type': 'string', 'description': 'A Wizard thread id.'}}}},
+    {'name': 'watch_stop', 'description': '0.55.0 (switch agent-watches): stop watching one item (no last wake). A watch also ends by itself once the fix is installed on this Wizard, or the item is closed as not planned.', 'inputSchema': {'type': 'object', 'properties': ISSUE}},
 ]
+# 0.55.0 (issue 146): the three filing tools take an optional watch for the filing agent's own thread
+WATCH_FILE_ARGS = {
+    'watch_thread': {'type': 'string', 'maxLength': 160, 'description': "Optional (switch agent-watches): your own Wizard thread id. The Tracker then watches the filed item for free (no model turns) and wakes that thread with one run only when it moves (a comment by someone else, labels, state, a linked PR's commits, merge state or merge), at most once every 10 minutes, plus a daily check-in, until the fix is installed on this Wizard (one last wake: go check it) or it is closed as not planned. It never messages your person. Answer: watch {saved, wakes sent|held, why}."},
+    'watch_note': {'type': 'string', 'maxLength': watches.NOTE_MAX, 'description': 'Optional, with watch_thread: one line each wake repeats back to you (what to check).'},
+}
+for _t in TOOLS:
+    if _t['name'] in ('board_report_bug', 'board_report_feature', 'report_or_request'):
+        _t['inputSchema']['properties'].update(WATCH_FILE_ARGS)
 CALLS = {
     'board_list': lambda a: board_list(None, a, agent=True),
     'board_get': lambda a: board_get(None, a, agent=True),
-    'board_report_bug': lambda a: report_bug(None, a, agent=True),
-    'board_report_feature': lambda a: report_feature(None, a, agent=True),
+    'board_report_bug': lambda a: _filed_with_watch(lambda x: report_bug(None, x, agent=True), a),
+    'board_report_feature': lambda a: _filed_with_watch(lambda x: report_feature(None, x, agent=True), a),
     'board_comment': lambda a: add_comment(None, a, agent=True),
     'board_approve_pr': lambda a: approve_pr(None, a, agent=True),
-    'report_or_request': lambda a: report_file(None, a, agent=True),
+    'report_or_request': lambda a: _filed_with_watch(lambda x: report_file(None, x, agent=True), a),
     'board_add_goal': lambda a: add_goal(None, a, agent=True),
     'board_close': lambda a: set_state(None, a, 'closed', agent=True),
     'board_reopen': lambda a: set_state(None, a, 'open', agent=True),
@@ -6042,6 +6354,8 @@ CALLS = {
     'ai_review_fail': lambda a: ai_review(a, False),
     'goal_status_set': lambda a: goal_status_set(None, a, agent=True),
     'goal_status_get': lambda a: goal_status_get(None, a, agent=True),
+    'watch_list': lambda a: watch_list(a),
+    'watch_stop': lambda a: watch_stop(a),
 }
 
 
@@ -6160,6 +6474,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, try_status(self.person()))
             if path == '/api/goal/status':
                 return self.send(200, goal_status_get(self.person(), q))
+            if path == '/api/watches':   # 0.55.0 (switch agent-watches)
+                return self.send(200, watches_view(self.person()))
             if path == '/api/policy':
                 return self.send(200, policy(self.person()))
             if path == '/api/device':
@@ -6217,6 +6533,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/mcp':
                 if not isinstance(body, dict):
                     return self.send(400, {'error': 'Expected a JSON-RPC object.'})
+                # 0.55.0: the Wizard gateway names the calling agent (shown on a watch's 'Watched by' chip)
+                _mcp_caller.label = re.sub(r'[\x00-\x1f\x7f]', '', urllib.parse.unquote(self.headers.get('X-Wizard-Agent-Label') or ''))[:60]
                 out = rpc(body)
                 return self.send(202 if out is None else 200, out)
             if not isinstance(body, dict):
@@ -6293,6 +6611,11 @@ SWITCHES = [
                     "show-and-tell yes or no for you, your ideas to approve, your goals' status), and a notification when "
                     "something new waits on you.",
      'default': False, 'issues': ['humanitylabs-org/wizardos-tracker#87']},
+    {'id': 'agent-watches', 'name': 'Agent watches',
+     'description': "An agent that files a bug or feature can ask the Tracker to watch it: the Tracker checks it on GitHub "
+                    "itself and wakes that agent's chat only when something moves, until the fix is installed on this Wizard. "
+                    "Watched items show who watches them.",
+     'default': False, 'issues': ['humanitylabs-org/wizardos-tracker#146']},
 ]
 _SW_CONTRACT = 'wizard.app-switches/1'
 _SW_ROUTE = _sw_re.compile(r'(?:/[a-z0-9][a-z0-9-]{0,62})?/api/switches/?')
@@ -6431,4 +6754,6 @@ if __name__ == '__main__':
     threading.Thread(target=refresh_loop, daemon=True).start()
     if os.environ.get('TRACKER_WARM', '1') != '0':
         threading.Thread(target=_warm_releases, daemon=True).start()
+    if os.environ.get('TRACKER_WATCH', '1') != '0':   # 0.55.0: agent watches (does nothing while the switch is off)
+        threading.Thread(target=_watch_loop, daemon=True).start()
     ThreadingHTTPServer((os.environ.get('BIND', '0.0.0.0'), int(os.environ.get('PORT', '8799'))), Handler).serve_forever()

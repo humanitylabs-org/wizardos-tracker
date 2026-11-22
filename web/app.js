@@ -1465,6 +1465,7 @@ el('top-more').onclick = e => { e.stopPropagation(); topMenu(); };
 function loadSide() {
   api('api/builder').then(showBuilder).catch(() => {});
   loadSwitches();
+  loadWatches();   // 0.55.0
 }
 
 // ---------- 0.16 Is it on my Wizard? The page reads what this box runs (WizardOS release + channel from the shell's
@@ -1678,6 +1679,8 @@ function itemCard(i) {
   if (text) c.append(make('p', 'bd-where' + (cls ? ' ' + cls : ''), text));
   const dp = dupeRow(i);   // 0.41.0
   if (dp) c.append(dp);
+  const wt = watchChip(i);   // 0.55.0
+  if (wt) c.append(wt);
   const tag = checkTag(i);
   if (tag) c.append(tag);
   const rel = i.kind === 'bug' && i.shipped ? '' : releaseOf(i);   // 0.20: a bug's line already names it
@@ -2254,6 +2257,55 @@ function tested(i, works, note, b, screenshots) {
     });
   return true;
 }
+// 0.55.0 (wizardos-tracker#146, switch agent-watches): an item an agent asked the Tracker to watch shows who watches it.
+// The same small chip for everyone; the watch list comes from api/watches (empty while the switch is off).
+let watched = new Map();   // item id (lower) -> [{ thread, agent, note }]
+let watchWakes = true;     // false while this Wizard has no way for an app to wake an agent thread (wake_route missing)
+function loadWatches() {
+  return api('api/watches').then(r => {
+    watchWakes = !r || r.wake_route !== 'missing';
+    const next = new Map();
+    for (const w of (r && r.watches) || []) { const k = String(w.id).toLowerCase(); next.set(k, [...(next.get(k) || []), w]); }
+    const same = JSON.stringify([...next]) === JSON.stringify([...watched]);
+    watched = next;
+    if (!same && cache[view] && !typing() && !document.querySelector('.bd-confirm')) render(cache[view]);
+    if (openItem) detailWatch(openItem);
+    if (next.size) watchFacts();
+  }).catch(() => {});
+}
+// While anything is watched, tell the server what this Wizard runs (WizardOS release and every installed app's version,
+// the same versions as Settings › Update), so a watch can end once the fix is installed here.
+let factsSentAt = 0;
+async function watchFacts() {
+  if (Date.now() - factsSentAt < 30 * 60000) return;
+  factsSentAt = Date.now();
+  try {
+    await loadFacts();
+    const c = await loadCatalog();
+    for (const a of (c && c.apps) || []) if (a.version) facts.apps[a.id] = a.version;
+    await api('api/onbox', { box: facts, items: [] });
+  } catch (_) { factsSentAt = 0; }
+}
+const watchersOf = i => (i && watched.get(String(i.id).toLowerCase())) || [];
+const watcherName = w => w.agent || ('thread ' + (String(w.thread).length > 14 ? '…' + String(w.thread).slice(-8) : w.thread));
+function watchChip(i) {
+  const ws = watchersOf(i);
+  if (!ws.length) return null;
+  const chip = make('span', 'bd-fbchip small bd-watch', 'Watched by ' + ws.map(watcherName).join(', '));
+  chip.title = watchWhat()
+    + ws.map(w => w.note ? '\n' + watcherName(w) + ': ' + w.note : '').join('');
+  return chip;
+}
+function detailWatch(i) {
+  const p = el('d-watch');
+  if (!p) return;
+  const ws = watchersOf(i);
+  p.hidden = !ws.length;
+  p.textContent = ws.length ? 'Watched by ' + ws.map(w => watcherName(w) + ' (thread ' + w.thread + ')').join(', ')
+    + ': ' + watchWhat() : '';
+}
+const watchWhat = () => watchWakes ? 'The Tracker checks this item on GitHub and tells that agent when it moves, until the fix is on this Wizard.'
+  : 'The Tracker checks this item on GitHub and notes when it moves. This Wizard can\u2019t wake an agent from an app yet, so the agent reads it with watch_list.';
 // 0.41.0 (Miguel, 20 Nov): a feature that looks like an open item carries possible-duplicate; the builder waits.
 // Anyone on the team clears it with Not a duplicate (or any comment on GitHub).
 const isDupe = i => !!i && i.state !== 'closed' && (i.dupe || (Array.isArray(i.labels) && i.labels.some(l => String(l).toLowerCase() === 'possible-duplicate')));
@@ -2539,6 +2591,7 @@ function openDetail(i, toAct) {
   if (i.kind === 'bug' && i.shipped && i.can_review && i.state_reason !== 'not_planned') bugCheckLines(i);
   if (i.group === 'answer' && i.question) { el('d-steps').hidden = false; el('d-steps').textContent = 'The builder asks: ' + i.question + ' Its full comment is below.'; }
   detailSwitch(i);
+  detailWatch(i);   // 0.55.0
   detailGoal(i, null);
   detailAct(i);
   el('d-body').replaceChildren(make('p', 'bd-empty', 'Loading…'));
@@ -3660,7 +3713,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.54.2';
+const PAGE_VERSION = '0.55.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3805,7 +3858,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.54.2' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.55.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
@@ -3877,6 +3930,7 @@ async function needsBadge() {
   if (mine === needsGen) b.set(n);
 }
 setInterval(needsBadge, 5 * 60000);
+setInterval(() => { if (!document.hidden) loadWatches(); }, 5 * 60000);   // 0.55.0
 document.addEventListener('visibilitychange', () => { if (!document.hidden) needsBadge(); });   // the switch may have flipped
 
 // ---------- 0.20 Report or request: the WizardOS Reporter (web/report.js) lives in its own module; the Tracker only
