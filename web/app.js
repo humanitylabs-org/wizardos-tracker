@@ -1394,17 +1394,53 @@ const firstName = x => String(x || '').split(' ')[0];
 // ---------- Builder switch (0.13.8): real. The builder checks it before every run; pausing asks first ----------
 let builderOn = false;
 // 0.54.1 (Miguel, 22 Nov: 'too many words, reads like a paragraph'): one small chip, 'Builder · ~33 h of work';
-// a tap shows the few numbers behind it. Hours = items it can take now / what its tester passed in the last 24 hours.
-function workLine(b) {
-  const box = el('workload'), w = b && b.work;
-  if (!w || !(me && me.connected)) { box.hidden = true; return; }
-  const h = w.hours, short = !w.pool ? 'out of work' : h == null ? `${w.pool} queued` : h < 1 ? '< 1 h of work' : h < 36 ? `~${Math.round(h)} h of work` : `~${Math.round(h / 24 * 2) / 2} days of work`;
-  const c = make('button', 'bd-work-c' + (!b.running ? ' off' : w.stale ? ' stale' : '')); c.type = 'button';
-  c.append(make('i', 'bd-work-dot'), make('b', '', 'Builder'), make('span', '', !b.running ? 'paused' : short));
+// a tap shows the few numbers behind it.
+// 0.55.0 (Miguel, 25 Nov): the time counts the builder's real set-up (workers, test boxes, one item per repo at a time)
+// and the chip says whether its server is big enough (the builder host's own 5-minute samples: fine / watch / upgrade).
+const SERVER_WORD = { fine: 'server OK', watch: 'server busy at times', upgrade: 'server too small' };
+const LIMIT_WORD = {
+  test_boxes: 'The test boxes are the limit here, not the workers.',
+  repos: n => `Only ${n} repos have work, and each repo builds one item at a time.`,
+  one_repo: (n, name) => `${name || 'One repo'} holds ${n} of them, and a repo builds one item at a time.`,
+};
+const hoursWord = h => h < 1 ? '< 1 h' : h < 36 ? `~${Math.round(h)} h` : `~${Math.round(h / 24 * 2) / 2} days`;
+const gb = mb => mb == null ? '—' : (mb / 1024).toFixed(mb < 10240 ? 1 : 0) + ' GB';
+const pc = v => v == null ? '—' : `${Math.round(v)}%`;
+function serverLines(sv) {
   const row = (k, v) => { const r = make('p', 'bd-work-r'); r.append(make('span', '', k), make('b', '', String(v))); return r; };
-  c.onclick = () => pop(c, 'Builder', [row('Can build now', w.pool), row('Bugs · features', `${w.bugs} · ${w.features}`),
+  const plan = sv.cpus ? ` (${sv.cpus} CPU, ${gb(sv.mem_total_mb)})` : '';
+  const say = sv.verdict === 'upgrade' ? 'Too small: move up to KVM 8.' : sv.verdict === 'watch' ? 'Busy at times; fine for now.'
+    : sv.verdict === 'fine' ? 'Big enough: workers are rarely held back.' : 'Measuring; a first answer after an hour.';
+  const why = sv.verdict === 'upgrade' || sv.verdict === 'watch' ? (sv.reasons || []).slice(0, 2).join('; ') : '';
+  const box = sv.test_box_verdict === 'add' ? 'Testers often wait for a test box: add a test box (more CPU won’t help).'
+    : sv.test_box_verdict === 'watch' ? 'Testers sometimes wait for a test box.' : '';
+  return [make('b', 'bd-work-h', 'Server' + plan), make('p', 'bd-work-s', say + (why ? ` ${why[0].toUpperCase()}${why.slice(1)}.` : '')),
+    row('Load per CPU', sv.load_per_cpu_p50 == null ? '—' : `${(+sv.load_per_cpu_p50).toFixed(1)}–${(+sv.load_per_cpu_p95).toFixed(1)}`),
+    row('All workers busy', pc(sv.all_workers_busy_pct)), row('Held back as “busy”', pc(sv.held_pct)),
+    row('Memory free, lowest', gb(sv.mem_free_p5_mb)), row('Disk used', pc(sv.disk_used_pct)),
+    row('Test boxes in use', pc(sv.test_box_busy_pct)),
+    box && make('p', 'bd-work-s', box),
+    make('p', 'bd-why-s', sv.stale ? `Last heard from ${when(new Date(sv.got * 1000).toISOString())}.`
+      : `Share of the time over the last ${sv.hours < 1 ? Math.max(5, Math.round(sv.hours * 60)) + ' minutes' : sv.hours < 48 ? Math.round(sv.hours) + ' h' : Math.round(sv.hours / 24) + ' days'}, measured every 5 minutes; load is usual–peak.`)];
+}
+function workLine(b) {
+  const box = el('workload'), w = b && b.work, est = b && b.estimate, sv = b && b.server;
+  if (!w || !(me && me.connected)) { box.hidden = true; return; }
+  const h = est ? est.hours : w.hours;
+  const short = !w.pool ? 'out of work' : h == null ? `${w.pool} queued` : `${hoursWord(h)} of work`;
+  const svWord = sv && !sv.stale && SERVER_WORD[sv.verdict];
+  const c = make('button', 'bd-work-c' + (!b.running ? ' off' : w.stale || (sv && sv.verdict === 'upgrade') ? ' stale' : '')); c.type = 'button';
+  c.append(make('i', 'bd-work-dot'), make('b', '', 'Builder'), make('span', '', !b.running ? 'paused' : short + (svWord ? ' · ' + svWord : '')));
+  const row = (k, v) => { const r = make('p', 'bd-work-r'); r.append(make('span', '', k), make('b', '', String(v))); return r; };
+  const lim = est && LIMIT_WORD[est.limit];
+  const clears = est && w.pool ? make('p', 'bd-work-s', `Queue clears in about ${hoursWord(est.hours).replace('~', '')} at ${est.workers} workers, ${est.test_boxes} test boxes.`
+    + (typeof lim === 'function' ? ' ' + lim(est.limit === 'repos' ? est.repos : est.top_repo, est.top_name) : lim ? ' ' + lim : '')) : null;
+  c.onclick = () => pop(c, 'Builder', [clears, row('Can build now', w.pool), row('Bugs · features', `${w.bugs} · ${w.features}`),
     row('Done in the last day', w.passed24), row('Waiting for a yes or no', w.held),
-    make('p', 'bd-why-s', w.stale ? `Last heard from ${when(new Date(w.at * 1000).toISOString())}.` : 'Time left = what it can build now ÷ what it finished in the last day.')]);
+    make('p', 'bd-why-s', w.stale ? `Last heard from ${when(new Date(w.at * 1000).toISOString())}.`
+      : est ? `Each item takes about ${Math.round(est.item_hours * 60)} minutes of a worker’s time (all runs, last 7 days); up to ${est.parallel} build at once.`
+      : 'Time left = what it can build now ÷ what it finished in the last day.'),
+    ...(sv ? serverLines(sv) : [])]);
   box.replaceChildren(c);
   box.hidden = false;
 }
@@ -3660,7 +3696,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.54.2';
+const PAGE_VERSION = '0.55.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3805,7 +3841,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.54.2' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.55.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

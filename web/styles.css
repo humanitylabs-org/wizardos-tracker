@@ -948,6 +948,9 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 .bd-work-c.stale .bd-work-dot { background: var(--bd-warn); }
 .bd-work-c.off .bd-work-dot { background: var(--ink-3); }
 .bd-work-r { display: flex; justify-content: space-between; gap: var(--wz-space-4); margin: 0 0 4px; font-size: var(--wz-text-sm); }
+/* 0.55.0: queue time at the real set-up + the builder server line, inside the same pop-up */
+.bd-work-s { margin: 0 0 6px; font-size: var(--wz-text-sm); color: var(--ink-2); }
+.bd-work-h { display: block; margin: var(--wz-space-2) 0 2px; font-size: var(--wz-text-sm); }
 .bd-checkmode #d-labels, .bd-checkmode #d-roles, .bd-checkmode #d-flow, .bd-checkmode #d-body,
 .bd-checkmode #d-comments-h, .bd-checkmode #d-comments, .bd-checkmode #d-reply:not(.bd-d-reply-ask) { display: none; }
 /* 0.52.0: the card opens on what to do; the summary shows only while the history is folded */
@@ -1180,3 +1183,5 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
   .bd-strip .bd-steps { gap: 3px; }
   .bd-strip:has(.bd-stepli:nth-child(15)) .bd-bin-w { font-size: .54rem; letter-spacing: -.02em; }   /* eight stages across a phone, no word cut */
 }
+/* 0.55.0: the Builder pop-up grew a server part; a pop-up never runs off a phone screen */
+.bd-pop { max-height: calc(100dvh - 16px); overflow-y: auto; }

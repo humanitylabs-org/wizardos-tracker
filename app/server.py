@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.54.2'
+VERSION = '0.55.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -4413,7 +4413,16 @@ def ai_review_human(*_):
                        'People review in Human review.', 'agents_only')
 
 
-WORK_KEYS = ('pool', 'bugs', 'features', 'held', 'passed24', 'running')
+WORK_KEYS = ('pool', 'bugs', 'features', 'held', 'passed24', 'running', 'repos', 'top_repo')
+# 0.55.0 (Miguel, 25 Nov): the builder server's own report (builder-resources on the builder host, every 5 minutes).
+RES_NUM = ('at', 'samples', 'since', 'hours', 'cpus', 'mem_total_mb', 'workers', 'test_boxes', 'workers_busy_now',
+           'test_boxes_busy_now', 'load_per_cpu_now', 'load_per_cpu_p50', 'load_per_cpu_p95', 'cpu_busy_p50',
+           'cpu_busy_p95', 'cpu_saturated_pct', 'all_workers_busy_pct', 'held_pct', 'busy_waits', 'mem_free_mb',
+           'mem_free_p5_mb', 'swap_max_mb', 'disk_used_pct', 'test_box_busy_pct', 'test_boxes_all_busy_pct',
+           'tester_wait_pct', 'runs', 'run_min_p50', 'items_passed', 'worker_min_per_item', 'test_min_p50',
+           'box_h_per_item')
+RES_WORDS = {'verdict': ('fine', 'watch', 'upgrade', 'measuring'), 'test_box_verdict': ('fine', 'watch', 'add', 'measuring'),
+             'box_h_source': ('measured', 'guess')}
 
 
 def builder_work():
@@ -4423,6 +4432,7 @@ def builder_work():
     if not isinstance(w, dict) or not w.get('at'):
         return None
     out = {k: w.get(k, 0) for k in WORK_KEYS}
+    out['top_name'] = w.get('top_name') or ''
     out['at'] = w['at']
     rate = out['passed24'] / 24.0
     out['hours'] = round(out['pool'] / rate, 1) if rate > 0 else None
@@ -4430,15 +4440,79 @@ def builder_work():
     return out
 
 
-def builder_status(seen=False, work=None):
+def _res_clean(raw):
+    r = json.loads(raw)
+    if not isinstance(r, dict):
+        raise ValueError
+    out = {}
+    for k in RES_NUM:
+        v = r.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and -1e12 < v < 1e12:
+            out[k] = v
+    for k, ok in RES_WORDS.items():
+        if r.get(k) in ok:
+            out[k] = r[k]
+    out['reasons'] = [str(x)[:200] for x in (r.get('reasons') or [])[:3] if isinstance(x, str)]
+    if 'verdict' not in out:
+        raise ValueError
+    return out
+
+
+def builder_server():
+    """0.55.0: is the builder server big enough? The builder's own summary (fine / watch / upgrade, load, memory,
+    workers busy, test boxes in use), stale after 20 minutes."""
+    r = _read('builder_res.json', {})
+    if not isinstance(r, dict) or not r.get('got'):
+        return None
+    return {**r, 'stale': time.time() - r['got'] > 20 * 60}
+
+
+def builder_estimate(work, server):
+    """0.55.0 (Miguel, 25 Nov): how long the queue takes at the builder's real set-up. Worker time per finished item
+    (all run minutes / items the tester passed, last 7 days, from the builder) shared over min(workers, repos in the
+    queue) because one repo builds one item at a time; capped by the test boxes (each finished item holds a test box
+    about box_h_per_item hours: ~40% of tests need one, ~27 minutes with the reset); never less than the busiest repo's
+    items one after another."""
+    if not work or not server or not server.get('worker_min_per_item') or not server.get('workers'):
+        return None
+    pool, t = work.get('pool') or 0, server['worker_min_per_item'] / 60.0
+    w, boxes = int(server['workers']), int(server.get('test_boxes') or 0)
+    repos = work.get('repos') or (w if pool else 0)
+    par = max(1, min(w, repos)) if pool else w
+    rate_w = par / t
+    box_h = server.get('box_h_per_item') or 0
+    rate_b = boxes / box_h if boxes and box_h else None
+    rate = min(rate_w, rate_b) if rate_b else rate_w
+    hours = pool / rate if pool else 0.0
+    floor = (work.get('top_repo') or 0) * t
+    limit = 'workers' if par >= w else 'repos'
+    if rate_b and rate_b < rate_w:
+        limit = 'test_boxes'
+    if floor > hours:
+        hours, limit = floor, 'one_repo'
+    return {'hours': round(hours, 1), 'workers': w, 'test_boxes': boxes, 'parallel': par, 'limit': limit,
+            'item_hours': round(t, 2), 'per_day': round(rate * 24, 1), 'pool': pool,
+            'repos': work.get('repos'), 'top_repo': work.get('top_repo'), 'top_name': work.get('top_name') or ''}
+
+
+def builder_status(seen=False, work=None, res=None):
     # 0.13.8: the builder host polls GET /api/builder?from=builder before every run and skips the run when Paused.
+    if seen and res:
+        try:
+            r = _res_clean(res)
+            with LOCK:
+                _write('builder_res.json', {**r, 'got': int(time.time())})
+        except (ValueError, TypeError, AttributeError):
+            pass
     if seen:
         with LOCK:
             _write('builder_seen.json', {'at': int(time.time())})
     if seen and work:
         try:
             w = json.loads(work)
+            name = w.get('top_name') if isinstance(w.get('top_name'), str) else ''
             w = {k: max(0, min(100000, int(w.get(k) or 0))) for k in WORK_KEYS}
+            w['top_name'] = name if re.fullmatch(r'[A-Za-z0-9._-]{1,80}', name) else ''
             with LOCK:
                 _write('builder_work.json', {**w, 'at': int(time.time())})
         except (ValueError, TypeError, AttributeError):
@@ -4448,9 +4522,10 @@ def builder_status(seen=False, work=None):
     at = (_read('builder_seen.json', {}) or {}).get('at') or 0
     connected = bool(at) and time.time() - at < 15 * 60
     running = bool(b.get('running', True))
+    work, server = builder_work(), builder_server()
     return {'running': running, 'state': 'Running' if running else 'Paused',
             'updated_at': b.get('updated_at'), 'updated_by': b.get('updated_by'), 'connected': connected,
-            'last_seen': at or None, 'work': builder_work(),
+            'last_seen': at or None, 'work': work, 'server': server, 'estimate': builder_estimate(work, server),
             'note': 'Paused: the builder finishes its current run, then picks up nothing new.' if not running
             else 'Running: the builder picks up the next item 30 seconds after each run.'}
 
@@ -6003,7 +6078,7 @@ TOOLS = [
     {'name': 'board_approve_pr', 'description': "Approve the open pull request an item in Needs an answer (label builder:blocked) is waiting on, e.g. when the builder says GitHub needs 'approval from someone other than the last pusher'. Only when a human on the team asked (pass their words as owner_request). Submits a GitHub review APPROVE ('Approved in WizardOS Tracker') with the agent's account, then comments on the item so the builder merges. pr: the PR number or URL; pr_repo when it lives in another repo and is named by number. The PR must be open and linked to the item (GitHub's links or a PR URL in the item or its comments). An approval counts only if GitHub accepts that account's review; the person can also tap Approve PR #N on the item in the Tracker.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'pr': {'type': ['integer', 'string'], 'description': 'PR number or URL.'}, 'pr_repo': {'type': 'string', 'description': 'owner/name of the PR repo (default: from the URL, else any linked PR with that number).'}, **ASKED}, 'required': ['pr', 'owner_request']}},
     {'name': 'board_add_goal', 'description': 'HUMANS OPEN GOALS. Use only when a human explicitly asked you to add this goal for them; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string'}, 'done': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Done-list lines (1-20).'}, 'body': {'type': 'string'}, **ASKED}, 'required': ['repo', 'title', 'done', 'owner_request']}},
     {'name': 'board_close', 'description': 'Close a Bug when a human asked you to (pass their words). Goals are refused: only humans close goals, in the app.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'enum': ['completed', 'not_planned']}, **ASKED}, 'required': ['owner_request']}},
-    {'name': 'builder_status', 'description': 'Is the WizardOS Builder switch Running or Paused? (Mock-up: not wired to the builder host yet.)', 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'builder_status', 'description': "The WizardOS Builder: switch Running or Paused, work left (work), how long the queue takes at its workers and test boxes (estimate.hours, limit), and whether its server is big enough (server.verdict fine|watch|upgrade|measuring, load per CPU, memory, workers busy, test boxes in use).", 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'builder_set', 'description': 'Set the WizardOS Builder switch (running true = Running, false = Paused) only when a human asked; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'running': {'type': 'boolean'}, **ASKED}, 'required': ['running', 'owner_request']}},
     {'name': 'try_status', 'description': "Which items the signed-in person switched 'Try it' on for (mock-up: records the wish, nothing runs yet).", 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'try_set', 'description': "Switch 'Try it' on or off for one item (repo owner/name + number) only when a human asked; pass their words as owner_request. Mock-up.", 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'number': {'type': 'integer'}, 'on': {'type': 'boolean'}, **ASKED}, 'required': ['repo', 'number', 'on', 'owner_request']}},
@@ -6155,7 +6230,8 @@ class Handler(BaseHTTPRequestHandler):
             if path == '/api/done':
                 return self.send(200, done_list(self.person(), {**q, 'refresh': q.get('refresh') == '1'}))
             if path == '/api/builder':
-                return self.send(200, builder_status(seen=q.get('from') == 'builder', work=q.get('work') if q.get('from') == 'builder' else None))
+                fb = q.get('from') == 'builder'
+                return self.send(200, builder_status(seen=fb, work=q.get('work') if fb else None, res=q.get('res') if fb else None))
             if path == '/api/try':
                 return self.send(200, try_status(self.person()))
             if path == '/api/goal/status':

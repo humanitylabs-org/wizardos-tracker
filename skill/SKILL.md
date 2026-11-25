@@ -1,7 +1,7 @@
 ---
 name: wizardos-tracker
 description: Use when working with Wizard development Goals, Features and Bugs on GitHub.
-version: 0.54.2
+version: 0.55.0
 author: Humanity Labs, Hermes Agent
 license: GPL-3.0-only
 platforms: [linux, macos]
@@ -90,7 +90,7 @@ The Update manager and Try changes live in the Tracker's **Settings** (WizardOS 
 
 ## Rules for agents
 - **Link the exact item** (0.33.8): whenever you mention a Tracker item to the owner, give the relative link `/wizardos-tracker/#item/<owner>/<repo>/<number>` (e.g. `/wizardos-tracker/#item/humanitylabs-org/wizard-ux/1191`); it opens that card in its own tab. Never say "find it in the Tracker".
-- Read freely: `board_list` (`repo`, `type` all|goal|bug — features come with `all`, `state` open|closed), `board_get` (`issue` "owner/repo#123" or `repo` + `number`), `board_flow` (time per stage, kick-backs), `builder_status`, `try_status`.
+- Read freely: `board_list` (`repo`, `type` all|goal|bug — features come with `all`, `state` open|closed), `board_get` (`issue` "owner/repo#123" or `repo` + `number`), `board_flow` (time per stage, kick-backs), `builder_status`, `try_status`. `builder_status` (0.55.0) also gives `estimate` (hours to clear the queue at the builder's real workers and test boxes; `limit` workers|repos|test_boxes|one_repo) and `server` (the builder host's own check: `verdict` fine|watch|upgrade|measuring with `reasons`, load per CPU, memory, workers busy, test boxes in use, `test_box_verdict` add = add a test box rather than CPU).
 - Write: `board_report_bug`, `board_report_feature`, `board_comment`, `board_approve_pr` (human asked), `ai_review_pass` / `ai_review_fail`. Write a clear first paragraph (rows show it, cut at `---`) and assign the owner on GitHub. Link PRs with `Fixes owner/repo#123`.
 - **GitHub limit reached; back in N minutes** (0.39.1): the account's GitHub allowance (5,000 an hour, shared by every box it is signed in on) is spent. Tell the owner when it comes back and stop calling Tracker tools until then; every call fails at once without asking GitHub.
 - Goals: never open, close or reopen on your own. `board_add_goal` only when a human asked, with their exact words as `owner_request`.
