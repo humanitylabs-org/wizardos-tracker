@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.59.0'
+VERSION = '0.60.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -4491,7 +4491,12 @@ RES_NUM = ('at', 'samples', 'since', 'hours', 'cpus', 'mem_total_mb', 'workers',
            'workers_enabled', 'workers_fit', 'doubled_pct', 'workers_doubled_now', 'job_load', 'job_mem_mb',
            # 0.59.0: the builder's Claude allowance for the week. quota_used_pct = used so far, quota_pct_per_hour = the
            # pace, quota_hours_left = hours until it runs out at that pace, quota_resets_at = when it resets (epoch s).
-           'quota_used_pct', 'quota_pct_per_hour', 'quota_hours_left', 'quota_resets_at')
+           'quota_used_pct', 'quota_pct_per_hour', 'quota_hours_left', 'quota_resets_at',
+           # 0.60.0: a test box that sat claimed by a tester that was gone is a fault, not demand. tester_wait_pct
+           # leaves that time out; these report it: how often and how long (minutes) a box was stuck in the last 7
+           # days, when the last one was freed (epoch s), and how many are stuck right now.
+           'tester_wait_any_pct', 'test_box_leak_pct', 'test_box_leaks', 'test_box_leak_min', 'test_box_leak_last',
+           'test_boxes_leaked_now')
 RES_WORDS = {'verdict': ('fine', 'watch', 'upgrade', 'measuring'), 'test_box_verdict': ('fine', 'watch', 'add', 'measuring'),
              'box_h_source': ('measured', 'guess')}
 
@@ -4628,6 +4633,17 @@ def _allowance(sv, now=None):
     return {'status': 'fine', 'say': f'{u}{reset_s}.', 'hold': ''}
 
 
+def _and(names):
+    """'a', 'a and b', 'a, b and c'."""
+    return names[0] if len(names) == 1 else ', '.join(names[:-1]) + ' and ' + names[-1]
+
+
+def _stuck_word(minutes):
+    """Minutes as '45 min' or '2 h 20 min'."""
+    m = int(round(minutes))
+    return f'{m} min' if m < 60 else f'{m // 60} h' + (f' {m % 60} min' if m % 60 else '')
+
+
 def builder_bottlenecks(work, server, est):
     """0.56.0 (Miguel, 25 Nov: 'the stats are too confusing... make it clear what the bottlenecks can be'): one named
     slowest part, a fixed checklist of what can slow the builder down (status fine | tight | limit | measuring, one plain
@@ -4648,7 +4664,13 @@ def builder_bottlenecks(work, server, est):
     limit when many were (10 or more, or at least half of what waits and 3 or more). CLAUDE ALLOWANCE (only when the
     server report has quota_used_pct) — the limit from 85% used (new features on hold; everything from 95%), tight
     when at this pace it runs out before it resets; when it is the limit it is the slowest part and the help says
-    'Another Claude subscription for the builder, or a slower pace.'"""
+    'Another Claude subscription for the builder, or a slower pace.' 0.60.0 (Miguel, 25 Nov: the pop-up said 'Nothing
+    is holding the builder back.' above rows that read 'The limit'): the one sentence names EVERY row at the limit, the
+    most binding first (the Claude allowance, what bounds the estimate, the server, the test boxes, the workers, a
+    yes or no from a person), then how many items have waited more than a day when that row is at the limit; 'Nothing
+    is holding the builder back.' only when no row is. A test box that was stuck (its tester had left without letting
+    it go; the builder now frees such a box itself) is said in the test boxes row and is not a reason for another box:
+    the builder's tester_wait_pct no longer counts that time."""
     if not work:
         return None
     pool, held = work.get('pool') or 0, work.get('held') or 0
@@ -4748,7 +4770,17 @@ def builder_bottlenecks(work, server, est):
         waited = 'testers never waited for one' if wait < 1 else f'testers waited for one {_pct(wait)} of the time'
         st = 'limit' if sv.get('test_box_verdict') == 'add' or lim == 'test_boxes' else \
             'tight' if sv.get('test_box_verdict') == 'watch' or (isinstance(use, (int, float)) and use >= 50) else 'fine'
-        row('test_boxes', bname, st, f'In use {_pct(use)} of the time; {waited}.' if use is not None else f'{waited[0].upper()}{waited[1:]}.')
+        say = f'In use {_pct(use)} of the time; {waited}.' if use is not None else f'{waited[0].upper()}{waited[1:]}.'
+        # 0.60.0: a stuck test box is a fault the builder clears itself, not a sign that another box is needed
+        stuck_now, leaks = int(sv.get('test_boxes_leaked_now') or 0), int(sv.get('test_box_leaks') or 0)
+        if stuck_now:
+            st = 'tight' if st == 'fine' else st
+            say = ('One is stuck right now' if stuck_now == 1 else f'{stuck_now} are stuck right now') + \
+                ': a tester left without letting it go, and the builder frees it within minutes. ' + say
+        elif leaks:
+            say += f" A test box was stuck {'once' if leaks == 1 else f'{leaks} times'} this week" \
+                   f" ({_stuck_word(sv.get('test_box_leak_min') or 0)} in all); that time is not counted here."
+        row('test_boxes', bname, st, say)
 
     # 5. people
     if not held:
@@ -4777,28 +4809,52 @@ def builder_bottlenecks(work, server, est):
 
     by = {r['key']: r for r in rows}
     quota_limit = bool(quota) and quota['status'] == 'limit'
-    # the one sentence
+    # the one sentence (0.60.0): everything at the limit, the most binding first
+    def at(key):
+        return key in by and by[key]['status'] == 'limit'
+
+    order = ['allowance'] if quota_limit else []
+    if lim in ('one_repo', 'repos'):
+        order.append('one_repo')
+    if lim == 'test_boxes':
+        order.append('test_boxes')
+    order += [k for k in ('server', 'test_boxes', 'workers', 'people') if at(k) and k not in order]
+    boxes = f'the {nb} test boxes' if nb else 'the test boxes'
+    held_s = f'{held} finished item{"s" if held != 1 else ""} wait{"" if held != 1 else "s"} for'
+    full = {
+        'allowance': lambda: f"the Claude allowance. {quota['hold']}",
+        'one_repo': lambda: f'{top_name}. It has {top_n} of the items; {two}.' if lim == 'one_repo'
+        else f'only {repos} repos have work, and a repo holds {rw} workers at most.',
+        'test_boxes': lambda: f'{boxes}. Finished items wait for one.' if lim == 'test_boxes'
+        else f"{boxes}. Testers waited for one {_pct(sv.get('tester_wait_pct') or 0)} of the time.",
+        'server': lambda: f"the server. Jobs are held for resources {_pct(sv.get('held_pct'))} of the time." if limited
+        else f'the server. It is too small for {nw} workers.',
+        'workers': lambda: f'the {nw} workers. All of them are busy most of the time.',
+        'people': lambda: f'a yes or no from a person. {held_s} one.',
+    }
+    short = {'allowance': 'the Claude allowance', 'one_repo': 'too few repos with work' if lim == 'repos' else top_name,
+             'test_boxes': boxes, 'server': 'the server', 'workers': 'the workers', 'people': 'a yes or no from a person'}
+    waiting_limit = at('waiting')
+    waited = f"{work['over_day']} of {work['waiting']}" if waiting_limit else ''
     if not pool:
-        slow = 'Nothing to build right now.'
-    elif quota_limit:
-        slow = f"Slowest part: the Claude allowance. {quota['hold']}"
-    elif lim == 'one_repo':
-        slow = f'Slowest part: {top_name}. It has {top_n} of the items; {two}.'
-    elif lim == 'repos':
-        slow = f'Slowest part: only {repos} repos have work, and a repo holds {rw} workers at most.'
-    elif lim == 'test_boxes':
-        slow = f'Slowest part: the {nb} test boxes. Finished items wait for one.'
-    elif by['server']['status'] == 'limit':
-        slow = f"Slowest part: the server. Jobs are held for resources {_pct(sv.get('held_pct'))} of the time." if limited \
-            else f'Slowest part: the server. It is too small for {nw} workers.'
-    elif by['workers']['status'] == 'limit':
-        slow = f'Slowest part: the {nw} workers. All of them are busy most of the time.'
+        slow = 'Nothing to build right now.' + (f' {held_s} a yes or no.' if at('people') else '')
+    elif order:
+        slow = 'Slowest part: ' + full[order[0]]()
+        if order[1:]:
+            slow += f' Also at the limit: {_and([short[k] for k in order[1:]])}.'
+        if waiting_limit:
+            slow += f' {waited} items have waited more than a day.'
+    elif waiting_limit:
+        tight = [short[k] for k in ('allowance', 'one_repo', 'server', 'test_boxes', 'workers', 'people')
+                 if k in by and by[k]['status'] == 'tight']
+        slow = f'Items wait too long: {waited} have waited more than a day. No single part is at its limit' + \
+            (f'; the closest: {_and(tight)}.' if tight else '.')
     elif by['workers']['status'] == 'measuring' or by['server']['status'] == 'measuring':
         slow = 'Nothing is holding the builder back so far; the server is still measuring.'
     else:
         slow = 'Nothing is holding the builder back.'
 
-    # what would help
+    # what would help: one line for each thing the sentence names that something can be done about
     helps = []
     if quota_limit:   # 0.59.0
         helps.append('Another Claude subscription for the builder, or a slower pace.')
@@ -4818,6 +4874,7 @@ def builder_bottlenecks(work, server, est):
     if not helps:
         helps.append('Nothing right now; the queue is mostly one repo.' if lim == 'one_repo'
                      else f'Nothing right now; only {repos} repos have work.' if lim == 'repos'
+                     else 'Nothing to add right now: no single part is at its limit.' if pool and waiting_limit
                      else 'Nothing right now.' if pool else 'Nothing; the builder is out of work.')
     return {'items': pool, 'hours': (est or {}).get('hours'), 'slowest': slow, 'rows': rows, 'help': ' '.join(helps)}
 
