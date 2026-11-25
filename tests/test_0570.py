@@ -14,7 +14,7 @@ RES = {'at': 1, 'samples': 40, 'hours': 3.3, 'cpus': 4, 'mem_total_mb': 15992, '
        'job_load': 0.6, 'job_mem_mb': 800,
        'verdict': 'fine', 'test_box_verdict': 'fine', 'reasons': [], 'got': 1, 'stale': False}
 WORK = {'pool': 74, 'bugs': 20, 'features': 54, 'held': 0, 'passed24': 56, 'running': 5, 'repos': 11, 'top_repo': 32,
-        'top_name': 'wizard-ux', 'at': 1, 'stale': False}
+        'top_name': 'wizard-ux', 'at': 1, 'stale': False, 'repo_workers': 2}   # 0.58.0: this builder still says two
 
 
 def fresh():
@@ -61,16 +61,16 @@ class Bottlenecks(unittest.TestCase):
     def test_one_repo_row_says_two_workers_can_be_in_it(self):
         s = fresh()
         est, out, by = bn(s)
-        self.assertEqual(out['slowest'], 'Slowest part: wizard-ux. It has 32 of the items; two workers can be in it once other repos run dry.')
+        self.assertEqual(out['slowest'], 'Slowest part: wizard-ux. It has 32 of the items; up to 2 workers can be in it once other repos run dry.')
         self.assertEqual((by['one_repo']['status'], by['one_repo']['say']),
-                         ('limit', 'wizard-ux has 32 of the 74 items; two workers can be in it once other repos run dry.'))
+                         ('limit', 'wizard-ux has 32 of the 74 items; up to 2 workers can be in it once other repos run dry.'))
         self.assertEqual(by['workers']['name'], 'Workers (up to 12, resource-limited)')
         self.assertEqual((by['workers']['status'], by['workers']['say']),
                          ('fine', '5 running now of up to 12; about 6 fit on this server; more start whenever the server has room.'))
         self.assertEqual((by['server']['status'], by['server']['say']), ('fine', 'CPU busy 43% of the time; jobs were never held for resources.'))
         self.assertEqual(out['help'], 'Nothing right now; the queue is mostly one repo.')
         est, out, by = bn(s, {**WORK, 'repos': 1, 'top_repo': 10})
-        self.assertEqual(by['one_repo']['say'], 'Only 1 repos have work, and a repo holds two workers at most.')
+        self.assertEqual(by['one_repo']['say'], 'Only 1 repos have work, and a repo holds 2 workers at most.')
 
     def test_server_row_is_the_limit_when_jobs_are_held_for_resources(self):
         s = fresh()
@@ -102,10 +102,10 @@ class Bottlenecks(unittest.TestCase):
 class Words(unittest.TestCase):
     def test_version_and_tool(self):
         s = fresh()
-        self.assertEqual(s.VERSION, '0.57.0')
+        self.assertEqual(s.VERSION, '0.58.0')
         d = next(t for t in s.TOOLS if t['name'] == 'builder_status')['description']
-        self.assertIn('two workers once other repos run dry', d); self.assertIn('workers_enabled', d)
-        self.assertIn('0.57.0', (ROOT / 'skill' / 'SKILL.md').read_text())
+        self.assertIn('once other repos run dry', d); self.assertIn('workers_enabled', d)
+        self.assertIn('0.58.0', (ROOT / 'skill' / 'SKILL.md').read_text())
 
 
 if __name__ == '__main__':
