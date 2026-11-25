@@ -111,7 +111,7 @@ console.log(JSON.stringify({ calls, last: store.get('board.updq.last'), open: qu
     def test_wiring(self):
         self.assertIn('if (queueOpen() && !draining) drainQueue()', JS)
         self.assertIn("document.addEventListener('visibilitychange', () => { if (!document.hidden && queueOpen() && !draining) checkSelfUpdate(true); });", JS)
-        self.assertIn("queueStart(pendingUpdates().filter(x => !(x.key === 'os' && osFailed())))", JS)   # 0.50.1
+        self.assertIn("queueStart(pendingUpdates().filter(x => !(x.key === 'os' && osHeld())))", JS)   # 0.50.1, 0.55.1
         self.assertIn("didn’t update: ${f.reason}", JS)
         self.assertNotIn('for (const x of pendingUpdates()) { await', JS)   # the old page-memory loop is gone
 
