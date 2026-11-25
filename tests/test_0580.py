@@ -82,7 +82,7 @@ class Bottlenecks(unittest.TestCase):
 class Words(unittest.TestCase):
     def test_version_and_tool(self):
         s = fresh()
-        self.assertEqual(s.VERSION, '0.58.0')
+        self.assertEqual(s.VERSION, '0.59.0')
         d = next(t for t in s.TOOLS if t['name'] == 'builder_status')['description']
         self.assertIn('up to three workers', d); self.assertIn('repo_workers', d)
         self.assertIn('0.58.0', (ROOT / 'skill' / 'SKILL.md').read_text())
