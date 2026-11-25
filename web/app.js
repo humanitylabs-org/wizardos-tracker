@@ -1889,7 +1889,8 @@ function blockerBits(i, t, text) {
   if (r) return [updPanel(r, i)];
   const line = make('span', 'bd-blocker');
   line.dataset.blocker = u.key;
-  line.append(make('span', 'bd-why-s', text), smallBtn('Update', b => u.go(b)));
+  const go = smallBtn('Update', b => u.go(b)); if (u.key === 'os') osTag(go);
+  line.append(make('span', 'bd-why-s', text), go);
   return [line];
 }
 // 0.23.1: the item's Try it toggle on its own (the same state as the card's). 0.24.2: never null for an item with a
@@ -2353,7 +2354,7 @@ function releaseLine(i) {
 // 0.18: Update performs the update in place (the box's own App Manager routes), no separate panel.
 function updateFor(v, i) {
   const fix = v.fix || '';
-  if (/^Update WizardOS/.test(fix)) return smallBtn('Update', b => updateWizardOS(b, i));
+  if (/^Update WizardOS/.test(fix)) return osTag(smallBtn('Update', b => updateWizardOS(b, i)));
   const m = /^Update (.+)$/.exec(fix);
   if (m) {
     const id = (v.apps || [])[0] || (appsByName().get(m[1].toLowerCase()) || {}).id;
@@ -3412,37 +3413,91 @@ async function drain_() {
   selfUpdate();
 }
 // ---------- end Update all queue ----------
-async function updateWizardOS(btn, item) { const done = busyOn(btn); try { return await updateWizardOS_(btn, item); } finally { done(); } }
-async function updateWizardOS_(btn, item) {
+// ---------- 0.55.1 Wizard is busy: ask, never 'failed' (Miguel, 25 Nov) ----------
+// While Wizard is working on something the update would stop (a chat reply, a helper agent, a scheduled job), the box
+// starts nothing and answers started:false + waiting + waiting_for. The Tracker ignored that and then read the box's
+// LAST failure (it stays until a new install runs) as this tap's result: 'WizardOS update failed' on every tap, for two
+// days, with no install started. Now it asks: Update when it finishes ({when_idle: true}: the box starts it by itself
+// once nothing runs) or Update anyway ({anyway: true}). And a run never reports a failure that was there before the
+// tap (followOS).
+const OS_IDLE_TEXT = 'WizardOS updates when Wizard is quiet';
+const OS_IDLE_PILL = 'WizardOS updates later';   // the pill is one line: this and Cancel fit a 360px phone, the sentence doesn't
+const OS_GRACE_MS = 90000;
+const osWaits = () => !!(updates && updates.when_idle && !updates.installing);
+const osFailSig = u => u && (u.failed || u.interrupted) ? JSON.stringify([u.failure_reason || '', u.retry_target || '']) : '';
+function osTag(b) { b.dataset.updOne = 'os'; return b; }
+// Where the question hangs: the WizardOS button now in view (starting a run repaints the one that was tapped away), in
+// the open sheet if there is one; else the top of the page or sheet
+function osAnchor(btn) {
+  if (btn && btn.isConnected && btn.offsetParent) return btn;
+  const root = document.querySelector('dialog[open]') || el('scroll');
+  const inView = b => { const r = b.getBoundingClientRect(); return r.width > 0 && r.bottom > 0 && r.top < innerHeight; };
+  return [...root.querySelectorAll('[data-upd-one="os"]')].find(inView) || root;
+}
+function osBusyAsk(btn, item, a) {
+  const names = (a.waiting_for || []).map(w => w && w.name).filter(Boolean), more = names.length - 3;
+  const what = names.length ? `Wizard is busy right now: ${names.slice(0, 3).join(', ')}${more > 0 ? ` and ${more} more` : ''}.` : 'Wizard is busy right now.';
+  const row = make('div', 'bd-askrow');
+  const now = make('button', 'bd-mini', 'Update anyway'); now.type = 'button'; now.onclick = () => { unpop(); updateWizardOS(null, item, { anyway: true }); };
+  const later = make('button', 'bd-mini bd-mini-go', 'Update when it finishes'); later.type = 'button'; later.onclick = () => { unpop(); updateWizardOS(null, item, { when_idle: true }); };
+  row.append(now, later);
+  unpop();
+  pop(osAnchor(btn), '', [`${what} Updating WizardOS now would stop that.`, row]);
+  later.focus();
+}
+async function osIdleCancel(btn) {
+  const done = busyOn(btn);
+  try { updates = await getJSON(UPDATES_API, STORE_POST({ action: 'when_idle_cancel' })); }
+  catch (e) { return void pop(btn, '', e.status === 404 ? 'Update in Settings › Updates.' : e.message); }
+  finally { done(); }
+  selfUpdate(); paintWizards();
+}
+// `how`: the owner's answer when Wizard was busy ({anyway: true} | {when_idle: true}); it was confirmed already
+async function updateWizardOS(btn, item, how) { const done = busyOn(btn); try { return await updateWizardOS_(btn, item, how); } finally { done(); } }
+async function updateWizardOS_(btn, item, how) {
   try {
     const u = updates || await getJSON(UPDATES_API);
     const target = u && (u.latest_for_channel || (u.channel === 'latest' ? u.latest : u.stable));
     if (!u || !u.update_available) return btn && pop(btn, '', `WizardOS ${u && u.installed ? u.installed : ''} is the latest on ${u && u.channel === 'latest' ? 'For testers' : 'Stable'}.`);
     if (runs.get('os') && runs.get('os').state === 'running') return;
-    if (btn && !btn.dataset.sure) return askPop(btn, `Update WizardOS${u.installed ? ' ' + u.installed + ' →' : ' to'} ${target}? Wizard restarts for a moment.`, 'Update', () => { btn.dataset.sure = '1'; setTimeout(() => updateWizardOS(btn, item).finally(() => { delete btn.dataset.sure; }), 0); });
+    if (btn && !btn.dataset.sure && !how) return askPop(btn, `Update WizardOS${u.installed ? ' ' + u.installed + ' →' : ' to'} ${target}? Wizard restarts for a moment.`, 'Update', () => { btn.dataset.sure = '1'; setTimeout(() => updateWizardOS(btn, item).finally(() => { delete btn.dataset.sure; }), 0); });
     const r = newRun('os', 'WizardOS', target, item, b => updateWizardOS(b, item), u.quick);
     try {
-      const a = await getJSON(UPDATES_API, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Wizard-Store': '1' }, body: JSON.stringify({ action: 'apply' }) });
+      const a = await getJSON(UPDATES_API, STORE_POST({ action: 'apply', ...how }));
       if (a && a.error) throw new Error(a.error);
-      store.set('board.osrun', { to: target, from: u.installed, at: r.at, item: item ? item.id : null });
-      await followOS(r, u.installed);
+      // 0.55.1: the box started nothing (Wizard is busy, or the update now waits for it): no run, so nothing to fail
+      if (a && a.started === false && (a.waiting || (how && how.when_idle && a.when_idle))) {
+        runs.delete('os'); updates = a; repaintRuns();
+        if (queue && queue.doing.os) { delete queue.doing.os; queueSave(); }   // an Update all got here: not 'done', not 'failed'
+        // (asked a moment later: an Update all that got here has put the WizardOS button back by then)
+        return a.waiting ? void setTimeout(() => osBusyAsk(btn, item, a), 0) : toast(OS_IDLE_TEXT + '.');
+      }
+      const old = a && a.started ? osFailSig(a) || osFailSig(u) : '';   // the failure that was already there
+      store.set('board.osrun', { to: target, from: u.installed, at: r.at, item: item ? item.id : null, old });
+      await followOS(r, u.installed, old);
     } catch (e) { runEnd(r, false, e.status === 404 ? 'Update in Settings › Updates.' : e.message); store.set('board.osrun', null); }
   } catch (e) { if (btn) pop(btn, '', e.status === 404 ? 'Update in Settings › Updates.' : e.message); }
 }
 // Installing while _updates says installing; Restarting while Wizard is away (or back but not yet on the release);
 // Done once _updates reports the target installed; failed with its failure_reason.
-async function followOS(r, from) {
-  let away = false;
+// 0.55.1: `failed` is the box's LAST attempt and stays until the next one has ended, so it is this run's only once the
+// box is not installing (an install that runs has not failed), and, for a tap the box said it started (`old`: the
+// failure seen before the tap), not while it is still that same failure, nothing was seen installing or away and the
+// tap is under 90 seconds old. A different reason, or a failure after installing was seen, is reported at once.
+async function followOS(r, from, old) {
+  let away = false, seen = false;
   for (const end = r.at + 25 * 60000; Date.now() < end; await sleep(3000)) {
     let u = null;
     try { u = await getJSON(UPDATES_API); } catch (_) { away = true; runStep(r, 'Restarting', 'Wizard is restarting'); continue; }
     updates = u; r.quick = !!u.quick;
+    if (u.installing) seen = true;
     if (u.installed && (u.installed === r.to || (from && u.installed !== from && !u.installing))) {
       store.set('board.osrun', null); facts.release = u.installed; factsReady = null; onbox.clear(); runEnd(r, true);
       if (cache[view]) checkOnBox([...((cache[view].groups || {}).test || []), ...((cache[view].groups || {}).show || [])]);
       return;
     }
-    if (u.failed || u.interrupted) throw new Error(u.failure_reason || 'The WizardOS update stopped.');
+    const before = !!old && old === osFailSig(u) && !seen && !away && Date.now() - r.at < OS_GRACE_MS;
+    if ((u.failed || u.interrupted) && !u.installing && !before) throw new Error(u.failure_reason || 'The WizardOS update stopped.');
     runStep(r, u.installing ? 'Installing' : away ? 'Restarting' : 'Installing', u.installing ? (u.quick ? 'Swapping the Wizard image' : '') : '');
   }
   throw new Error('Still not done after 25 minutes. Check Settings › Updates.');
@@ -3454,7 +3509,7 @@ async function followOS(r, from) {
   const r = { key: 'os', name: 'WizardOS', to: o.to, at: o.at, end: 0, step: 'Restarting', detail: '', state: 'running', reason: '', quick: false,
               items: new Set(o.item ? [o.item] : []), retry: b => updateWizardOS(b) };
   runs.set('os', r);
-  followOS(r, o.from).catch(e => { runEnd(r, false, e.message); store.set('board.osrun', null); });
+  followOS(r, o.from, o.old).catch(e => { runEnd(r, false, e.message); store.set('board.osrun', null); });
 })();
 // ---------- 0.36.3 An app update survives a reload (Jan, 16 Nov) ----------
 // ⌘R in the middle of an app update dropped the in-page run, so the page offered Update again while the App Manager
@@ -3612,9 +3667,9 @@ function paintWizards() {
   card.append(head);
   const os = make('p', 'bd-onbox ' + (u.update_available ? 'no' : 'yes'));
   const ch = u.channel === 'latest' ? 'For testers' : u.channel === 'stable' ? 'Stable' : '—';
-  os.append(make('b', '', 'WizardOS ' + (u.installed || '?')), document.createTextNode(` · ${ch}` + (u.installing ? ' · updating now' : u.update_available ? ` · ${u.latest_for_channel || (u.channel === 'latest' ? u.latest : u.stable)} available ` : ' · latest ✓')));
+  os.append(make('b', '', 'WizardOS ' + (u.installed || '?')), document.createTextNode(` · ${ch}` + (u.installing ? ' · updating now' : u.update_available ? ` · ${u.latest_for_channel || (u.channel === 'latest' ? u.latest : u.stable)} available ${osWaits() ? '· updates when Wizard is quiet ' : ''}` : ' · latest ✓')));
   const osRun = runs.get('os');
-  if (u.update_available && !osRun && !u.installing) os.append(smallBtn('Update', b => updateWizardOS(b)));
+  if (u.update_available && !osRun && !u.installing) os.append(osWaits() ? smallBtn('Cancel', b => osIdleCancel(b)) : osTag(smallBtn('Update', b => updateWizardOS(b))));
   card.append(os);
   if (osRun) card.append(updPanel(osRun, null));
   if (u.failed || u.interrupted) card.append(make('p', 'bd-why', osFailText(u)));
@@ -3696,7 +3751,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.55.0';
+const PAGE_VERSION = '0.55.1';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3734,7 +3789,8 @@ function pendingUpdates() {
     .filter(a => a && a.update && !wizBusy.has(a.id) && !busyStatus(a) && !boxRunning(a.id));
   const self = apps.find(a => a.id === 'wizardos-tracker');
   const list = apps.filter(a => a.id !== 'wizardos-tracker').map(a => ({ key: a.id, name: a.name }));
-  if (updates && updates.update_available && !updates.installing) list.push({ key: 'os', name: 'WizardOS' });
+  // 0.55.1: not while this page's own WizardOS run is going (the pill said 'update failed · Try again' beside it)
+  if (updates && updates.update_available && !updates.installing && !queueRunning('os')) list.push({ key: 'os', name: 'WizardOS' });
   if (self) list.push({ key: self.id, name: 'the Tracker' });
   return list;
 }
@@ -3744,6 +3800,8 @@ function pendingUpdates() {
 // the App Manager's reason and is left out of Update all (it takes minutes, restarts Wizard and fails the same way):
 // 'Try again' on its own line starts it deliberately.
 const osFailed = () => !!(updates && (updates.failed || updates.interrupted));
+// 0.55.1: nor one that waits for Wizard to be quiet (the box starts that one by itself)
+const osHeld = () => osFailed() || osWaits();
 const osFailText = u => `Last WizardOS update failed${u.retry_target ? ' (' + u.retry_target + ')' : ''}: ${u.failure_reason || 'no reason given'}.`;
 function updateOne(key, btn) {
   if (key !== 'os') return updateApp(key, btn);
@@ -3757,7 +3815,8 @@ function selfUpdate() {
   const running = [...runs.values()].filter(r => r && r.state !== 'done' && r.state !== 'failed');
   const q = queueGet(), inq = new Set(q ? [...q.todo.map(x => x.key), ...Object.keys(q.doing)] : []);
   const list = pendingUpdates().filter(x => !inq.has(x.key));
-  const bad = osFailed(), all = list.filter(x => !(x.key === 'os' && bad));
+  // 0.55.1: an update that waits for Wizard to be quiet says so (never 'failed': that is the try before it) with Cancel
+  const idle = osWaits(), bad = osFailed() && !idle, all = list.filter(x => !(x.key === 'os' && (bad || idle)));
   // a thing that is still listed says why it didn't update on its own line (below); the rest keep their line here
   const told = x => list.some(y => y.key === x.key) && (x.key === 'os' ? bad : !!wizFail[x.key]);
   // 0.38.2: the apps of an Update all that didn't update, with why (also after the page was away or reloaded)
@@ -3786,10 +3845,12 @@ function selfUpdate() {
   if (!open_) {
     const pill = make('div', 'bd-updpill' + (bad ? ' bad' : ''));
     const word = list.length === 1 ? `${cap(list[0].name)} update` : `${list.length} updates`;
-    pill.append(make('i', 'bd-work-dot'), make('span', 'bd-updpill-t', bad && list.length === 1 ? `${cap(list[0].name)} update failed` : word + ' ready'));
-    const doIt = all.length ? smallBtn(all.length === 1 ? 'Update' : 'Update all', b => { b.disabled = true; queueStart(pendingUpdates().filter(x => !(x.key === 'os' && osFailed()))).finally(() => checkSelfUpdate(true)); })
-      : smallBtn('Try again', b => updateOne('os', b));
-    doIt.classList.add('bd-mini-go'); doIt.id = 'selfupd-go';
+    pill.append(make('i', 'bd-work-dot'), make('span', 'bd-updpill-t', idle && !all.length ? OS_IDLE_PILL : bad && list.length === 1 ? `${cap(list[0].name)} update failed` : word + ' ready'));
+    const doIt = all.length ? smallBtn(all.length === 1 ? 'Update' : 'Update all', b => { b.disabled = true; queueStart(pendingUpdates().filter(x => !(x.key === 'os' && osHeld()))).finally(() => checkSelfUpdate(true)); })
+      : idle ? smallBtn('Cancel', b => osIdleCancel(b)) : smallBtn('Try again', b => updateOne('os', b));
+    if (all.length || !idle) doIt.classList.add('bd-mini-go');
+    if (list.length === 1 && list[0].key === 'os' && !idle) osTag(doIt);
+    doIt.id = 'selfupd-go';
     const more = make('button', 'bd-updpill-more', '⌄'); more.type = 'button'; more.setAttribute('aria-label', 'Show details'); more.title = 'Details';
     more.onclick = () => { store.set(UPD_OPEN, true); selfUpdate(); };
     pill.append(doIt, more);
@@ -3799,11 +3860,11 @@ function selfUpdate() {
   const names = list.map(x => x.name);
   const t = make('span', 'bd-selfupd-t', list.length === 1 ? `An update is ready: ${names[0]}.` : `${list.length} updates ready: ${names.join(', ')}.`);
   const head = [t];
-  if (all.length > 1 || (list.length === 1 && !bad && !out.length && !wizFail[list[0].key])) {
+  if (all.length > 1 || (list.length === 1 && !bad && !idle && !out.length && !wizFail[list[0].key])) {
     const go = make('button', 'wz-button bd-selfupd-go', list.length === 1 ? 'Update' : 'Update all'); go.type = 'button'; go.id = 'selfupd-go';
     go.onclick = () => {   // while some are updating, the rest join the same queue
       go.disabled = true;
-      queueStart(pendingUpdates().filter(x => !(x.key === 'os' && osFailed()))).finally(() => checkSelfUpdate(true));
+      queueStart(pendingUpdates().filter(x => !(x.key === 'os' && osHeld()))).finally(() => checkSelfUpdate(true));
     };
     head.push(go);
   }
@@ -3811,16 +3872,18 @@ function selfUpdate() {
   less.onclick = () => { store.set(UPD_OPEN, false); selfUpdate(); };
   head.push(less);
   const rows = [];
-  if (list.length > 1 || bad || out.length || list.some(x => wizFail[x.key])) for (const x of list) {
+  if (list.length > 1 || bad || idle || out.length || list.some(x => wizFail[x.key])) for (const x of list) {
     const os = x.key === 'os', a = os ? null : fresh(x.key);
     const row = make('div', 'bd-selfupd-row'); row.dataset.updRow = x.key;
     const to = os ? (updates.latest_for_channel || (updates.channel === 'latest' ? updates.latest : updates.stable)) : a && a.latest;
     const txt = make('span', 'bd-selfupd-n'); txt.append(make('b', '', cap(x.name)), document.createTextNode(to ? ` ${os ? (updates.installed ? updates.installed + ' → ' : '') : (a.id === 'wizardos-tracker' ? selfVer() || a.version || '?' : a.version || '?') + ' → '}${to}` : ''));
     const f = os ? null : wizFail[x.key];
-    const one = smallBtn(os && bad ? 'Try again' : f ? 'Retry' : 'Update', b => { if (f) { delete wizFail[x.key]; store.set('board.wizfail', wizFail); } updateOne(x.key, b); }); one.dataset.updOne = x.key;
+    const one = os && idle ? smallBtn('Cancel', b => osIdleCancel(b))
+      : smallBtn(os && bad ? 'Try again' : f ? 'Retry' : 'Update', b => { if (f) { delete wizFail[x.key]; store.set('board.wizfail', wizFail); } updateOne(x.key, b); });
+    one.dataset.updOne = x.key;
     row.append(txt, one); rows.push(row);
     if (f) { const why = make('p', 'bd-upd-why', `Didn’t update: ${f.reason || 'No reason given'}`); why.dataset.updWhy = x.key; rows.push(why); }
-    if (os && bad) { const why = make('p', 'bd-upd-why', osFailText(updates) + (all.length > 1 ? ' Update all leaves it out.' : '')); why.dataset.updWhy = 'os'; rows.push(why); }
+    if (os && (bad || idle)) { const why = make('p', 'bd-upd-why', (idle ? OS_IDLE_TEXT + '.' : osFailText(updates)) + (all.length > 1 ? ' Update all leaves it out.' : '')); why.dataset.updWhy = 'os'; rows.push(why); }
   }
   box.replaceChildren(...out, ...head, ...rows, ...fails);
 }
@@ -3841,7 +3904,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.55.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.55.1' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
