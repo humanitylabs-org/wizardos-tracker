@@ -63,8 +63,8 @@ class OneSentence(unittest.TestCase):
         s = fresh()
         out, by = rows(s, work={**WORK, 'top_repo': 140}, res={**RES, **SERVER})
         self.assertEqual(by['one_repo']['status'], 'limit')
-        self.assertEqual(out['slowest'], 'Slowest part: wizard-ux. It has 140 of the items; up to 3 workers can be in it once '
-                                         'other repos run dry. Also at the limit: the server.')
+        self.assertEqual(out['slowest'], 'Slowest part: wizard-ux. It has 140 of the items; it can get up to 3 workers whenever it holds '
+                                         'a big share of the queue. Also at the limit: the server.')
         self.assertEqual(out['help'], 'A bigger server (KVM 8).')
 
     def test_only_the_wait_is_at_the_limit(self):
@@ -176,7 +176,7 @@ class StuckTestBox(unittest.TestCase):
 
 class Versions(unittest.TestCase):
     def test_version(self):
-        self.assertIn("VERSION = '0.60.0'", (ROOT / 'app/server.py').read_text())
+        self.assertIn("VERSION = '0.61.0'", (ROOT / 'app/server.py').read_text())
         self.assertIn('**0.60.0**', (ROOT / 'wizard.md').read_text())
 
 

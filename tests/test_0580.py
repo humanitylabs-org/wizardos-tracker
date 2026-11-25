@@ -1,7 +1,7 @@
 """Tracker 0.58.0 (Miguel, 25 Nov 2026): the Builder lets up to three workers into a repo once every other repo with work
 has one (never a fourth) and says so in its workload report (repo_workers). The estimate and the bottleneck words
 follow: the busiest repo's floor is its items / repo_workers, the work runs min(fit, repo_workers x repos) wide, the One
-repo row reads 'up to 3 workers can be in it once other repos run dry', and 'A bigger server (KVM 8)' is the help as soon
+repo row reads 'it can get up to 3 workers whenever it holds a big share of the queue', and 'A bigger server (KVM 8)' is the help as soon
 as the Server row is tight or the limit while one repo is not what binds.
 Run: python3 -m unittest discover -s tests"""
 import json, os, pathlib, sys, tempfile, unittest
@@ -49,18 +49,18 @@ class Bottlenecks(unittest.TestCase):
     def test_one_repo_row_says_up_to_three(self):
         s = fresh()
         est, out, by = bn(s, {**WORK3, 'top_repo': 50})
-        self.assertEqual(out['slowest'], 'Slowest part: wizard-ux. It has 50 of the items; up to 3 workers can be in it once other repos run dry.')
+        self.assertEqual(out['slowest'], 'Slowest part: wizard-ux. It has 50 of the items; it can get up to 3 workers whenever it holds a big share of the queue.')
         self.assertEqual((by['one_repo']['status'], by['one_repo']['say']),
-                         ('limit', 'wizard-ux has 50 of the 74 items; up to 3 workers can be in it once other repos run dry.'))
+                         ('limit', 'wizard-ux has 50 of the 74 items; it can get up to 3 workers whenever it holds a big share of the queue.'))
         self.assertEqual(out['help'], 'Nothing right now; the queue is mostly one repo.')
         est, out, by = bn(s, WORK3)                                                    # 32 of 74: tight, not the limit
         self.assertEqual((by['one_repo']['status'], by['one_repo']['say']),
-                         ('tight', 'wizard-ux has 32 of the 74 items; up to 3 workers can be in it once other repos run dry.'))
+                         ('tight', 'wizard-ux has 32 of the 74 items; it can get up to 3 workers whenever it holds a big share of the queue.'))
         est, out, by = bn(s, {**WORK3, 'repos': 1, 'top_repo': 10})
         self.assertEqual(by['one_repo']['say'], 'Only 1 repos have work, and a repo holds 3 workers at most.')
         self.assertEqual(out['slowest'], 'Slowest part: only 1 repos have work, and a repo holds 3 workers at most.')
         est, out, by = bn(s, {**WORK, 'repo_workers': 2, 'top_repo': 50})            # a builder still on two says two
-        self.assertIn('up to 2 workers can be in it', by['one_repo']['say'])
+        self.assertIn('it can get up to 2 workers', by['one_repo']['say'])
 
     def test_a_bigger_server_is_the_help_when_the_server_is_tight_and_one_repo_does_not_bind(self):
         s = fresh()
@@ -82,7 +82,7 @@ class Bottlenecks(unittest.TestCase):
 class Words(unittest.TestCase):
     def test_version_and_tool(self):
         s = fresh()
-        self.assertEqual(s.VERSION, '0.60.0')
+        self.assertEqual(s.VERSION, '0.61.0')
         d = next(t for t in s.TOOLS if t['name'] == 'builder_status')['description']
         self.assertIn('up to three workers', d); self.assertIn('repo_workers', d)
         self.assertIn('0.58.0', (ROOT / 'skill' / 'SKILL.md').read_text())

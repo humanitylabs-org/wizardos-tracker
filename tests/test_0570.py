@@ -61,9 +61,9 @@ class Bottlenecks(unittest.TestCase):
     def test_one_repo_row_says_two_workers_can_be_in_it(self):
         s = fresh()
         est, out, by = bn(s)
-        self.assertEqual(out['slowest'], 'Slowest part: wizard-ux. It has 32 of the items; up to 2 workers can be in it once other repos run dry.')
+        self.assertEqual(out['slowest'], 'Slowest part: wizard-ux. It has 32 of the items; it can get up to 2 workers whenever it holds a big share of the queue.')
         self.assertEqual((by['one_repo']['status'], by['one_repo']['say']),
-                         ('limit', 'wizard-ux has 32 of the 74 items; up to 2 workers can be in it once other repos run dry.'))
+                         ('limit', 'wizard-ux has 32 of the 74 items; it can get up to 2 workers whenever it holds a big share of the queue.'))
         self.assertEqual(by['workers']['name'], 'Workers (up to 12, resource-limited)')
         self.assertEqual((by['workers']['status'], by['workers']['say']),
                          ('fine', '5 running now of up to 12; about 6 fit on this server; more start whenever the server has room.'))
@@ -102,9 +102,9 @@ class Bottlenecks(unittest.TestCase):
 class Words(unittest.TestCase):
     def test_version_and_tool(self):
         s = fresh()
-        self.assertEqual(s.VERSION, '0.60.0')
+        self.assertEqual(s.VERSION, '0.61.0')
         d = next(t for t in s.TOOLS if t['name'] == 'builder_status')['description']
-        self.assertIn('once other repos run dry', d); self.assertIn('workers_enabled', d)
+        self.assertIn('whenever it holds a big share of the queue', d); self.assertIn('workers_enabled', d)
         self.assertIn('0.58.0', (ROOT / 'skill' / 'SKILL.md').read_text())
 
 

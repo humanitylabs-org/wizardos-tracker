@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.60.0'
+VERSION = '0.61.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -4547,7 +4547,7 @@ def builder_server():
     return {**r, 'stale': time.time() - r['got'] > 20 * 60}
 
 
-REPO_WORKERS = 3   # 0.58.0 (Miguel, 25 Nov): up to three workers in a repo once every other repo with work has one;
+REPO_WORKERS = 3   # 0.58.0 (Miguel, 25 Nov): up to three workers in a repo (0.61.0: whenever it holds a big share);
                    # the default when the builder's workload report carries no repo_workers (0.57.0 said two)
 
 
@@ -4564,7 +4564,11 @@ def builder_estimate(work, server):
 
     0.58.0 (Miguel, 25 Nov): the cap is 3 per repo (never a fourth) and comes from the builder's own report
     (`repo_workers` in the workload; REPO_WORKERS when it is missing): parallel = min(fit, repo_workers x repos), the
-    busiest repo's floor = its items / repo_workers."""
+    busiest repo's floor = its items / repo_workers.
+
+    0.61.0 (Miguel, 25 Nov evening): the builder now gives a repo holding at least a quarter of the queue extra
+    workers (up to repo_workers) whenever it is a whole worker under its fair share, even while other repos have
+    work; the serial floor stays top_repo / repo_workers."""
     if not work or not server or not server.get('worker_min_per_item') or not server.get('workers'):
         return None
     pool, t = work.get('pool') or 0, server['worker_min_per_item'] / 60.0
@@ -4682,10 +4686,11 @@ def builder_bottlenecks(work, server, est):
     def row(key, name, status, say):
         rows.append({'key': key, 'name': name, 'status': status, 'say': say})
 
-    # 1. one repo at a time (0.58.0: up to repo_workers (3) can be in a repo once other repos run dry)
+    # 1. one repo at a time (0.58.0: up to repo_workers (3) can be in a repo; 0.61.0: the builder gives a repo that
+    #    holds a big share of the queue extra workers even while other repos have work, up to that cap)
     share = top_n / pool if pool else 0
     rw = int((est or work).get('repo_workers') or 0) or REPO_WORKERS
-    two = f'up to {rw} workers can be in it once other repos run dry'
+    two = f'it can get up to {rw} workers whenever it holds a big share of the queue'
     if lim == 'one_repo':
         row('one_repo', 'One repo at a time', 'limit', f'{top_name} has {top_n} of the {pool} items; {two}.')
     elif lim == 'repos':
@@ -6467,7 +6472,7 @@ TOOLS = [
     {'name': 'board_approve_pr', 'description': "Approve the open pull request an item in Needs an answer (label builder:blocked) is waiting on, e.g. when the builder says GitHub needs 'approval from someone other than the last pusher'. Only when a human on the team asked (pass their words as owner_request). Submits a GitHub review APPROVE ('Approved in WizardOS Tracker') with the agent's account, then comments on the item so the builder merges. pr: the PR number or URL; pr_repo when it lives in another repo and is named by number. The PR must be open and linked to the item (GitHub's links or a PR URL in the item or its comments). An approval counts only if GitHub accepts that account's review; the person can also tap Approve PR #N on the item in the Tracker.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'pr': {'type': ['integer', 'string'], 'description': 'PR number or URL.'}, 'pr_repo': {'type': 'string', 'description': 'owner/name of the PR repo (default: from the URL, else any linked PR with that number).'}, **ASKED}, 'required': ['pr', 'owner_request']}},
     {'name': 'board_add_goal', 'description': 'HUMANS OPEN GOALS. Use only when a human explicitly asked you to add this goal for them; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string'}, 'done': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Done-list lines (1-20).'}, 'body': {'type': 'string'}, **ASKED}, 'required': ['repo', 'title', 'done', 'owner_request']}},
     {'name': 'board_close', 'description': 'Close a Bug when a human asked you to (pass their words). Goals are refused: only humans close goals, in the app.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'enum': ['completed', 'not_planned']}, **ASKED}, 'required': ['owner_request']}},
-    {'name': 'builder_status', 'description': "The WizardOS Builder: switch Running or Paused, work left (work), how long the queue takes at its workers and test boxes (estimate.hours, limit), what slows it down (bottlenecks: slowest = one plain sentence naming the limit, rows = one repo at a time / workers / server / test boxes / waiting for a yes or no / 0.59.0: waiting longest (oldest queued item, how many over a day; work.oldest_h, work.over_day) and Claude allowance (server.quota_used_pct, quota_hours_left, quota_resets_at; both only when the builder reports them), each status fine|tight|limit|measuring with a one-sentence reason, help = what would help; the same text the Builder chip shows; 0.58.0: a repo may hold up to three workers (estimate.repo_workers, from the builder) once other repos run dry, and the worker count is resource-limited (server.workers_enabled = ceiling, workers_fit = about how many fit, workers_busy_now), so the server row, not the workers row, says when the box is the limit), and the raw server numbers (server.verdict fine|watch|upgrade|measuring, load per CPU, memory, workers busy, test boxes in use).", 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'builder_status', 'description': "The WizardOS Builder: switch Running or Paused, work left (work), how long the queue takes at its workers and test boxes (estimate.hours, limit), what slows it down (bottlenecks: slowest = one plain sentence naming the limit, rows = one repo at a time / workers / server / test boxes / waiting for a yes or no / 0.59.0: waiting longest (oldest queued item, how many over a day; work.oldest_h, work.over_day) and Claude allowance (server.quota_used_pct, quota_hours_left, quota_resets_at; both only when the builder reports them), each status fine|tight|limit|measuring with a one-sentence reason, help = what would help; the same text the Builder chip shows; 0.58.0: a repo may hold up to three workers (estimate.repo_workers, from the builder; 0.61.0: whenever it holds a big share of the queue, even while other repos have work), and the worker count is resource-limited (server.workers_enabled = ceiling, workers_fit = about how many fit, workers_busy_now), so the server row, not the workers row, says when the box is the limit), and the raw server numbers (server.verdict fine|watch|upgrade|measuring, load per CPU, memory, workers busy, test boxes in use).", 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'builder_set', 'description': 'Set the WizardOS Builder switch (running true = Running, false = Paused) only when a human asked; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'running': {'type': 'boolean'}, **ASKED}, 'required': ['running', 'owner_request']}},
     {'name': 'try_status', 'description': "Which items the signed-in person switched 'Try it' on for (mock-up: records the wish, nothing runs yet).", 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'try_set', 'description': "Switch 'Try it' on or off for one item (repo owner/name + number) only when a human asked; pass their words as owner_request. Mock-up.", 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'number': {'type': 'integer'}, 'on': {'type': 'boolean'}, **ASKED}, 'required': ['repo', 'number', 'on', 'owner_request']}},
