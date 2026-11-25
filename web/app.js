@@ -483,7 +483,7 @@ function render(d) {
     if (!showing(g) || !list || !list.length) continue;
     any = true;
     const s = make('section', 'bd-sec' + (isHuman(g) ? ' bd-human-sec' : '')); s.id = 'sec-' + g;
-    const h = make('h2', 'bd-sec-h', title + ' '); h.append(make('span', 'bd-n', String(list.length)));
+    const h = make('h2', 'bd-sec-h', title + ' '); h.append(make('span', 'bd-n', String(notFolded(list))));
     if (isHuman(g)) { h.classList.add('bd-human'); h.prepend(humanTag()); }   // 0.46.0
     const l = make('div', 'bd-list'); l.replaceChildren(...list.map(g === 'feedback' ? FeedbackStage.card : itemCard));
     s.append(h, l); secs.push(s);
@@ -722,7 +722,7 @@ function flow(d, groups, done, st, hist, bins) {
   bins.forEach((x, n) => {
     if (n) out.push(arrow());
     const lists = x.groups.map(g => groups[g]);
-    const count = lists.some(l => l == null || l.pending) ? null : lists.reduce((a, l) => a + l.length, 0);
+    const count = lists.some(l => l == null || l.pending) ? null : lists.reduce((a, l) => a + notFolded(l), 0);
     const li = make('li', 'bd-stepli bd-binx' + (count ? ' on' : '') + (only === x.key ? ' sel' : '') + (only && only !== x.key ? ' dim' : '') + (isHuman(x.key) ? ' bd-human' : ''));
     li.dataset.step = x.key;
     const b = make('button', 'bd-bin' + (count ? ' on' : '')); b.type = 'button'; b.dataset.step = x.key;
@@ -817,12 +817,14 @@ function sectionsOf(v) {
     ['building', 'Building'], ['queued', 'Queued'], ['sorting', 'Sorting…'], ['shipping', 'Shipping'], ['done', 'Done']]
     .filter(([g]) => v === 'core' || g !== 'james' && (v !== 'bugs' || g !== 'show'));
 }
+// 0.59.0: an item the builder folded into another one ('Folded into #N') is listed under Done but is not done: no count has it
+const notFolded = l => l.filter(i => !i.folded).length;
 function strip(d, bins, groups) {
   const only = stage[d.view], out = [];
   bins.forEach((x, n) => {
     if (n) out.push(arrow());
     const lists = x.groups.map(g => groups[g]);
-    const count = lists.some(l => l == null || l.pending) ? null : lists.reduce((a, l) => a + l.length, 0);
+    const count = lists.some(l => l == null || l.pending) ? null : lists.reduce((a, l) => a + notFolded(l), 0);
     const human = isHuman(x.key);   // 0.46.0
     const li = make('li', 'bd-stepli bd-binx' + (count ? ' on' : '') + (only === x.key ? ' sel' : '') + (only && only !== x.key ? ' dim' : '') + (human ? ' bd-human' : ''));
     li.dataset.step = x.key;
@@ -1641,6 +1643,7 @@ function whereLine(i) {
   if (g === 'sorting' && i.pre_approved) return ['Approved · the builder files it in the right place, then starts', ''];
   if (g === 'sorting') return ['Sorting… the builder files it in the right place in a minute or two', ''];
   if (g === 'shipping') return [(i.kind === 'bug' && i.closed_at ? 'Fixed · ' : '') + (i.ship ? i.ship.text : 'Approved · checking releases…'), ''];
+  if (g === 'done' && i.folded) return [i.ship.text, ''];   // 0.59.0: 'Folded into #N': built there, not done here
   if (g === 'done') return [i.ship ? i.ship.text : 'Done', 'done'];
   return ['', ''];
 }
@@ -1693,6 +1696,7 @@ function itemCard(i) {
   top.append(h); c.append(top);
   if (i.group === 'show') c.append(...showTell(i));   // 0.47.0
   if (idea) c.append(partsLine(i));
+  if (i.asks > 1) c.append(make('p', 'bd-hint', `${i.asks} asks, built together`));   // 0.59.0: related asks folded into this item
   const fb = window.FeedbackStage && FeedbackStage.chip(i);   // 0.26.5: label from-feedback
   if (fb) c.insertBefore(fb, top);
   if (i.ux_tweak || (Array.isArray(i.labels) && i.labels.some(l => String(l).toLowerCase() === 'ux-tweak'))) {   // 0.37.0
@@ -3741,7 +3745,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.58.0';
+const PAGE_VERSION = '0.59.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3894,7 +3898,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.58.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.59.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.58.0'
+VERSION = '0.59.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -1004,7 +1004,45 @@ def set_org(args):
 
 # ---------- board ----------
 
+# 0.59.0 (Miguel, 25 Nov 2026): the builder folds related queued asks of one repo into one item before it builds
+# (wizardos-builder bin/builder-groom). The home item keeps its place and lists every ask (`## Asks`, one ticked line per
+# ask, marked `<!-- groom:ask N -->`); each folded item is closed as not planned with the label `folded` and the
+# builder's comment 'Folded into #N ...'. A folded item is not done, not shipped and not declined: the lists say
+# 'Folded into #N', and the counts and stats leave it out. Nothing here touches the Goals board.
+FOLDED_LABEL = 'folded'
+FOLD_HOME = '<!-- groom:home v1 -->'
+FOLD_ASK = re.compile(r'^- \[( |x|X)\] (\d+)\. (.*?)\s*<!-- groom:ask (\d+) -->\s*$', re.M)
+FOLDED_INTO = re.compile(r'^Folded into #(\d+)\b')
+
+
+def asks_of(body):
+    """The asks a home item holds: [{'index', 'done', 'text', 'number'}] ([] for any other item)."""
+    if FOLD_HOME not in (body or ''):
+        return []
+    return [{'index': i, 'done': m.group(1) in 'xX', 'text': m.group(3).strip(), 'number': int(m.group(4))}
+            for i, m in enumerate(FOLD_ASK.finditer(body))]
+
+
+def folded_into(labels, comments, base=None):
+    """For an item with the label `folded`: the number of the item it was folded into (the builder's newest 'Folded
+    into #N' comment), 0 when the comment is not among those read, None when the item is not folded."""
+    if FOLDED_LABEL not in {str(l).lower() for l in labels or []}:
+        return None
+    for c in reversed(comments or []):
+        m = FOLDED_INTO.match((c or {}).get('body') or '')
+        if m and is_builder_login(((c or {}).get('author') or {}).get('login') or '', base):
+            return int(m.group(1))
+    return 0
+
+
+def folded_text(n):
+    return f'Folded into #{n}' if n else 'Folded into another item'
+
+
 def tasks_of(body):
+    asks = asks_of(body)
+    if asks:   # 0.59.0: a home item's list is its asks, not the tick boxes inside each ask's own words
+        return [{'index': a['index'], 'done': a['done'], 'text': a['text']} for a in asks]
     out = []
     for line in (body or '').splitlines():
         m = TASK.match(line)
@@ -1055,6 +1093,7 @@ def shape(node):
             'stage': item_group(node['repository']['nameWithOwner'], low, (node.get('state') or '').lower(), None,
                                 node.get('createdAt'), node.get('body')) if 'goal' not in low else None,
             'state': (node.get('state') or '').lower(), 'state_reason': (node.get('stateReason') or '').lower() or None,
+            'folded': FOLDED_LABEL in low and (node.get('state') or '').lower() == 'closed',   # 0.59.0: folded into another item, not done
             'labels': labels, 'author': (node.get('author') or {}).get('login'),
             'created_at': node.get('createdAt'), 'updated_at': node.get('updatedAt'), 'closed_at': node.get('closedAt'),
             'comments': (node.get('comments') or {}).get('totalCount', 0),
@@ -1890,6 +1929,9 @@ def _card(node, tab):
            'from_feedback': feedback_inbox.FROM_LABEL in labels,   # 0.26.5: a 'From Feedback app' chip
            'ux_tweak': 'ux-tweak' in labels,   # 0.37.0: a 'UX tweak · auto-approved' chip
            'dupe': dupes.LABEL in labels}   # 0.41.0: 'Possible duplicate' chip + Not a duplicate
+    asks = asks_of(node.get('body'))
+    if asks:
+        out['asks'] = len(asks)   # 0.59.0: related asks folded into this item ('3 asks' on its card)
     if out['comments'] is None:
         out['comments'] = len((node.get('comments') or {}).get('nodes') or [])
     refs = _refs(node)
@@ -2515,6 +2557,8 @@ def ship_status(token, iid, delivers, open_prs, state, state_reason, labels, bas
     low = {str(l).lower() for l in labels or []}
     if state == 'open' and DEFAULT_LABEL in low:
         return {'state': 'shipping', 'wait': 'default', 'text': 'Waiting for the builder to turn it on for everyone', 'version': None}
+    if state == 'closed' and FOLDED_LABEL in low:   # 0.59.0: folded into another item: not shipped, not declined
+        return {'state': 'done', 'wait': None, 'text': folded_text(0), 'version': None, 'folded': True}
     if state == 'closed' and state_reason == 'not_planned':
         return {'state': 'done', 'wait': None, 'text': 'Closed: not planned', 'version': None}
     kept = (_read('shipped.json', {}) or {}).get(iid) if state == 'closed' else None
@@ -3691,7 +3735,16 @@ def _done_list(person, args):
     if args.get('refresh'):
         _forget(acct['token'])
     base = policy_base()
-    nodes, total = _view_search(acct['token'], view, f'org:{org} is:issue is:closed {VIEW_Q[view]} sort:updated-desc', limit=80, query=DONE_PAGE)
+    # 0.59.0: folded items are read apart (they are not done: the 80 newest stay real closed items) and shown as
+    # 'Folded into #N'
+    nodes, total = _view_search(acct['token'], view, f'org:{org} is:issue is:closed {VIEW_Q[view]} -label:{FOLDED_LABEL} sort:updated-desc', limit=80, query=DONE_PAGE)
+    if view != 'goals':
+        try:
+            folded, _ = _view_search(acct['token'], view, f'org:{org} is:issue is:closed {VIEW_Q[view]} label:{FOLDED_LABEL} sort:updated-desc', limit=40, query=DONE_PAGE)
+        except Problem:
+            folded = []
+        have = {n.get('url') for n in nodes}
+        nodes = nodes + [n for n in folded if n.get('url') not in have]
     ts = since_ts(base)
     nodes = [n for n in nodes if counts_since('closed', n.get('closedAt'), ts) and view_keeps(view, n['repository']['nameWithOwner'], base)]
     opened = []
@@ -3710,6 +3763,9 @@ def _done_list(person, args):
         st = 'closed' if n.get('closedAt') else 'open'
         if view == 'goals':
             return iid, {'state': 'done', 'wait': None, 'text': 'Closed', 'version': None}
+        into = folded_into(labels, (n.get('comments') or {}).get('nodes'), base) if st == 'closed' else None
+        if into is not None:   # 0.59.0: no release lookup for an item that was folded into another
+            return iid, {'state': 'done', 'wait': None, 'text': folded_text(into), 'version': None, 'folded': True}
         return iid, ship_status(token, iid, ds, open_prs, st, (n.get('stateReason') or '').lower() or None, labels, base)
     with ThreadPoolExecutor(max_workers=6) as ex:
         ships = dict(ex.map(one, nodes + opened))
@@ -3724,6 +3780,9 @@ def _done_list(person, args):
                     mine=same_person(author, login, base), opener=person_of(author, base), ship=sh,
                     created_at=n.get('createdAt'), closed_at=n.get('closedAt'), state='closed',
                     state_reason=(n.get('stateReason') or '').lower() or None, labels=labels)
+        if sh.get('folded'):   # 0.59.0: shown as 'Folded into #N', never counted as done
+            card['folded'] = True
+            card['folded_into'] = folded_into(labels, (n.get('comments') or {}).get('nodes'), base) or None
         if cat == 'bug':
             card['checked'] = checked_of(n, base)   # 0.20: Checked by <person> / (no problems in 7 days)
         if cat == 'bug' and card['state_reason'] != 'not_planned':
@@ -3735,7 +3794,7 @@ def _done_list(person, args):
     if repos_wanted:
         items = [i for i in items if i['repo'].split('/')[-1].lower() in repos_wanted]
     open_ship = {f"{n['repository']['nameWithOwner']}#{n['number']}": ships.get(f"{n['repository']['nameWithOwner']}#{n['number']}") for n in opened}
-    return {'view': view, 'org': org, 'items': items, 'count': len(items), 'total': total, 'since': base['since'],
+    return {'view': view, 'org': org, 'items': items, 'count': sum(1 for i in items if not i.get('folded')), 'total': total, 'since': base['since'],
             'shipping': [i for i in items if i['group'] == 'shipping'], 'done': [i for i in items if i['group'] == 'done'],
             'open_ship': open_ship}
 
@@ -3768,7 +3827,8 @@ def view_stats(token, org, view, cached_only=False):
     if cached_only:
         return None
     kind = VIEW_Q[view]
-    nodes, total = _view_search(token, view, f'org:{org} is:issue {kind} sort:created-desc', order='createdAt', limit=STATS_MAX, query=STATS_PAGE)
+    # 0.59.0: a folded item's work goes on in the item it was folded into, so it is in no count here (not done, not declined)
+    nodes, total = _view_search(token, view, f'org:{org} is:issue {kind} -label:{FOLDED_LABEL} sort:created-desc', order='createdAt', limit=STATS_MAX, query=STATS_PAGE)
     now = time.time()
     base = policy_base()
     items = [item_history(n, now) for n in nodes if n.get('repository') and view_keeps(view, n['repository']['nameWithOwner'], base)]
@@ -4414,6 +4474,10 @@ def ai_review_human(*_):
 
 
 WORK_KEYS = ('pool', 'bugs', 'features', 'held', 'passed24', 'running', 'repos', 'top_repo', 'repo_workers')
+# 0.59.0 (Miguel, 25 Nov: nothing should wait more than 24 hours): how long the queue waits, when the builder says so.
+# waiting = items waiting to be built (approved features that only wait for their switch are not counted), oldest_h =
+# hours since the oldest of them was filed, over_day = how many were filed more than 24 hours ago.
+WORK_WAIT = ('waiting', 'oldest_h', 'over_day')
 # 0.55.0 (Miguel, 25 Nov): the builder server's own report (builder-resources on the builder host, every 5 minutes).
 RES_NUM = ('at', 'samples', 'since', 'hours', 'cpus', 'mem_total_mb', 'workers', 'test_boxes', 'workers_busy_now',
            'test_boxes_busy_now', 'load_per_cpu_now', 'load_per_cpu_p50', 'load_per_cpu_p95', 'cpu_busy_p50',
@@ -4424,7 +4488,10 @@ RES_NUM = ('at', 'samples', 'since', 'hours', 'cpus', 'mem_total_mb', 'workers',
            # 0.57.0 (Miguel, 25 Nov): no fixed worker count. workers_enabled = the timer ceiling, workers_fit = how many
            # jobs the box fits by the builder's own resource gate (one job's measured load and memory), doubled_pct =
            # samples with two workers in one repo, job_load / job_mem_mb = what one running job costs.
-           'workers_enabled', 'workers_fit', 'doubled_pct', 'workers_doubled_now', 'job_load', 'job_mem_mb')
+           'workers_enabled', 'workers_fit', 'doubled_pct', 'workers_doubled_now', 'job_load', 'job_mem_mb',
+           # 0.59.0: the builder's Claude allowance for the week. quota_used_pct = used so far, quota_pct_per_hour = the
+           # pace, quota_hours_left = hours until it runs out at that pace, quota_resets_at = when it resets (epoch s).
+           'quota_used_pct', 'quota_pct_per_hour', 'quota_hours_left', 'quota_resets_at')
 RES_WORDS = {'verdict': ('fine', 'watch', 'upgrade', 'measuring'), 'test_box_verdict': ('fine', 'watch', 'add', 'measuring'),
              'box_h_source': ('measured', 'guess')}
 
@@ -4439,6 +4506,8 @@ def builder_work():
     out['top_name'] = w.get('top_name') or ''
     # 0.58.0: the builder says how many workers a repo may hold (repo_workers, 3 since 25 Nov); older builders do not
     out['repo_workers'] = int(w.get('repo_workers') or 0) or REPO_WORKERS
+    if all(isinstance(w.get(k), int) for k in WORK_WAIT):   # 0.59.0: only when the builder reports it
+        out.update({k: w[k] for k in WORK_WAIT})
     out['at'] = w['at']
     rate = out['passed24'] / 24.0
     out['hours'] = round(out['pool'] / rate, 1) if rate > 0 else None
@@ -4521,6 +4590,44 @@ def _pct(v):
     return f'{int(round(v))}%' if isinstance(v, (int, float)) else None
 
 
+def _wait_word(h):
+    """'5 h', '26 h', '3 days': how long something has waited."""
+    h = max(0, int(h))
+    return 'under an hour' if h < 1 else f'{h} h' if h < 48 else f'{int(round(h / 24.0))} days'
+
+
+def _allowance(sv, now=None):
+    """0.59.0: the Claude allowance row from the builder server's report -> {'status', 'say', 'hold'} or None when the
+    report has no quota_used_pct. THE LIMIT from 85% used (the builder holds new features there, and everything from
+    95%); TIGHT when at this pace it runs out before it resets; else FINE."""
+    used = (sv or {}).get('quota_used_pct')
+    if not isinstance(used, (int, float)):
+        return None
+    now = now or time.time()
+    resets, left = sv.get('quota_resets_at'), sv.get('quota_hours_left')
+    day = ''
+    if isinstance(resets, (int, float)) and resets > now:
+        t = time.localtime(resets)
+        day = f"{time.strftime('%a', t)} {t.tm_mday} {time.strftime('%b', t)}"
+    u = f'{int(round(used))}% used'
+    reset_s = f'; resets {day}' if day else ''
+    until = f' until it resets {day}' if day else ' until it resets'
+    if used >= 95:
+        hold = f'Everything is on hold{until}.'
+        return {'status': 'limit', 'say': f'{u}: everything is on hold{until}.', 'hold': hold}
+    if used >= 85:
+        hold = f'New features are on hold{until}.'
+        return {'status': 'limit', 'say': f'{u}: new features are on hold{until}.', 'hold': hold}
+    if isinstance(left, (int, float)) and left >= 0:
+        runs_out = f'at this pace it runs out in about {_wait_word(left)}' if left >= 1 else 'at this pace it runs out within the hour'
+        if day and now + left * 3600 < resets:
+            return {'status': 'tight', 'say': f'{u}, {runs_out}{reset_s}.', 'hold': ''}
+        if day:
+            return {'status': 'fine', 'say': f'{u}; at this pace it lasts until it resets {day}.', 'hold': ''}
+        return {'status': 'fine', 'say': f'{u}, {runs_out}.', 'hold': ''}
+    return {'status': 'fine', 'say': f'{u}{reset_s}.', 'hold': ''}
+
+
 def builder_bottlenecks(work, server, est):
     """0.56.0 (Miguel, 25 Nov: 'the stats are too confusing... make it clear what the bottlenecks can be'): one named
     slowest part, a fixed checklist of what can slow the builder down (status fine | tight | limit | measuring, one plain
@@ -4536,7 +4643,12 @@ def builder_bottlenecks(work, server, est):
     2 GB of free memory at the lowest or above 80% disk used. TEST BOXES — verdict add (or a test-box-bound estimate) =
     limit, watch or in use 50%+ = tight. PEOPLE — the limit when more finished items wait for a yes or no than the
     builder has left to build; tight from 5 waiting; they are outside the queue time. Server and test boxes read
-    'measuring' until the builder host has an hour of samples."""
+    'measuring' until the builder host has an hour of samples. 0.59.0: WAITING LONGEST (only when the builder reports
+    waiting / oldest_h / over_day) — fine when nothing was filed more than 24 hours ago, tight when some were, the
+    limit when many were (10 or more, or at least half of what waits and 3 or more). CLAUDE ALLOWANCE (only when the
+    server report has quota_used_pct) — the limit from 85% used (new features on hold; everything from 95%), tight
+    when at this pace it runs out before it resets; when it is the limit it is the slowest part and the help says
+    'Another Claude subscription for the builder, or a slower pace.'"""
     if not work:
         return None
     pool, held = work.get('pool') or 0, work.get('held') or 0
@@ -4646,10 +4758,30 @@ def builder_bottlenecks(work, server, est):
         row('people', 'Waiting for a yes or no', st,
             f'{held} finished item{"s" if held != 1 else ""} wait{"" if held != 1 else "s"} for someone to say yes or no; not counted in the time above.')
 
+    # 6. waiting longest (0.59.0; Miguel's target: nothing waits more than 24 hours). Only when the builder reports it.
+    if all(isinstance(work.get(k), int) for k in WORK_WAIT):
+        n, oldest, over = work['waiting'], work['oldest_h'], work['over_day']
+        if not n:
+            row('waiting', 'Waiting longest', 'fine', 'Nothing is waiting to be built.')
+        elif not over:
+            row('waiting', 'Waiting longest', 'fine', f'The oldest item waiting to be built has waited {_wait_word(oldest)}; nothing has waited more than a day.')
+        else:
+            many = over >= 10 or (over >= 3 and over * 2 >= n)
+            row('waiting', 'Waiting longest', 'limit' if many else 'tight',
+                f'The oldest item waiting to be built has waited {_wait_word(oldest)}; {over} of {n} {"have" if over != 1 else "has"} waited more than a day.')
+
+    # 7. Claude allowance (0.59.0). Only when the builder server reports it.
+    quota = _allowance(sv)
+    if quota:
+        row('allowance', 'Claude allowance', quota['status'], quota['say'])
+
     by = {r['key']: r for r in rows}
+    quota_limit = bool(quota) and quota['status'] == 'limit'
     # the one sentence
     if not pool:
         slow = 'Nothing to build right now.'
+    elif quota_limit:
+        slow = f"Slowest part: the Claude allowance. {quota['hold']}"
     elif lim == 'one_repo':
         slow = f'Slowest part: {top_name}. It has {top_n} of the items; {two}.'
     elif lim == 'repos':
@@ -4668,6 +4800,8 @@ def builder_bottlenecks(work, server, est):
 
     # what would help
     helps = []
+    if quota_limit:   # 0.59.0
+        helps.append('Another Claude subscription for the builder, or a slower pace.')
     if pool:
         # 0.58.0: with three workers allowed in a repo, one repo rarely binds; when the server is tight or the limit and
         # the queue is not bound by one repo (or too few repos), a bigger server is what would help
@@ -4704,8 +4838,11 @@ def builder_status(seen=False, work=None, res=None):
         try:
             w = json.loads(work)
             name = w.get('top_name') if isinstance(w.get('top_name'), str) else ''
+            wait = {k: max(0, min(1000000, int(w[k]))) for k in WORK_WAIT if isinstance(w.get(k), (int, float)) and not isinstance(w.get(k), bool)}
             w = {k: max(0, min(100000, int(w.get(k) or 0))) for k in WORK_KEYS}
             w['top_name'] = name if re.fullmatch(r'[A-Za-z0-9._-]{1,80}', name) else ''
+            if len(wait) == len(WORK_WAIT):
+                w.update(wait)
             with LOCK:
                 _write('builder_work.json', {**w, 'at': int(time.time())})
         except (ValueError, TypeError, AttributeError):
@@ -6273,7 +6410,7 @@ TOOLS = [
     {'name': 'board_approve_pr', 'description': "Approve the open pull request an item in Needs an answer (label builder:blocked) is waiting on, e.g. when the builder says GitHub needs 'approval from someone other than the last pusher'. Only when a human on the team asked (pass their words as owner_request). Submits a GitHub review APPROVE ('Approved in WizardOS Tracker') with the agent's account, then comments on the item so the builder merges. pr: the PR number or URL; pr_repo when it lives in another repo and is named by number. The PR must be open and linked to the item (GitHub's links or a PR URL in the item or its comments). An approval counts only if GitHub accepts that account's review; the person can also tap Approve PR #N on the item in the Tracker.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'pr': {'type': ['integer', 'string'], 'description': 'PR number or URL.'}, 'pr_repo': {'type': 'string', 'description': 'owner/name of the PR repo (default: from the URL, else any linked PR with that number).'}, **ASKED}, 'required': ['pr', 'owner_request']}},
     {'name': 'board_add_goal', 'description': 'HUMANS OPEN GOALS. Use only when a human explicitly asked you to add this goal for them; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string'}, 'done': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Done-list lines (1-20).'}, 'body': {'type': 'string'}, **ASKED}, 'required': ['repo', 'title', 'done', 'owner_request']}},
     {'name': 'board_close', 'description': 'Close a Bug when a human asked you to (pass their words). Goals are refused: only humans close goals, in the app.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'enum': ['completed', 'not_planned']}, **ASKED}, 'required': ['owner_request']}},
-    {'name': 'builder_status', 'description': "The WizardOS Builder: switch Running or Paused, work left (work), how long the queue takes at its workers and test boxes (estimate.hours, limit), what slows it down (bottlenecks: slowest = one plain sentence naming the limit, rows = one repo at a time / workers / server / test boxes / waiting for a yes or no, each status fine|tight|limit|measuring with a one-sentence reason, help = what would help; the same text the Builder chip shows; 0.58.0: a repo may hold up to three workers (estimate.repo_workers, from the builder) once other repos run dry, and the worker count is resource-limited (server.workers_enabled = ceiling, workers_fit = about how many fit, workers_busy_now), so the server row, not the workers row, says when the box is the limit), and the raw server numbers (server.verdict fine|watch|upgrade|measuring, load per CPU, memory, workers busy, test boxes in use).", 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'builder_status', 'description': "The WizardOS Builder: switch Running or Paused, work left (work), how long the queue takes at its workers and test boxes (estimate.hours, limit), what slows it down (bottlenecks: slowest = one plain sentence naming the limit, rows = one repo at a time / workers / server / test boxes / waiting for a yes or no / 0.59.0: waiting longest (oldest queued item, how many over a day; work.oldest_h, work.over_day) and Claude allowance (server.quota_used_pct, quota_hours_left, quota_resets_at; both only when the builder reports them), each status fine|tight|limit|measuring with a one-sentence reason, help = what would help; the same text the Builder chip shows; 0.58.0: a repo may hold up to three workers (estimate.repo_workers, from the builder) once other repos run dry, and the worker count is resource-limited (server.workers_enabled = ceiling, workers_fit = about how many fit, workers_busy_now), so the server row, not the workers row, says when the box is the limit), and the raw server numbers (server.verdict fine|watch|upgrade|measuring, load per CPU, memory, workers busy, test boxes in use).", 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'builder_set', 'description': 'Set the WizardOS Builder switch (running true = Running, false = Paused) only when a human asked; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'running': {'type': 'boolean'}, **ASKED}, 'required': ['running', 'owner_request']}},
     {'name': 'try_status', 'description': "Which items the signed-in person switched 'Try it' on for (mock-up: records the wish, nothing runs yet).", 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'try_set', 'description': "Switch 'Try it' on or off for one item (repo owner/name + number) only when a human asked; pass their words as owner_request. Mock-up.", 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'number': {'type': 'integer'}, 'on': {'type': 'boolean'}, **ASKED}, 'required': ['repo', 'number', 'on', 'owner_request']}},
