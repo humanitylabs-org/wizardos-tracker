@@ -34,9 +34,9 @@ class Bottlenecks(unittest.TestCase):
     def test_one_repo_is_the_limit_on_miguels_queue(self):
         s = fresh()
         out, by = bn(s)
-        self.assertEqual(out['slowest'], 'Slowest part: wizard-ux. It has 50 of the items; up to 2 workers can be in it once other repos run dry.')
+        self.assertEqual(out['slowest'], 'Slowest part: wizard-ux. It has 50 of the items; it can get up to 2 workers whenever it holds a big share of the queue.')
         self.assertEqual([r['key'] for r in out['rows']], ['one_repo', 'workers', 'server', 'test_boxes', 'people'])
-        self.assertEqual((by['one_repo']['status'], by['one_repo']['say']), ('limit', 'wizard-ux has 50 of the 74 items; up to 2 workers can be in it once other repos run dry.'))
+        self.assertEqual((by['one_repo']['status'], by['one_repo']['say']), ('limit', 'wizard-ux has 50 of the 74 items; it can get up to 2 workers whenever it holds a big share of the queue.'))
         # all workers busy 83% but more would not help: the repo holds the queue
         self.assertEqual(by['workers']['status'], 'tight'); self.assertIn('more would not help while one repo holds the queue', by['workers']['say'])
         self.assertEqual((by['server']['name'], by['server']['status']), ('Server (4 CPU, 16 GB)', 'fine'))
@@ -79,7 +79,7 @@ class Bottlenecks(unittest.TestCase):
         out, by = bn(s, WORK, {**RES, 'verdict': 'measuring', 'test_box_verdict': 'measuring', 'hours': 0.5})
         self.assertEqual(by['server']['say'], 'Measuring, first answer in about 30 min.')
         self.assertEqual(by['test_boxes']['status'], 'measuring')
-        self.assertEqual(out['slowest'], 'Slowest part: wizard-ux. It has 50 of the items; up to 2 workers can be in it once other repos run dry.')
+        self.assertEqual(out['slowest'], 'Slowest part: wizard-ux. It has 50 of the items; it can get up to 2 workers whenever it holds a big share of the queue.')
         out, by = bn(s, {**WORK, 'top_repo': 8}, {**RES, 'verdict': 'measuring', 'test_box_verdict': 'measuring', 'hours': 0.5})
         self.assertEqual((by['workers']['status'], out['help']), ('tight', 'Wait for the server numbers (about 30 min).'))
         self.assertIn('still measuring', out['slowest'])
@@ -91,7 +91,7 @@ class Bottlenecks(unittest.TestCase):
         s = fresh()
         s.builder_status(seen=True, work=json.dumps(WORK), res=json.dumps({k: v for k, v in RES.items() if k not in ('got', 'stale')}))
         b = s.builder_status()
-        self.assertEqual(b['bottlenecks']['slowest'], 'Slowest part: wizard-ux. It has 50 of the items; up to 2 workers can be in it once other repos run dry.')
+        self.assertEqual(b['bottlenecks']['slowest'], 'Slowest part: wizard-ux. It has 50 of the items; it can get up to 2 workers whenever it holds a big share of the queue.')
         d = next(t for t in s.TOOLS if t['name'] == 'builder_status')['description']
         self.assertIn('bottlenecks', d); self.assertIn('fine|tight|limit|measuring', d)
 
@@ -124,11 +124,11 @@ box.chip.click(); console.log(JSON.stringify(popped.map(n => ({ cls: n.cls, text
         self.assertIn('~33 h of work · server OK', chip['chip'])
         texts = [p['text'] for p in popup]
         self.assertEqual(texts[0], '74 items · about 33 h')
-        self.assertEqual(texts[1], 'Slowest part: wizard-ux. It has 50 of the items; up to 2 workers can be in it once other repos run dry.')
+        self.assertEqual(texts[1], 'Slowest part: wizard-ux. It has 50 of the items; it can get up to 2 workers whenever it holds a big share of the queue.')
         self.assertEqual(popup[1]['cls'], 'bd-work-s bd-bn-slow')
         self.assertEqual(texts[2], 'What can slow it down')
         self.assertEqual(texts[3].strip(), 'One repo at a time The limit'); self.assertEqual(popup[3]['kids'], ['', 'bd-bn-s limit'])
-        self.assertEqual(texts[4], 'wizard-ux has 50 of the 74 items; up to 2 workers can be in it once other repos run dry.')
+        self.assertEqual(texts[4], 'wizard-ux has 50 of the 74 items; it can get up to 2 workers whenever it holds a big share of the queue.')
         self.assertIn('Workers (4) tight'.replace('tight', 'Tight'), [t.strip() for t in texts])
         self.assertIn('Waiting for a yes or no Fine', [t.strip() for t in texts])
         self.assertTrue(any(t.startswith('What would help:') and 'mostly one repo' in t for t in texts))
