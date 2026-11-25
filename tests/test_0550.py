@@ -64,7 +64,7 @@ class Estimate(unittest.TestCase):
 
 class Page(unittest.TestCase):
     def run_js(self, b):
-        start, end = JS.index("const SERVER_WORD"), JS.index('function showBuilder(b) {')
+        start, end = JS.index("const SERVER_WORD"), JS.index('function showBuilder(b) {')   # 0.56.0: same block, see test_0560
         code = """
 const out = []; let popped = null;
 const make = (t, c, x) => ({ tag: t, cls: c, text: x || '', kids: [], append(...k) { this.kids.push(...k); }, set onclick(f) { this.click = f; } });
@@ -87,13 +87,10 @@ box.chip.click(); console.log(JSON.stringify(popped.map(txt)));
         est = {'hours': 24.0, 'workers': 4, 'test_boxes': 2, 'parallel': 4, 'limit': 'workers', 'item_hours': 1.33, 'repos': 12, 'top_repo': 10}
         chip, popup = self.run_js({'running': True, 'work': work, 'estimate': est, 'server': {**RES, 'stale': False, 'got': 1}})
         self.assertIn('~24 h of work · server OK', chip['chip'])
-        self.assertIn('Queue clears in about 24 h at 4 workers, 2 test boxes.', popup[0])
-        self.assertTrue(any('Big enough' in x for x in popup))
+        self.assertIn('72 items · about 24 h', popup[0])          # 0.56.0: the pop-up is the bottleneck checklist (test_0560)
         chip, popup = self.run_js({'running': True, 'work': work, 'estimate': {**est, 'limit': 'one_repo', 'hours': 30, 'top_name': 'wizard-os'},
                                    'server': {**RES, 'verdict': 'upgrade', 'reasons': ['every CPU was busy'], 'stale': False, 'got': 1}})
         self.assertIn('server too small', chip['chip'])
-        self.assertIn('wizard-os holds 10 of them', popup[0])
-        self.assertTrue(any('move up to KVM 8. Every CPU was busy.' in x for x in popup))
         chip, _ = self.run_js({'running': True, 'work': work, 'estimate': None, 'server': None})   # older builder: as before
         self.assertIn('~2.5 days of work', chip['chip']); self.assertNotIn('server', chip['chip'])
 

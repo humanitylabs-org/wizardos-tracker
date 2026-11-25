@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.55.1'
+VERSION = '0.56.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -4495,6 +4495,148 @@ def builder_estimate(work, server):
             'repos': work.get('repos'), 'top_repo': work.get('top_repo'), 'top_name': work.get('top_name') or ''}
 
 
+def _pct(v):
+    return f'{int(round(v))}%' if isinstance(v, (int, float)) else None
+
+
+def builder_bottlenecks(work, server, est):
+    """0.56.0 (Miguel, 25 Nov: 'the stats are too confusing... make it clear what the bottlenecks can be'): one named
+    slowest part, a fixed checklist of what can slow the builder down (status fine | tight | limit | measuring, one plain
+    sentence each) and one 'what would help' line. The page and the builder_status tool show exactly this.
+
+    Thresholds: ONE REPO — the limit when the estimate is bound by one repo (one_repo) or by too few repos (repos);
+    tight when the busiest repo holds 25%+ of the queue. WORKERS — the limit only when the estimate is worker-bound AND
+    all workers were busy 50%+ of the time AND the server and test boxes are fine (otherwise the real limit is one of
+    them); tight when all busy 50%+. SERVER — the builder's own verdict (upgrade = limit, watch = tight); also tight below
+    2 GB of free memory at the lowest or above 80% disk used. TEST BOXES — verdict add (or a test-box-bound estimate) =
+    limit, watch or in use 50%+ = tight. PEOPLE — the limit when more finished items wait for a yes or no than the
+    builder has left to build; tight from 5 waiting; they are outside the queue time. Server and test boxes read
+    'measuring' until the builder host has an hour of samples."""
+    if not work:
+        return None
+    pool, held = work.get('pool') or 0, work.get('held') or 0
+    sv = server if server and not server.get('stale') else None
+    lim = (est or {}).get('limit') if pool else None
+    top_n, top_name, repos = work.get('top_repo') or 0, work.get('top_name') or 'one repo', work.get('repos') or 0
+    rows = []
+
+    def row(key, name, status, say):
+        rows.append({'key': key, 'name': name, 'status': status, 'say': say})
+
+    # 1. one repo at a time
+    share = top_n / pool if pool else 0
+    if lim == 'one_repo':
+        row('one_repo', 'One repo at a time', 'limit', f'{top_name} has {top_n} of the {pool} items and builds one at a time.')
+    elif lim == 'repos':
+        row('one_repo', 'One repo at a time', 'limit', f'Only {repos} repos have work, and each builds one item at a time.')
+    elif share >= 0.25 and pool:
+        row('one_repo', 'One repo at a time', 'tight', f'{top_name} has {top_n} of the {pool} items; a repo builds one at a time.')
+    else:
+        row('one_repo', 'One repo at a time', 'fine', 'The work is spread over enough repos.' if pool else 'Nothing in the queue.')
+
+    # 2. workers
+    nw = (sv or est or {}).get('workers') or (server or {}).get('workers')
+    busy = sv.get('all_workers_busy_pct') if sv else None
+    measuring = bool(sv) and sv.get('verdict') == 'measuring'
+    sv_fine, tb_fine = bool(sv) and sv.get('verdict') == 'fine', bool(sv) and sv.get('test_box_verdict') == 'fine'
+    wname = f'Workers ({nw})' if nw else 'Workers'
+    if busy is None:
+        row('workers', wname, 'fine' if not pool else 'measuring', 'Nothing in the queue.' if not pool else
+            'No fresh numbers from the builder server.' if server else 'Measuring how often all of them are busy.')
+    elif lim == 'workers' and busy >= 50 and sv_fine and tb_fine:
+        row('workers', wname, 'limit', f'All {nw} were busy {_pct(busy)} of the time, and nothing else holds them back.')
+    elif busy >= 50:
+        why = ' while one repo holds the queue' if lim in ('one_repo', 'repos') else ''
+        row('workers', wname, 'tight', f'All {nw} were busy {_pct(busy)} of the time; more would not help{why}.' if why
+            else f'All {nw} were busy {_pct(busy)} of the time.')
+    else:
+        row('workers', wname, 'fine', f'All {nw} were busy only {_pct(busy)} of the time.')
+
+    # 3. server
+    plan = f" ({sv['cpus']} CPU, {round(sv['mem_total_mb'] / 1024)} GB)" if sv and sv.get('cpus') and sv.get('mem_total_mb') else ''
+    mins = max(5, int(round(60 - (sv.get('hours') or 0) * 60))) if sv else None
+    if not sv:
+        row('server', 'Server' + plan, 'measuring', 'No report from the builder server yet.' if not server else
+            'The builder server has not reported for a while.')
+    elif measuring:
+        row('server', 'Server' + plan, 'measuring', f'Measuring, first answer in about {mins} min.')
+    else:
+        paused = sv.get('busy_waits') or 0
+        cpu = f"CPU busy {_pct(sv.get('cpu_busy_p50'))} of the time" if sv.get('cpu_busy_p50') is not None else 'CPU load not reported'
+        held_s = 'jobs were never paused for it' if not paused else f'jobs were paused {paused} time{"s" if paused != 1 else ""} for it'
+        extra = []
+        mem, disk = sv.get('mem_free_p5_mb'), sv.get('disk_used_pct')
+        if isinstance(mem, (int, float)) and mem < 2048:
+            extra.append(f'only {mem / 1024:.1f} GB of memory free at the lowest')
+        if isinstance(disk, (int, float)) and disk > 80:
+            extra.append(f'disk {int(round(disk))}% full')
+        say = f'{cpu}; {held_s}' + (f'; {"; ".join(extra)}' if extra else '') + '.'
+        st = 'limit' if sv.get('verdict') == 'upgrade' else 'tight' if sv.get('verdict') == 'watch' or extra else 'fine'
+        if st == 'limit':
+            say = f'Too small for {nw} workers: {cpu}; {held_s}.'
+        row('server', 'Server' + plan, st, say)
+
+    # 4. test boxes
+    nb = (sv or est or {}).get('test_boxes') or (server or {}).get('test_boxes')
+    bname = f'Test boxes ({nb})' if nb else 'Test boxes'
+    if not sv:
+        row('test_boxes', bname, 'measuring', 'No report from the builder server yet.')
+    elif sv.get('test_box_verdict') == 'measuring':
+        row('test_boxes', bname, 'measuring', f'Measuring, first answer in about {mins} min.')
+    else:
+        use, wait = sv.get('test_box_busy_pct'), sv.get('tester_wait_pct') or 0
+        waited = 'testers never waited for one' if wait < 1 else f'testers waited for one {_pct(wait)} of the time'
+        st = 'limit' if sv.get('test_box_verdict') == 'add' or lim == 'test_boxes' else \
+            'tight' if sv.get('test_box_verdict') == 'watch' or (isinstance(use, (int, float)) and use >= 50) else 'fine'
+        row('test_boxes', bname, st, f'In use {_pct(use)} of the time; {waited}.' if use is not None else f'{waited[0].upper()}{waited[1:]}.')
+
+    # 5. people
+    if not held:
+        row('people', 'Waiting for a yes or no', 'fine', 'Nothing waits for a person.')
+    else:
+        st = 'limit' if held >= max(1, pool) else 'tight' if held >= 5 else 'fine'
+        row('people', 'Waiting for a yes or no', st,
+            f'{held} finished item{"s" if held != 1 else ""} wait{"" if held != 1 else "s"} for someone to say yes or no; not counted in the time above.')
+
+    by = {r['key']: r for r in rows}
+    # the one sentence
+    if not pool:
+        slow = 'Nothing to build right now.'
+    elif lim == 'one_repo':
+        slow = f'Slowest part: {top_name}. It has {top_n} of the items and builds one at a time.'
+    elif lim == 'repos':
+        slow = f'Slowest part: only {repos} repos have work, and each builds one item at a time.'
+    elif lim == 'test_boxes':
+        slow = f'Slowest part: the {nb} test boxes. Finished items wait for one.'
+    elif by['server']['status'] == 'limit':
+        slow = f'Slowest part: the server. It is too small for {nw} workers.'
+    elif by['workers']['status'] == 'limit':
+        slow = f'Slowest part: the {nw} workers. All of them are busy most of the time.'
+    elif by['workers']['status'] == 'measuring' or by['server']['status'] == 'measuring':
+        slow = 'Nothing is holding the builder back so far; the server is still measuring.'
+    else:
+        slow = 'Nothing is holding the builder back.'
+
+    # what would help
+    helps = []
+    if pool:
+        if by['server']['status'] == 'limit':
+            helps.append('A bigger server (KVM 8).')
+        if by['test_boxes']['status'] == 'limit':
+            helps.append('Another test box.')
+        if by['workers']['status'] == 'limit':
+            helps.append('More workers.')
+    if by['people']['status'] in ('limit', 'tight'):
+        helps.append(f'A yes or no on the {held} items waiting.')
+    if not helps and lim == 'workers' and measuring:
+        helps.append(f'Wait for the server numbers (about {mins} min).')
+    if not helps:
+        helps.append('Nothing right now; the queue is mostly one repo.' if lim == 'one_repo'
+                     else f'Nothing right now; only {repos} repos have work.' if lim == 'repos'
+                     else 'Nothing right now.' if pool else 'Nothing; the builder is out of work.')
+    return {'items': pool, 'hours': (est or {}).get('hours'), 'slowest': slow, 'rows': rows, 'help': ' '.join(helps)}
+
+
 def builder_status(seen=False, work=None, res=None):
     # 0.13.8: the builder host polls GET /api/builder?from=builder before every run and skips the run when Paused.
     if seen and res:
@@ -4523,9 +4665,11 @@ def builder_status(seen=False, work=None, res=None):
     connected = bool(at) and time.time() - at < 15 * 60
     running = bool(b.get('running', True))
     work, server = builder_work(), builder_server()
+    est = builder_estimate(work, server)
     return {'running': running, 'state': 'Running' if running else 'Paused',
             'updated_at': b.get('updated_at'), 'updated_by': b.get('updated_by'), 'connected': connected,
-            'last_seen': at or None, 'work': work, 'server': server, 'estimate': builder_estimate(work, server),
+            'last_seen': at or None, 'work': work, 'server': server, 'estimate': est,
+            'bottlenecks': builder_bottlenecks(work, server, est),
             'note': 'Paused: the builder finishes its current run, then picks up nothing new.' if not running
             else 'Running: the builder picks up the next item 30 seconds after each run.'}
 
@@ -6078,7 +6222,7 @@ TOOLS = [
     {'name': 'board_approve_pr', 'description': "Approve the open pull request an item in Needs an answer (label builder:blocked) is waiting on, e.g. when the builder says GitHub needs 'approval from someone other than the last pusher'. Only when a human on the team asked (pass their words as owner_request). Submits a GitHub review APPROVE ('Approved in WizardOS Tracker') with the agent's account, then comments on the item so the builder merges. pr: the PR number or URL; pr_repo when it lives in another repo and is named by number. The PR must be open and linked to the item (GitHub's links or a PR URL in the item or its comments). An approval counts only if GitHub accepts that account's review; the person can also tap Approve PR #N on the item in the Tracker.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'pr': {'type': ['integer', 'string'], 'description': 'PR number or URL.'}, 'pr_repo': {'type': 'string', 'description': 'owner/name of the PR repo (default: from the URL, else any linked PR with that number).'}, **ASKED}, 'required': ['pr', 'owner_request']}},
     {'name': 'board_add_goal', 'description': 'HUMANS OPEN GOALS. Use only when a human explicitly asked you to add this goal for them; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string'}, 'done': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Done-list lines (1-20).'}, 'body': {'type': 'string'}, **ASKED}, 'required': ['repo', 'title', 'done', 'owner_request']}},
     {'name': 'board_close', 'description': 'Close a Bug when a human asked you to (pass their words). Goals are refused: only humans close goals, in the app.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'enum': ['completed', 'not_planned']}, **ASKED}, 'required': ['owner_request']}},
-    {'name': 'builder_status', 'description': "The WizardOS Builder: switch Running or Paused, work left (work), how long the queue takes at its workers and test boxes (estimate.hours, limit), and whether its server is big enough (server.verdict fine|watch|upgrade|measuring, load per CPU, memory, workers busy, test boxes in use).", 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'builder_status', 'description': "The WizardOS Builder: switch Running or Paused, work left (work), how long the queue takes at its workers and test boxes (estimate.hours, limit), what slows it down (bottlenecks: slowest = one plain sentence naming the limit, rows = one repo at a time / workers / server / test boxes / waiting for a yes or no, each status fine|tight|limit|measuring with a one-sentence reason, help = what would help; the same text the Builder chip shows), and the raw server numbers (server.verdict fine|watch|upgrade|measuring, load per CPU, memory, workers busy, test boxes in use).", 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'builder_set', 'description': 'Set the WizardOS Builder switch (running true = Running, false = Paused) only when a human asked; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'running': {'type': 'boolean'}, **ASKED}, 'required': ['running', 'owner_request']}},
     {'name': 'try_status', 'description': "Which items the signed-in person switched 'Try it' on for (mock-up: records the wish, nothing runs yet).", 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'try_set', 'description': "Switch 'Try it' on or off for one item (repo owner/name + number) only when a human asked; pass their words as owner_request. Mock-up.", 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'number': {'type': 'integer'}, 'on': {'type': 'boolean'}, **ASKED}, 'required': ['repo', 'number', 'on', 'owner_request']}},

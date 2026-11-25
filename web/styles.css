@@ -951,6 +951,23 @@ html.bd-modal-on, html.bd-modal-on body { overflow: hidden; }
 /* 0.55.0: queue time at the real set-up + the builder server line, inside the same pop-up */
 .bd-work-s { margin: 0 0 6px; font-size: var(--wz-text-sm); color: var(--ink-2); }
 .bd-work-h { display: block; margin: var(--wz-space-2) 0 2px; font-size: var(--wz-text-sm); }
+/* 0.56.0: the slowest part in bold, then the checklist (name · status word in colour, one-line reason) and What would help */
+.bd-pop .bd-bn-slow { color: var(--ink); font-weight: 650; margin-bottom: 4px; }
+.bd-pop .bd-bn { margin: 4px 0 0; align-items: baseline; }
+.bd-pop .bd-bn-s { flex: 0 0 auto; font-weight: 650; white-space: nowrap; }
+.bd-pop .bd-bn-s.fine { color: var(--wz-success, var(--accent)); }
+.bd-pop .bd-bn-s.tight { color: var(--wz-warning, var(--ink-2)); }
+.bd-pop .bd-bn-s.limit { color: var(--wz-danger, var(--wz-warning, var(--ink))); }
+html[data-color-scheme="light"] .bd-pop .bd-bn-s.fine { color: var(--wz-success-light, var(--wz-success, var(--ink))); }
+html[data-color-scheme="light"] .bd-pop .bd-bn-s.tight { color: var(--wz-warning-light, var(--wz-warning, var(--ink))); }
+@media (prefers-color-scheme: light) {
+  html:not([data-color-scheme]) .bd-pop .bd-bn-s.fine { color: var(--wz-success-light, var(--wz-success, var(--ink))); }
+  html:not([data-color-scheme]) .bd-pop .bd-bn-s.tight { color: var(--wz-warning-light, var(--wz-warning, var(--ink))); }
+}
+.bd-pop .bd-bn-s.measuring { color: var(--ink-3); font-weight: 500; }
+.bd-pop .bd-bn-why { margin: 0 0 2px; font-size: .78rem; color: var(--ink-3); }
+.bd-pop .bd-bn-help { margin-top: var(--wz-space-2); }
+.bd-pop .bd-bn-help b { color: var(--ink); }
 .bd-checkmode #d-labels, .bd-checkmode #d-roles, .bd-checkmode #d-flow, .bd-checkmode #d-body,
 .bd-checkmode #d-comments-h, .bd-checkmode #d-comments, .bd-checkmode #d-reply:not(.bd-d-reply-ask) { display: none; }
 /* 0.52.0: the card opens on what to do; the summary shows only while the history is folded */
