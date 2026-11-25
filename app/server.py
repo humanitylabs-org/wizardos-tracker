@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.56.0'
+VERSION = '0.57.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -4420,7 +4420,11 @@ RES_NUM = ('at', 'samples', 'since', 'hours', 'cpus', 'mem_total_mb', 'workers',
            'cpu_busy_p95', 'cpu_saturated_pct', 'all_workers_busy_pct', 'held_pct', 'busy_waits', 'mem_free_mb',
            'mem_free_p5_mb', 'swap_max_mb', 'disk_used_pct', 'test_box_busy_pct', 'test_boxes_all_busy_pct',
            'tester_wait_pct', 'runs', 'run_min_p50', 'items_passed', 'worker_min_per_item', 'test_min_p50',
-           'box_h_per_item')
+           'box_h_per_item',
+           # 0.57.0 (Miguel, 25 Nov): no fixed worker count. workers_enabled = the timer ceiling, workers_fit = how many
+           # jobs the box fits by the builder's own resource gate (one job's measured load and memory), doubled_pct =
+           # samples with two workers in one repo, job_load / job_mem_mb = what one running job costs.
+           'workers_enabled', 'workers_fit', 'doubled_pct', 'workers_doubled_now', 'job_load', 'job_mem_mb')
 RES_WORDS = {'verdict': ('fine', 'watch', 'upgrade', 'measuring'), 'test_box_verdict': ('fine', 'watch', 'add', 'measuring'),
              'box_h_source': ('measured', 'guess')}
 
@@ -4467,30 +4471,40 @@ def builder_server():
     return {**r, 'stale': time.time() - r['got'] > 20 * 60}
 
 
+REPO_WORKERS = 2   # 0.57.0: the builder lets a second worker into a repo once every other repo with work has one
+
+
 def builder_estimate(work, server):
     """0.55.0 (Miguel, 25 Nov): how long the queue takes at the builder's real set-up. Worker time per finished item
-    (all run minutes / items the tester passed, last 7 days, from the builder) shared over min(workers, repos in the
-    queue) because one repo builds one item at a time; capped by the test boxes (each finished item holds a test box
-    about box_h_per_item hours: ~40% of tests need one, ~27 minutes with the reset); never less than the busiest repo's
-    items one after another."""
+    (all run minutes / items the tester passed, last 7 days, from the builder) shared over the workers that can run at
+    once; capped by the test boxes (each finished item holds a test box about box_h_per_item hours: ~40% of tests need
+    one, ~27 minutes with the reset); never less than the busiest repo's items in series.
+
+    0.57.0 (Miguel, 25 Nov): the builder has no fixed worker count any more. `workers` from the builder is the timer
+    ceiling (12); `workers_fit` is how many jobs its resource gate fits on the box (one job's measured load and
+    memory), and that is what runs at once. A repo holds one worker, and a second once every other repo with work has
+    one (never a third), so the work runs min(fit, 2 x repos) wide and the busiest repo's floor is its items / 2."""
     if not work or not server or not server.get('worker_min_per_item') or not server.get('workers'):
         return None
     pool, t = work.get('pool') or 0, server['worker_min_per_item'] / 60.0
-    w, boxes = int(server['workers']), int(server.get('test_boxes') or 0)
+    ceiling, boxes = int(server['workers']), int(server.get('test_boxes') or 0)
+    fit = server.get('workers_fit')
+    w = max(1, min(ceiling, int(fit))) if isinstance(fit, (int, float)) and fit > 0 else ceiling
     repos = work.get('repos') or (w if pool else 0)
-    par = max(1, min(w, repos)) if pool else w
+    par = max(1, min(w, REPO_WORKERS * repos)) if pool else w
     rate_w = par / t
     box_h = server.get('box_h_per_item') or 0
     rate_b = boxes / box_h if boxes and box_h else None
     rate = min(rate_w, rate_b) if rate_b else rate_w
     hours = pool / rate if pool else 0.0
-    floor = (work.get('top_repo') or 0) * t
+    floor = (work.get('top_repo') or 0) * t / REPO_WORKERS
     limit = 'workers' if par >= w else 'repos'
     if rate_b and rate_b < rate_w:
         limit = 'test_boxes'
     if floor > hours:
         hours, limit = floor, 'one_repo'
-    return {'hours': round(hours, 1), 'workers': w, 'test_boxes': boxes, 'parallel': par, 'limit': limit,
+    return {'hours': round(hours, 1), 'workers': w, 'workers_enabled': ceiling, 'test_boxes': boxes, 'parallel': par,
+            'limit': limit, 'repo_workers': REPO_WORKERS,
             'item_hours': round(t, 2), 'per_day': round(rate * 24, 1), 'pool': pool,
             'repos': work.get('repos'), 'top_repo': work.get('top_repo'), 'top_name': work.get('top_name') or ''}
 
@@ -4507,7 +4521,10 @@ def builder_bottlenecks(work, server, est):
     Thresholds: ONE REPO — the limit when the estimate is bound by one repo (one_repo) or by too few repos (repos);
     tight when the busiest repo holds 25%+ of the queue. WORKERS — the limit only when the estimate is worker-bound AND
     all workers were busy 50%+ of the time AND the server and test boxes are fine (otherwise the real limit is one of
-    them); tight when all busy 50%+. SERVER — the builder's own verdict (upgrade = limit, watch = tight); also tight below
+    them); tight when all busy 50%+. 0.57.0: with the resource-limited builder (workers_enabled reported) the row reads
+    'Workers (up to 12, resource-limited)' with the busy count and is never the limit: the SERVER row is what says when
+    the box is the limit (jobs held for resources 20%+ of the time while work was queued = limit, help 'A bigger server
+    (KVM 8)'). SERVER — otherwise the builder's own verdict (upgrade = limit, watch = tight); also tight below
     2 GB of free memory at the lowest or above 80% disk used. TEST BOXES — verdict add (or a test-box-bound estimate) =
     limit, watch or in use 50%+ = tight. PEOPLE — the limit when more finished items wait for a yes or no than the
     builder has left to build; tight from 5 waiting; they are outside the queue time. Server and test boxes read
@@ -4523,14 +4540,15 @@ def builder_bottlenecks(work, server, est):
     def row(key, name, status, say):
         rows.append({'key': key, 'name': name, 'status': status, 'say': say})
 
-    # 1. one repo at a time
+    # 1. one repo at a time (0.57.0: two workers can be in a repo once other repos run dry)
     share = top_n / pool if pool else 0
+    two = 'two workers can be in it once other repos run dry'
     if lim == 'one_repo':
-        row('one_repo', 'One repo at a time', 'limit', f'{top_name} has {top_n} of the {pool} items and builds one at a time.')
+        row('one_repo', 'One repo at a time', 'limit', f'{top_name} has {top_n} of the {pool} items; {two}.')
     elif lim == 'repos':
-        row('one_repo', 'One repo at a time', 'limit', f'Only {repos} repos have work, and each builds one item at a time.')
+        row('one_repo', 'One repo at a time', 'limit', f'Only {repos} repos have work, and a repo holds two workers at most.')
     elif share >= 0.25 and pool:
-        row('one_repo', 'One repo at a time', 'tight', f'{top_name} has {top_n} of the {pool} items; a repo builds one at a time.')
+        row('one_repo', 'One repo at a time', 'tight', f'{top_name} has {top_n} of the {pool} items; {two}.')
     else:
         row('one_repo', 'One repo at a time', 'fine', 'The work is spread over enough repos.' if pool else 'Nothing in the queue.')
 
@@ -4539,8 +4557,23 @@ def builder_bottlenecks(work, server, est):
     busy = sv.get('all_workers_busy_pct') if sv else None
     measuring = bool(sv) and sv.get('verdict') == 'measuring'
     sv_fine, tb_fine = bool(sv) and sv.get('verdict') == 'fine', bool(sv) and sv.get('test_box_verdict') == 'fine'
-    wname = f'Workers ({nw})' if nw else 'Workers'
-    if busy is None:
+    # 0.57.0: no fixed worker count. The builder reports the ceiling (workers_enabled) and how many run now.
+    ceiling = (sv or {}).get('workers_enabled')
+    limited = isinstance(ceiling, (int, float)) and ceiling > 0
+    wname = f'Workers (up to {int(ceiling)}, resource-limited)' if limited else f'Workers ({nw})' if nw else 'Workers'
+    if limited:
+        running = int(sv.get('workers_busy_now') or 0)
+        fit = sv.get('workers_fit')
+        fit_s = f'; about {int(fit)} fit on this server' if isinstance(fit, (int, float)) and fit > 0 else ''
+        if not pool:
+            row('workers', wname, 'fine', 'Nothing in the queue.')
+        elif measuring:
+            row('workers', wname, 'measuring', f'{running} running now; the server decides how many fit (measuring).')
+        elif lim == 'workers' and not sv_fine:
+            row('workers', wname, 'tight', f'{running} running now of up to {int(ceiling)}{fit_s}; the server row says why.')
+        else:
+            row('workers', wname, 'fine', f'{running} running now of up to {int(ceiling)}{fit_s}; more start whenever the server has room.')
+    elif busy is None:
         row('workers', wname, 'fine' if not pool else 'measuring', 'Nothing in the queue.' if not pool else
             'No fresh numbers from the builder server.' if server else 'Measuring how often all of them are busy.')
     elif lim == 'workers' and busy >= 50 and sv_fine and tb_fine:
@@ -4563,7 +4596,11 @@ def builder_bottlenecks(work, server, est):
     else:
         paused = sv.get('busy_waits') or 0
         cpu = f"CPU busy {_pct(sv.get('cpu_busy_p50'))} of the time" if sv.get('cpu_busy_p50') is not None else 'CPU load not reported'
-        held_s = 'jobs were never paused for it' if not paused else f'jobs were paused {paused} time{"s" if paused != 1 else ""} for it'
+        held_pct = sv.get('held_pct')
+        if limited:   # 0.57.0: the gate holds jobs for resources; how often it did is the server's own measure
+            held_s = 'jobs were never held for resources' if not held_pct else f'jobs were held for resources {_pct(held_pct)} of the time'
+        else:
+            held_s = 'jobs were never paused for it' if not paused else f'jobs were paused {paused} time{"s" if paused != 1 else ""} for it'
         extra = []
         mem, disk = sv.get('mem_free_p5_mb'), sv.get('disk_used_pct')
         if isinstance(mem, (int, float)) and mem < 2048:
@@ -4572,8 +4609,10 @@ def builder_bottlenecks(work, server, est):
             extra.append(f'disk {int(round(disk))}% full')
         say = f'{cpu}; {held_s}' + (f'; {"; ".join(extra)}' if extra else '') + '.'
         st = 'limit' if sv.get('verdict') == 'upgrade' else 'tight' if sv.get('verdict') == 'watch' or extra else 'fine'
+        if limited and isinstance(held_pct, (int, float)) and held_pct >= 20 and pool:
+            st = 'limit'
         if st == 'limit':
-            say = f'Too small for {nw} workers: {cpu}; {held_s}.'
+            say = f'Too small: {held_s}; {cpu}.' if limited else f'Too small for {nw} workers: {cpu}; {held_s}.'
         row('server', 'Server' + plan, st, say)
 
     # 4. test boxes
@@ -4603,13 +4642,14 @@ def builder_bottlenecks(work, server, est):
     if not pool:
         slow = 'Nothing to build right now.'
     elif lim == 'one_repo':
-        slow = f'Slowest part: {top_name}. It has {top_n} of the items and builds one at a time.'
+        slow = f'Slowest part: {top_name}. It has {top_n} of the items; two workers can be in it once other repos run dry.'
     elif lim == 'repos':
-        slow = f'Slowest part: only {repos} repos have work, and each builds one item at a time.'
+        slow = f'Slowest part: only {repos} repos have work, and a repo holds two workers at most.'
     elif lim == 'test_boxes':
         slow = f'Slowest part: the {nb} test boxes. Finished items wait for one.'
     elif by['server']['status'] == 'limit':
-        slow = f'Slowest part: the server. It is too small for {nw} workers.'
+        slow = f"Slowest part: the server. Jobs are held for resources {_pct(sv.get('held_pct'))} of the time." if limited \
+            else f'Slowest part: the server. It is too small for {nw} workers.'
     elif by['workers']['status'] == 'limit':
         slow = f'Slowest part: the {nw} workers. All of them are busy most of the time.'
     elif by['workers']['status'] == 'measuring' or by['server']['status'] == 'measuring':
@@ -6222,7 +6262,7 @@ TOOLS = [
     {'name': 'board_approve_pr', 'description': "Approve the open pull request an item in Needs an answer (label builder:blocked) is waiting on, e.g. when the builder says GitHub needs 'approval from someone other than the last pusher'. Only when a human on the team asked (pass their words as owner_request). Submits a GitHub review APPROVE ('Approved in WizardOS Tracker') with the agent's account, then comments on the item so the builder merges. pr: the PR number or URL; pr_repo when it lives in another repo and is named by number. The PR must be open and linked to the item (GitHub's links or a PR URL in the item or its comments). An approval counts only if GitHub accepts that account's review; the person can also tap Approve PR #N on the item in the Tracker.", 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'pr': {'type': ['integer', 'string'], 'description': 'PR number or URL.'}, 'pr_repo': {'type': 'string', 'description': 'owner/name of the PR repo (default: from the URL, else any linked PR with that number).'}, **ASKED}, 'required': ['pr', 'owner_request']}},
     {'name': 'board_add_goal', 'description': 'HUMANS OPEN GOALS. Use only when a human explicitly asked you to add this goal for them; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'title': {'type': 'string'}, 'done': {'type': 'array', 'items': {'type': 'string'}, 'description': 'Done-list lines (1-20).'}, 'body': {'type': 'string'}, **ASKED}, 'required': ['repo', 'title', 'done', 'owner_request']}},
     {'name': 'board_close', 'description': 'Close a Bug when a human asked you to (pass their words). Goals are refused: only humans close goals, in the app.', 'inputSchema': {'type': 'object', 'properties': {**ISSUE, 'reason': {'type': 'string', 'enum': ['completed', 'not_planned']}, **ASKED}, 'required': ['owner_request']}},
-    {'name': 'builder_status', 'description': "The WizardOS Builder: switch Running or Paused, work left (work), how long the queue takes at its workers and test boxes (estimate.hours, limit), what slows it down (bottlenecks: slowest = one plain sentence naming the limit, rows = one repo at a time / workers / server / test boxes / waiting for a yes or no, each status fine|tight|limit|measuring with a one-sentence reason, help = what would help; the same text the Builder chip shows), and the raw server numbers (server.verdict fine|watch|upgrade|measuring, load per CPU, memory, workers busy, test boxes in use).", 'inputSchema': {'type': 'object', 'properties': {}}},
+    {'name': 'builder_status', 'description': "The WizardOS Builder: switch Running or Paused, work left (work), how long the queue takes at its workers and test boxes (estimate.hours, limit), what slows it down (bottlenecks: slowest = one plain sentence naming the limit, rows = one repo at a time / workers / server / test boxes / waiting for a yes or no, each status fine|tight|limit|measuring with a one-sentence reason, help = what would help; the same text the Builder chip shows; 0.57.0: a repo may hold two workers once other repos run dry, and the worker count is resource-limited (server.workers_enabled = ceiling, workers_fit = about how many fit, workers_busy_now), so the server row, not the workers row, says when the box is the limit), and the raw server numbers (server.verdict fine|watch|upgrade|measuring, load per CPU, memory, workers busy, test boxes in use).", 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'builder_set', 'description': 'Set the WizardOS Builder switch (running true = Running, false = Paused) only when a human asked; pass their words as owner_request.', 'inputSchema': {'type': 'object', 'properties': {'running': {'type': 'boolean'}, **ASKED}, 'required': ['running', 'owner_request']}},
     {'name': 'try_status', 'description': "Which items the signed-in person switched 'Try it' on for (mock-up: records the wish, nothing runs yet).", 'inputSchema': {'type': 'object', 'properties': {}}},
     {'name': 'try_set', 'description': "Switch 'Try it' on or off for one item (repo owner/name + number) only when a human asked; pass their words as owner_request. Mock-up.", 'inputSchema': {'type': 'object', 'properties': {'repo': {'type': 'string'}, 'number': {'type': 'integer'}, 'on': {'type': 'boolean'}, **ASKED}, 'required': ['repo', 'number', 'on', 'owner_request']}},

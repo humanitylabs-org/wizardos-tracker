@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "WizardOS Tracker",
-    "version": "0.56.0",
+    "version": "0.57.0",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged. 0.13: two-step review (Queued → Building → AI review [label ai-review] → Human review [label ready-to-test] → Done; AI review is agents-only via MCP ai_review_pass / ai_review_fail; policy human_reviews 1|2) and Sign in with GitHub via the OAuth device flow (no client secret).",
     "contact": {
       "name": "WizardOS Tracker",
@@ -1033,7 +1033,7 @@
     },
     "/api/builder": {
       "get": {
-        "summary": "WizardOS Builder switch (the builder host polls this before every run). Also work (left to build), server (0.55.0: the builder host's own 5-minute check, verdict fine|watch|upgrade|measuring) and estimate (hours to clear the queue at its real workers and test boxes); 0.56.0: bottlenecks (slowest sentence, rows with status fine|tight|limit|measuring and a reason, help). The builder reports with ?from=builder&work=<json> and &res=<json>.",
+        "summary": "WizardOS Builder switch (the builder host polls this before every run). Also work (left to build), server (0.55.0: the builder host's own 5-minute check, verdict fine|watch|upgrade|measuring) and estimate (hours to clear the queue at its real workers and test boxes); 0.56.0: bottlenecks (slowest sentence, rows with status fine|tight|limit|measuring and a reason, help); 0.57.0: two workers per repo once other repos run dry and a resource-limited worker count (server.workers_enabled, workers_fit, workers_busy_now). The builder reports with ?from=builder&work=<json> and &res=<json>.",
         "responses": {
           "200": {
             "description": "{running: bool, state: Running|Paused, updated_at, updated_by, connected: false, note}"
