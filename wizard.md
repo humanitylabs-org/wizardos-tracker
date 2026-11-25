@@ -5,7 +5,7 @@ renamed_from: [board, wizard-os-tracker]
 name: WizardOS Tracker
 type: view
 category: app
-version: 0.56.0
+version: 0.57.0
 summary: "The WizardOS team's build line: goals, features and bugs on GitHub. Install, sign in with GitHub, done."
 tags: [developer, productivity]
 license: GPL-3.0-only
@@ -166,6 +166,8 @@ Try it (0.14.0, Miguel): the **Try it** switch on a Human review row is the chan
 **0.36.5** (Miguel, 16 Nov) **Approve a core idea while it is still being sorted.** A Report or request idea about WizardOS sits under Waiting for approval from the start, but while the builder was still sorting it (label triage) its card had no Approve button, only Mark done. It now shows Approve / Decline there too for James or Miguel; once approved it says 'Approved · the builder files it in the right place, then starts', and the label carries over when the builder moves it.
 
 **0.36.6** (James, 17 Nov) **Building is back on Core features, and one way to finish a check.** The Core strip shows Build queue (approved, waiting for the builder) and **Building** (the builder is on it) as two stages again, so you can see whether the builder is working (its stats: approved → the builder starts, and the builder starts → handed off). In an item's sheet, the confirm popover (e.g. Works) stays inside the sheet at every panel width instead of running past its left edge (wizardos-tracker#102). An open bug or feature waiting for its check now has one finishing action, **Works**, which tags it Checked by you and closes it; Mark done is no longer shown next to it there (it stays for goals and items with no check question), and Works' confirm says it closes (wizardos-tracker#103).
+
+**0.57.0** (Oscar for Miguel, 25 Nov) **The time counts the builder's new rules: two workers in a repo when the others run dry, and as many jobs as its server can hold.** The Builder now lets a second worker into a repo once every other repo with work already has one (never a third), so the busiest repo's floor is its items two at a time: the One repo row reads 'wizard-ux has 32 of the 74 items; two workers can be in it once other repos run dry'. The builder also has no fixed worker count any more: it starts a job whenever its server has room (a resource check right before every accept), up to 12 timers as a safety ceiling. The Workers row reads 'Workers (up to 12, resource-limited)' with how many run now and about how many fit on the server; the Server row is what says when the box is the limit ('Too small: jobs were held for resources 23% of the time') and then 'What would help' says 'A bigger server (KVM 8)'. `builder_status` carries the same words.
 
 **0.56.0** (Oscar for Miguel, 25 Nov) **The Builder pop-up says what slows the builder down.** Tap the Builder chip: '74 items · about 2 days', then one bold sentence naming the slowest part ('Slowest part: wizard-ux. It has 32 of the items and builds one at a time.' or 'Nothing is holding the builder back'). Under it, 'What can slow it down': one row each for One repo at a time, Workers (4), Server (4 CPU, 16 GB), Test boxes (2) and Waiting for a yes or no, with a status word in colour (Fine, Tight, The limit; Measuring until the server has an hour of samples) and one plain reason. Then 'What would help: …' (nothing right now / a bigger server (KVM 8) / another test box / more workers / a yes or no on the items waiting). Done in the last day stays; the raw rows (load per CPU, held back, memory, disk, test boxes in use) are gone. The `builder_status` tool returns the same words as `bottlenecks`.
 

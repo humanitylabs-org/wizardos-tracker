@@ -40,8 +40,9 @@ class Estimate(unittest.TestCase):
     def test_limits(self):
         s = fresh()
         w = {'pool': 30, 'repos': 2, 'top_repo': 5}
-        self.assertEqual(s.builder_estimate(w, RES)['limit'], 'repos')                     # 2 at once: 20 h
-        self.assertEqual(s.builder_estimate({'pool': 30, 'repos': 6, 'top_repo': 25}, RES)['limit'], 'one_repo')
+        self.assertEqual(s.builder_estimate(w, RES)['limit'], 'workers')                   # 0.57.0: 2 repos x 2 workers = 4 at once
+        self.assertEqual(s.builder_estimate({'pool': 30, 'repos': 1, 'top_repo': 5}, RES)['limit'], 'repos')   # 1 repo: 2 at once
+        self.assertEqual(s.builder_estimate({'pool': 30, 'repos': 6, 'top_repo': 25}, RES)['limit'], 'one_repo')   # 25 x 80 / 2 = 16.7 h > 10 h
         e = s.builder_estimate({'pool': 30, 'repos': 6, 'top_repo': 2}, {**RES, 'box_h_per_item': 1.0})
         self.assertEqual((e['limit'], e['hours']), ('test_boxes', 15.0))                   # 2 boxes, 1 h per item
         self.assertIsNone(s.builder_estimate({'pool': 3}, {**RES, 'worker_min_per_item': None}))
