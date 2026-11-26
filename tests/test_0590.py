@@ -189,8 +189,8 @@ class Allowance(unittest.TestCase):
 class Versions(unittest.TestCase):
     def test_version(self):
         s = fresh()
-        self.assertEqual(s.VERSION, '0.62.0')
-        self.assertIn("const PAGE_VERSION = '0.62.0';", APPJS)
+        self.assertEqual(s.VERSION, '0.63.0')
+        self.assertIn("const PAGE_VERSION = '0.63.0';", APPJS)
 
 
 if __name__ == '__main__':
