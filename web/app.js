@@ -1432,7 +1432,10 @@ function workLine(b) {
     : sv && !sv.stale && sv.hours >= 1 ? `Measured every 5 minutes over the last ${sv.hours < 48 ? Math.round(sv.hours) + ' h' : Math.round(sv.hours / 24) + ' days'}.`
     : sv && sv.stale ? `Server last heard from ${when(new Date(sv.got * 1000).toISOString())}.` : '';
   c.onclick = () => pop(c, 'Builder', [top, slow, ...(bn ? bottleneckLines(bn) : []),
-    row('Done in the last day', w.passed24), note && make('p', 'bd-why-s', note)]);
+    row('Done in the last day', w.passed24),
+    // 0.62.0: the estimate comes from this measured pace (items the tester passed per hour), when the builder sends it
+    est && est.source === 'pace' && row(`Done per hour (last ${Math.round(est.pace_hours || 12)} h)`, est.pace_per_h),
+    note && make('p', 'bd-why-s', note)]);
   box.replaceChildren(c);
   box.hidden = false;
 }
@@ -3745,7 +3748,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.61.0';
+const PAGE_VERSION = '0.62.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3898,7 +3901,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.61.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.62.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

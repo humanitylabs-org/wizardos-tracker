@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.61.0'
+VERSION = '0.62.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -4496,7 +4496,10 @@ RES_NUM = ('at', 'samples', 'since', 'hours', 'cpus', 'mem_total_mb', 'workers',
            # leaves that time out; these report it: how often and how long (minutes) a box was stuck in the last 7
            # days, when the last one was freed (epoch s), and how many are stuck right now.
            'tester_wait_any_pct', 'test_box_leak_pct', 'test_box_leaks', 'test_box_leak_min', 'test_box_leak_last',
-           'test_boxes_leaked_now')
+           'test_boxes_leaked_now',
+           # 0.62.0 (Miguel, 26 Nov): the measured pace. Items the tester passed per hour over the last pace_hours
+           # (12), the jobs running on average meanwhile, and worker hours per finished item at that pace.
+           'pace_items_per_h', 'pace_jobs', 'pace_worker_h_per_item', 'pace_hours')
 RES_WORDS = {'verdict': ('fine', 'watch', 'upgrade', 'measuring'), 'test_box_verdict': ('fine', 'watch', 'add', 'measuring'),
              'box_h_source': ('measured', 'guess')}
 
@@ -4568,10 +4571,20 @@ def builder_estimate(work, server):
 
     0.61.0 (Miguel, 25 Nov evening): the builder now gives a repo holding at least a quarter of the queue extra
     workers (up to repo_workers) whenever it is a whole worker under its fair share, even while other repos have
-    work; the serial floor stays top_repo / repo_workers."""
+    work; the serial floor stays top_repo / repo_workers.
+
+    0.62.0 (Miguel, 26 Nov): when the builder reports its measured pace (pace_items_per_h: items its tester passed per
+    hour over the last 12 h, and pace_worker_h_per_item), the queue takes pool / that pace, never less than the busiest
+    repo's items in series at the measured worker time per item (top_repo x pace_worker_h_per_item / repo_workers).
+    The 7-day worker_min_per_item / workers_fit model said about 4 items an hour on 26 Nov night while the builder did
+    7-8; it stays the fallback and still names what binds (workers, repos, test boxes). source = pace | model."""
     if not work or not server or not server.get('worker_min_per_item') or not server.get('workers'):
         return None
     pool, t = work.get('pool') or 0, server['worker_min_per_item'] / 60.0
+    pace, pace_t = server.get('pace_items_per_h'), server.get('pace_worker_h_per_item')
+    measured = isinstance(pace, (int, float)) and pace > 0 and isinstance(pace_t, (int, float)) and pace_t > 0
+    if measured:
+        t = pace_t
     rw = int(work.get('repo_workers') or 0) or REPO_WORKERS
     ceiling, boxes = int(server['workers']), int(server.get('test_boxes') or 0)
     fit = server.get('workers_fit')
@@ -4582,6 +4595,8 @@ def builder_estimate(work, server):
     box_h = server.get('box_h_per_item') or 0
     rate_b = boxes / box_h if boxes and box_h else None
     rate = min(rate_w, rate_b) if rate_b else rate_w
+    if measured:
+        rate = pace
     hours = pool / rate if pool else 0.0
     floor = (work.get('top_repo') or 0) * t / rw
     limit = 'workers' if par >= w else 'repos'
@@ -4592,7 +4607,9 @@ def builder_estimate(work, server):
     return {'hours': round(hours, 1), 'workers': w, 'workers_enabled': ceiling, 'test_boxes': boxes, 'parallel': par,
             'limit': limit, 'repo_workers': rw,
             'item_hours': round(t, 2), 'per_day': round(rate * 24, 1), 'pool': pool,
-            'repos': work.get('repos'), 'top_repo': work.get('top_repo'), 'top_name': work.get('top_name') or ''}
+            'repos': work.get('repos'), 'top_repo': work.get('top_repo'), 'top_name': work.get('top_name') or '',
+            'source': 'pace' if measured else 'model', 'pace_per_h': round(pace, 1) if measured else None,
+            'pace_hours': server.get('pace_hours') if measured else None}
 
 
 def _pct(v):

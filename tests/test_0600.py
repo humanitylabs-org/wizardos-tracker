@@ -176,7 +176,7 @@ class StuckTestBox(unittest.TestCase):
 
 class Versions(unittest.TestCase):
     def test_version(self):
-        self.assertIn("VERSION = '0.61.0'", (ROOT / 'app/server.py').read_text())
+        self.assertIn("VERSION = '0.62.0'", (ROOT / 'app/server.py').read_text())
         self.assertIn('**0.60.0**', (ROOT / 'wizard.md').read_text())
 
 
