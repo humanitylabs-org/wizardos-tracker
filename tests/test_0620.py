@@ -59,9 +59,9 @@ class Pace(unittest.TestCase):
     def test_popup_row_and_version(self):
         s = fresh()
         js = (ROOT / 'web/app.js').read_text()
-        self.assertIn("est && est.source === 'pace' && row(`Done per hour (last ${Math.round(est.pace_hours || 12)} h)`, est.pace_per_h)", js)
-        self.assertEqual(s.VERSION, '0.62.0')
-        self.assertIn("const PAGE_VERSION = '0.62.0';", js)
+        self.assertIn("est && est.source === 'pace' && row(`Done per hour (last ${Math.round(est.pace_hours || 12)} working h)`, est.pace_per_h)", js)
+        self.assertEqual(s.VERSION, '0.63.0')
+        self.assertIn("const PAGE_VERSION = '0.63.0';", js)
 
 
 if __name__ == '__main__':

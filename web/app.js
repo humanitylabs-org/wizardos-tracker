@@ -1434,7 +1434,8 @@ function workLine(b) {
   c.onclick = () => pop(c, 'Builder', [top, slow, ...(bn ? bottleneckLines(bn) : []),
     row('Done in the last day', w.passed24),
     // 0.62.0: the estimate comes from this measured pace (items the tester passed per hour), when the builder sends it
-    est && est.source === 'pace' && row(`Done per hour (last ${Math.round(est.pace_hours || 12)} h)`, est.pace_per_h),
+    // 0.63.0: working hours only (paused or held for the Claude allowance does not count)
+    est && est.source === 'pace' && row(`Done per hour (last ${Math.round(est.pace_hours || 12)} working h)`, est.pace_per_h),
     note && make('p', 'bd-why-s', note)]);
   box.replaceChildren(c);
   box.hidden = false;
@@ -3748,7 +3749,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.62.0';
+const PAGE_VERSION = '0.63.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3901,7 +3902,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.62.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.63.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();

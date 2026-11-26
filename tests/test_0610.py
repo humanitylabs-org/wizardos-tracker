@@ -45,8 +45,8 @@ class FairShareWording(unittest.TestCase):
 
     def test_version(self):
         s = fresh()
-        self.assertEqual(s.VERSION, '0.62.0')
-        self.assertIn("const PAGE_VERSION = '0.62.0';", (ROOT / 'web/app.js').read_text())
+        self.assertEqual(s.VERSION, '0.63.0')
+        self.assertIn("const PAGE_VERSION = '0.63.0';", (ROOT / 'web/app.js').read_text())
 
 
 if __name__ == '__main__':

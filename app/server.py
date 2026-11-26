@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.62.0'
+VERSION = '0.63.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -4499,7 +4499,10 @@ RES_NUM = ('at', 'samples', 'since', 'hours', 'cpus', 'mem_total_mb', 'workers',
            'test_boxes_leaked_now',
            # 0.62.0 (Miguel, 26 Nov): the measured pace. Items the tester passed per hour over the last pace_hours
            # (12), the jobs running on average meanwhile, and worker hours per finished item at that pace.
-           'pace_items_per_h', 'pace_jobs', 'pace_worker_h_per_item', 'pace_hours')
+           'pace_items_per_h', 'pace_jobs', 'pace_worker_h_per_item', 'pace_hours',
+           # 0.63.0 (Miguel, 27 Nov): pace_hours are WORKING hours (a job running; paused or held for the Claude
+           # allowance does not count); pace_span_hours = the clock hours they took.
+           'pace_span_hours')
 RES_WORDS = {'verdict': ('fine', 'watch', 'upgrade', 'measuring'), 'test_box_verdict': ('fine', 'watch', 'add', 'measuring'),
              'box_h_source': ('measured', 'guess')}
 
@@ -4536,6 +4539,17 @@ def _res_clean(raw):
         if r.get(k) in ok:
             out[k] = r[k]
     out['reasons'] = [str(x)[:200] for x in (r.get('reasons') or [])[:3] if isinstance(x, str)]
+    # 0.63.0 (Miguel, 27 Nov: three Claude accounts, two spent and one with room): every account in the builder's
+    # pool, [{label, used_pct, resets_at, in_use}]; quota_used_pct is the account the builder can use now.
+    accts = []
+    for a in (r.get('quota_accounts') or [])[:8] if isinstance(r.get('quota_accounts'), list) else []:
+        if isinstance(a, dict) and isinstance(a.get('used_pct'), (int, float)) and not isinstance(a.get('used_pct'), bool):
+            rs = a.get('resets_at')
+            accts.append({'label': str(a.get('label') or 'account')[:40], 'used_pct': max(0, min(100, a['used_pct'])),
+                          'resets_at': rs if isinstance(rs, (int, float)) and not isinstance(rs, bool) else None,
+                          'in_use': a.get('in_use') is True})
+    if accts:
+        out['quota_accounts'] = accts
     if 'verdict' not in out:
         raise ValueError
     return out
@@ -4609,7 +4623,8 @@ def builder_estimate(work, server):
             'item_hours': round(t, 2), 'per_day': round(rate * 24, 1), 'pool': pool,
             'repos': work.get('repos'), 'top_repo': work.get('top_repo'), 'top_name': work.get('top_name') or '',
             'source': 'pace' if measured else 'model', 'pace_per_h': round(pace, 1) if measured else None,
-            'pace_hours': server.get('pace_hours') if measured else None}
+            'pace_hours': server.get('pace_hours') if measured else None,
+            'pace_span_hours': server.get('pace_span_hours') if measured else None}
 
 
 def _pct(v):
@@ -4622,36 +4637,58 @@ def _wait_word(h):
     return 'under an hour' if h < 1 else f'{h} h' if h < 48 else f'{int(round(h / 24.0))} days'
 
 
+def _day(epoch):
+    t = time.localtime(epoch)
+    return f"{time.strftime('%a', t)} {t.tm_mday} {time.strftime('%b', t)}"
+
+
+def _accounts_say(sv, now):
+    """0.63.0: ' 3 accounts: b-max 5% (in use), oscar-max 91% (resets Sat 28 Nov), miguel-max 99% (resets Mon 30 Nov).'
+    or '' with fewer than two accounts reported."""
+    accts = (sv or {}).get('quota_accounts') or []
+    if len(accts) < 2:
+        return ''
+    parts = []
+    for a in sorted(accts, key=lambda a: (not a['in_use'], a['used_pct'])):
+        tail = ' (in use)' if a['in_use'] else f" (resets {_day(a['resets_at'])})" if a['used_pct'] >= 85 and a['resets_at'] and a['resets_at'] > now else ''
+        parts.append(f"{a['label']} {int(round(a['used_pct']))}%{tail}")
+    return f" {len(accts)} accounts: {', '.join(parts)}."
+
+
 def _allowance(sv, now=None):
     """0.59.0: the Claude allowance row from the builder server's report -> {'status', 'say', 'hold'} or None when the
     report has no quota_used_pct. THE LIMIT from 85% used (the builder holds new features there, and everything from
-    95%); TIGHT when at this pace it runs out before it resets; else FINE."""
+    95%); TIGHT when at this pace it runs out before it resets; else FINE. 0.63.0 (Miguel, 27 Nov): the builder's runs
+    use every Claude account in its pool, so quota_used_pct is the account it can use now (the one with the most room)
+    and the row names every account with its own figure."""
     used = (sv or {}).get('quota_used_pct')
     if not isinstance(used, (int, float)):
         return None
     now = now or time.time()
     resets, left = sv.get('quota_resets_at'), sv.get('quota_hours_left')
-    day = ''
-    if isinstance(resets, (int, float)) and resets > now:
-        t = time.localtime(resets)
-        day = f"{time.strftime('%a', t)} {t.tm_mday} {time.strftime('%b', t)}"
-    u = f'{int(round(used))}% used'
+    day = _day(resets) if isinstance(resets, (int, float)) and resets > now else ''
+    many = len(sv.get('quota_accounts') or []) >= 2
+    u = (f'{int(round(used))}% used on the account with the most room' if many else f'{int(round(used))}% used')
+    accts = _accounts_say(sv, now)
     reset_s = f'; resets {day}' if day else ''
     until = f' until it resets {day}' if day else ' until it resets'
+    if many:
+        until = f' until the first account resets {day}' if day else ' until an account resets'
+        reset_s = ''
     if used >= 95:
         hold = f'Everything is on hold{until}.'
-        return {'status': 'limit', 'say': f'{u}: everything is on hold{until}.', 'hold': hold}
+        return {'status': 'limit', 'say': f'{u}: everything is on hold{until}.{accts}', 'hold': hold}
     if used >= 85:
         hold = f'New features are on hold{until}.'
-        return {'status': 'limit', 'say': f'{u}: new features are on hold{until}.', 'hold': hold}
+        return {'status': 'limit', 'say': f'{u}: new features are on hold{until}.{accts}', 'hold': hold}
     if isinstance(left, (int, float)) and left >= 0:
         runs_out = f'at this pace it runs out in about {_wait_word(left)}' if left >= 1 else 'at this pace it runs out within the hour'
         if day and now + left * 3600 < resets:
-            return {'status': 'tight', 'say': f'{u}, {runs_out}{reset_s}.', 'hold': ''}
+            return {'status': 'tight', 'say': f'{u}, {runs_out}{reset_s}.{accts}', 'hold': ''}
         if day:
-            return {'status': 'fine', 'say': f'{u}; at this pace it lasts until it resets {day}.', 'hold': ''}
-        return {'status': 'fine', 'say': f'{u}, {runs_out}.', 'hold': ''}
-    return {'status': 'fine', 'say': f'{u}{reset_s}.', 'hold': ''}
+            return {'status': 'fine', 'say': f'{u}; at this pace it lasts until it resets {day}.{accts}', 'hold': ''}
+        return {'status': 'fine', 'say': f'{u}, {runs_out}.{accts}', 'hold': ''}
+    return {'status': 'fine', 'say': f'{u}{reset_s}.{accts}', 'hold': ''}
 
 
 def _and(names):
