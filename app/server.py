@@ -35,7 +35,7 @@ DATA = Path(os.environ.get('DATA_DIR', ROOT / '.data'))
 PRIVATE = DATA / 'private'
 SOURCE_REPO = 'humanitylabs-org/wizardos-tracker'  # 0.16.1: moved from oscarhenrycollins/wizardos-tracker to the org
 APP_ID = 'wizardos-tracker'  # 0.13.7: id follows the name WizardOS Tracker (was wizard-os-tracker, before that board)
-VERSION = '0.63.0'
+VERSION = '0.64.0'
 USER_AGENT = 'wizardos-tracker/' + VERSION + ' (+https://github.com/' + SOURCE_REPO + ')'
 GITHUB = os.environ.get('GITHUB_API', 'https://api.github.com').rstrip('/')
 DEFAULT_ORG = os.environ.get('BOARD_DEFAULT_ORG', 'humanitylabs-org')
@@ -3139,7 +3139,9 @@ def board_split(person, args):
     sview = STATS_VIEW[view]
     common = {'view': view, 'org': org, 'login': login, 'me_person': person_of(login, base), 'names': display_names(base),
               'since': base['since'], 'targets': base['targets'][sview], 'core_repos': base['core_repos'],
-              'james': is_james(login, base), 'core_approver': is_core_approver(login, base)}
+              'james': is_james(login, base), 'core_approver': is_core_approver(login, base),
+              # 0.64.0 (#69): Created by me counts a person's own agents' filings as theirs
+              'agents_of': {t['name']: [a['login'].lower() for a in t['agents']] for t in base['team']}}
     if view == 'goals':
         nodes, total = _view_nodes(acct['token'], q, query=GOAL_PAGE, limit=60)
         goals = [goal_card(n, login, base) for n in nodes]
@@ -3483,6 +3485,104 @@ def needs_you(person, args=None):
 # ---------- bottleneck stats (label history, cached 5 min per token/org/view) ----------
 
 _stats = {}
+
+
+
+# ---------- 0.64.0 Needs you notification (wizardos-tracker#87; 0.34.0 sent one per new item, 0.34.1 dropped it) ----------
+# While the switch needs-you-badge is on, a background round every 10 minutes reads the same count as the badge for the
+# box's signed-in GitHub account and sends ONE Notifications alert when that count rises above the last count it told
+# about: "2 things wait for you in the Tracker" with the new ones named. A count that stays the same or falls sends
+# nothing (a fall lowers the mark, so a later rise is told once). The first round after it is turned on only sets the
+# mark. Through the box's Notifications app (`notify` on http://notifications:8080/mcp, wizard.md `uses: [notifications]`,
+# listed under the Tracker so it follows the Tracker's notification choice); kept in DATA_DIR/needs-you-notified.json.
+NEEDS_EVERY = 600
+NEEDS_FILE = 'needs-you-notified.json'
+NOTIFY_URL = os.environ.get('WIZARD_NOTIFY_URL', 'http://notifications:8080/mcp').strip()
+
+
+def _shell_link():
+    """The box's first listed https shell origin with a port: opens the Tracker inside Wizard."""
+    listed = [x.strip() for x in os.environ.get('WIZARD_TRUSTED_ORIGINS', '').split(',') if x.strip().startswith('https://')]
+    listed.sort(key=lambda o: urlsplit(o).port is None)
+    return listed[0].rstrip('/') + f'/wizard-os-home/?open={APP_ID}' if listed else ''
+
+
+def notify_owner(title, message, priority='default'):
+    """One alert through the Notifications app's `notify` tool. True only when it answered that it was sent."""
+    u = urlsplit(NOTIFY_URL)
+    if u.scheme != 'http' or u.username or u.password or not u.hostname:
+        return False
+    args = {'title': title[:120], 'message': message[:600], 'priority': priority, 'app': APP_ID}
+    link = _shell_link()
+    if link:
+        args['link'] = link
+    body = json.dumps({'jsonrpc': '2.0', 'id': 1, 'method': 'tools/call', 'params': {'name': 'notify', 'arguments': args}}).encode()
+    req = urllib.request.Request(NOTIFY_URL, data=body, method='POST', headers={
+        'Content-Type': 'application/json', 'Accept': 'application/json, text/event-stream', 'User-Agent': USER_AGENT})
+    try:
+        with urllib.request.urlopen(req, timeout=8) as r:
+            raw = r.read(65536).decode('utf-8', 'replace')
+    except (OSError, urllib.error.URLError, ValueError):
+        return False
+    m = re.search(r'\{.*\}', raw, re.S)   # plain JSON or one SSE data line
+    try:
+        res = (json.loads(m.group(0)).get('result') or {}) if m else {}
+    except ValueError:
+        return False
+    return bool(res) and not res.get('isError')
+
+
+def _box_person():
+    a = accounts()
+    people = a['people']
+    return a.get('default') if a.get('default') in people else next(iter(people), None)
+
+
+def needs_you_tick(post=None, now=None):
+    """One background round -> what it did. Tells once when the count rises above the mark; never repeats."""
+    post = post or notify_owner
+    now = now or time.time()
+    if not switch_on(NEEDS_SWITCH):
+        return {'skipped': 'off'}
+    key = _box_person()
+    if not key:
+        return {'skipped': 'nobody signed in'}
+    got = needs_you(key, {'refresh': True})
+    if got.get('missed'):
+        return {'skipped': 'GitHub did not answer for ' + ', '.join(got['missed'])}
+    state = _read(NEEDS_FILE, None)
+    first = not isinstance(state, dict) or not isinstance(state.get('mark'), int) or state.get('login') != got.get('login')
+    mark = 0 if first else state['mark']
+    told = [] if first else [str(x) for x in state.get('ids') or []]
+    count, ids = got['count'], [i['id'] for i in got['items']]
+    sent = False
+    if not first and count > mark:
+        new = [i for i in got['items'] if i['id'] not in told] or got['items']
+        what = f"{count} thing{'s' if count != 1 else ''} wait{'' if count != 1 else 's'} for you in the Tracker"
+        lines = '\n'.join(f"• {i['why']}: {i['title']}" for i in new[:5]) + (f'\n…and {len(new) - 5} more' if len(new) > 5 else '')
+        sent = post(what, lines)
+        if not sent:   # Notifications didn't answer: keep the old mark, so the next round tries once more
+            count, ids = mark, told
+    out = {'mark': count, 'ids': ids[-200:], 'login': got.get('login'), 'last_run': int(now), 'first': first, 'sent': sent}
+    _write(NEEDS_FILE, out)
+    print(f"needs-you: {got['count']} waiting for {got.get('login')} (mark {mark}){' · told' if sent else ''}"
+          f"{' (first round)' if first else ''}", flush=True)
+    return out
+
+
+def needs_you_loop(sleep=time.sleep, rounds=None, now=time.time):
+    """Looks at the switch every minute; while it is on, one needs_you_tick every NEEDS_EVERY seconds. Off: no GitHub
+    reads, nothing sent."""
+    n, last = 0, 0
+    while rounds is None or n < rounds:
+        n += 1
+        sleep(60)
+        try:
+            if switch_on(NEEDS_SWITCH) and now() - last >= NEEDS_EVERY:
+                last = now()
+                needs_you_tick()
+        except Exception as e:  # noqa: BLE001 - one bad round never stops the loop
+            print(f'needs-you: round failed: {type(e).__name__}', flush=True)
 
 
 def _ts(iso):
@@ -5564,6 +5664,17 @@ def feedback_pending(person, q=None):
         raise Problem(e.code, e.message, e.reason)
 
 
+def switch_counts(person, q=None):
+    """0.64.0 GET /api/switch-counts (wizardos-tracker#86): 'Tried by N · 👍 N · 👎 N' for items with a feature switch,
+    from the anonymous Try new features counts the boxes send to the Feedback relay. Read server-side with the person's
+    own token (the relay checks they are on the team); keyed by 'owner/repo#n' in lower case."""
+    _, acct = gate(person)
+    try:
+        return feedback_inbox.switch_counts(acct, refresh=(q or {}).get('refresh') == '1')
+    except feedback_inbox.RelayError as e:
+        raise Problem(e.code, e.message, e.reason)
+
+
 def feedback_review(person, args):
     """0.26.5 POST /api/feedback/review {number, action approve|reject, kind?, reason?}: Approve files it in wizard-os (triage + from-feedback;
     0.28.1: `kind` approves it as that kind), Reject declines it with an optional reason the sender sees
@@ -6704,6 +6815,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self.send(200, boxes(self.person()))
             if path == '/api/feedback/pending':
                 return self.send(200, feedback_pending(self.person(), q))
+            if path == '/api/switch-counts':
+                return self.send(200, switch_counts(self.person(), q))
             if path == '/api/avatar':
                 data, kind = avatar(self.person())
                 return self.send(200, data, kind)
@@ -6955,4 +7068,5 @@ if __name__ == '__main__':
     threading.Thread(target=refresh_loop, daemon=True).start()
     if os.environ.get('TRACKER_WARM', '1') != '0':
         threading.Thread(target=_warm_releases, daemon=True).start()
+    threading.Thread(target=needs_you_loop, daemon=True).start()   # 0.64.0 (#87): idles while needs-you-badge is off
     ThreadingHTTPServer((os.environ.get('BIND', '0.0.0.0'), int(os.environ.get('PORT', '8799'))), Handler).serve_forever()

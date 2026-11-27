@@ -167,5 +167,52 @@ def review(acct, args, opener=None):
             'message': msg + (' (It was already handled.)' if out.get('already') else '')}
 
 
+# 0.64.0 (wizardos-tracker#86): the anonymous Try new features counts. Boxes with the switch wizard/try-feature-counts on
+# send each switch's `tried` / `vote` through the App Manager to the relay; GET /v1/switch-counts (team members only,
+# with the person's own token) answers {contract: wizard.switch-counts/1, boxes, counts: {"<app>:<switch>": {tried, up,
+# down, issues: ["owner/repo#N"]}}}. One shared copy for 5 minutes (the counts are the same for everyone).
+COUNTS_SECONDS = 300
+_counts = {}   # 'all' -> (time, answer)
+ISSUE_KEY = re.compile(r'^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}#[0-9]{1,9}$')
+
+
+def _n(v):
+    return v if isinstance(v, int) and not isinstance(v, bool) and 0 <= v < 10 ** 7 else 0
+
+
+def switch_counts(acct, refresh=False, opener=None):
+    """GET /api/switch-counts -> {boxes, counts: {"owner/repo#n" (lower): {tried, up, down, switch}}, switches:
+    {"<app>:<switch>": {tried, up, down, issues}}}. Only switches someone tried or voted on are listed."""
+    now = time.time()
+    with _lock:
+        hit = _counts.get('all')
+    if hit and not refresh and now - hit[0] < COUNTS_SECONDS:
+        return hit[1]
+    status, out = _http('GET', '/v1/switch-counts', acct['token'], opener=opener)
+    if status != 200:
+        raise _problem(status, out)
+    by_issue, by_switch = {}, {}
+    raw = out.get('counts') if isinstance(out.get('counts'), dict) else {}
+    for sid, c in list(raw.items())[:2000]:
+        if not isinstance(sid, str) or len(sid) > 200 or not isinstance(c, dict):
+            continue
+        row = {'tried': _n(c.get('tried')), 'up': _n(c.get('up')), 'down': _n(c.get('down'))}
+        if not (row['tried'] or row['up'] or row['down']):
+            continue
+        issues = [i for i in (c.get('issues') or []) if isinstance(i, str) and ISSUE_KEY.match(i)][:20]
+        by_switch[sid] = {**row, 'issues': issues}
+        for i in issues:
+            k = i.lower()
+            was = by_issue.get(k)
+            # one issue behind two switches (an idea in two apps): the counts add up
+            by_issue[k] = {**row, 'switch': sid} if not was else {
+                'tried': was['tried'] + row['tried'], 'up': was['up'] + row['up'], 'down': was['down'] + row['down'],
+                'switch': was['switch']}
+    ans = {'boxes': _n(out.get('boxes')), 'counts': by_issue, 'switches': by_switch}
+    with _lock:
+        _counts['all'] = (now, ans)
+    return ans
+
+
 def is_from_feedback(labels):
     return FROM_LABEL in {str(n).lower() for n in labels or []}

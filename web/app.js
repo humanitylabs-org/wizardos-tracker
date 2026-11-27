@@ -42,14 +42,18 @@
 const el = id => document.getElementById(id);
 const make = (tag, cls, text) => { const n = document.createElement(tag); if (cls) n.className = cls; if (text != null) n.textContent = text; return n; };
 const link = (cls, href) => { const a = make('a', cls); a.href = href; a.target = '_blank'; a.rel = 'noopener noreferrer'; return a; };
-const EMPTY = { goals: 'No open goals.', core: 'No open core features.', apps: 'No open app features.', features: 'No open features.', bugs: 'No open bugs. Nice.' };
+const EMPTY = { all: 'Nothing open.', goals: 'No open goals.', core: 'No open core features.', apps: 'No open app features.', features: 'No open features.', bugs: 'No open bugs. Nice.' };
 const GROUPS = ['test', 'answer', 'show', 'james', 'airev', 'building', 'queued', 'sorting', 'shipping'];
 const VIEWS = ['goals', 'core', 'apps', 'bugs'];
-const stage = { goals: null, core: null, apps: null, bugs: null, features: null };   // tap a bin: show only that stage (not remembered)
+// 0.64.0 (wizardos-tracker#70, Jan): 'All' left of Core · Apps · Bugs: the three lists in one, built on the page from the
+// tabs' own answers (no extra GitHub read). It has no Stats (each pipeline keeps its own); bugs' release stages read as Shipping.
+const ALL_OF = ['core', 'apps', 'bugs'];
+const TABS = ['all', ...VIEWS];
+const stage = { all: null, goals: null, core: null, apps: null, bugs: null, features: null };   // tap a bin: show only that stage (not remembered)
 const doneCache = {};   // view -> { at, items, open_ship }; filled from the device below (0.26.2)
 // 0.18.1: the last view is remembered per device; first landing is Core features (Goals only if you last used Goals).
-const lastView = () => { try { const v = JSON.parse(localStorage.getItem('board.view')); return VIEWS.includes(v) ? v : 'core'; } catch (_) { return 'core'; } };
-let me = null, view = ({ '#goals': 'goals', '#bugs': 'bugs', '#core': 'core', '#apps': 'apps', '#features': 'apps' })[location.hash] || lastView(), umOpen = false, umBack = 'core', gen = 0, held = null, lastLoad = 0, who = '';
+const lastView = () => { try { const v = JSON.parse(localStorage.getItem('board.view')); return TABS.includes(v) ? v : 'core'; } catch (_) { return 'core'; } };
+let me = null, view = ({ '#all': 'all', '#goals': 'goals', '#bugs': 'bugs', '#core': 'core', '#apps': 'apps', '#features': 'apps' })[location.hash] || lastView(), umOpen = false, umBack = 'core', gen = 0, held = null, lastLoad = 0, who = '';
 const NO_DATA = 'starts once the builder runs';
 const BINS = [
   { key: 'open', group: 'queued', word: 'Queued' },
@@ -72,8 +76,8 @@ const store = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } cat
 // lookup replaces it a moment later
 Object.assign(doneCache, Object.fromEntries(Object.entries(store.get('board.done2') || {}).map(([k, v]) => [k, { ...v, at: 0 }])));
 // Chip filters live on Bugs only (0.9: Goals has none); picks are remembered on the device.
-const picked = Object.fromEntries([...VIEWS, 'features'].map(v => [v, new Set(store.get('board.repos.' + v) || [])]));
-const pickedWho = Object.fromEntries([...VIEWS, 'features'].map(v => [v, new Set(store.get('board.who.' + v) || [])]));
+const picked = Object.fromEntries([...TABS, 'features'].map(v => [v, new Set(store.get('board.repos.' + v) || [])]));
+const pickedWho = Object.fromEntries([...TABS, 'features'].map(v => [v, new Set(store.get('board.who.' + v) || [])]));
 let repoMore = false;   // the Repo row's '+N more' is open (not remembered)
 const SORTS = [['turn', 'Waiting on me first'], ['oldest', 'Oldest'], ['newest', 'Newest'], ['discussed', 'Most discussed'], ['active', 'Recently active']];
 // 0.20: ONE sort for every tab (key board.sort3, default 'Your turn first' for everyone again): a pick on one tab
@@ -106,6 +110,28 @@ function turnDivider(n) {
   return d;
 }
 const cache = {};
+let allMemo = null;
+function allData() {
+  const parts = ALL_OF.map(v => cache[v]);
+  if (!parts.some(Boolean)) return null;
+  if (allMemo && allMemo.from.every((x, n) => x === parts[n])) return allMemo.d;
+  const groups = {}, seen = new Set(), names = {}, repos = new Set();
+  let base = null;
+  for (const d of parts) {
+    if (!d) continue;
+    base = base || d;
+    Object.assign(names, d.names || {});
+    for (const r of d.repos || []) repos.add(r);
+    for (const [g, l] of Object.entries(d.groups || {})) for (const i of l || []) {
+      if (!i || seen.has(i.id)) continue;   // an item labelled bug and feature is on Apps and Bugs: once here
+      seen.add(i.id); (groups[g] = groups[g] || []).push(i);
+    }
+  }
+  const d = { ...base, view: 'all', groups, names, repos: [...repos], stats: null, more: false, shown: seen.size, total: seen.size, partial: parts.some(x => !x) };
+  allMemo = { from: parts, d };
+  return d;
+}
+Object.defineProperty(cache, 'all', { get: allData, enumerable: false });
 const details = new Map();   // issue id -> { at, data }: a short cache so reopening is instant
 const DETAIL_SECONDS = 60;
 
@@ -368,6 +394,7 @@ function freshness() {
 setInterval(freshness, 5000);
 
 async function load(which, refresh = false) {
+  if (which === 'all') return Promise.all(ALL_OF.map(v => load(v, refresh)));
   const g = ++gen; lastLoad = Date.now(); inflight++; freshness();
   try {
     const d = await api(`api/split?view=${which}${refresh ? '&refresh=1' : ''}`);
@@ -376,12 +403,13 @@ async function load(which, refresh = false) {
     waitBadges();
     if (which === 'goals') goalsBadge();
     if (which === view && g === gen && !typing()) render(d);
+    if (view === 'all' && ALL_OF.includes(which) && !typing() && cache.all) render(cache.all);
     if (el('settings').open) tryList();
     say('');
     if (d.stats && d.stats.pending && which !== 'goals') loadStats(which);
     if (which !== 'goals') loadDone(which, refresh);
     if (which !== 'goals' && window.FeedbackStage) FeedbackStage.load(refresh);   // 0.26.5: Pending approval (web/feedback-stage.js)
-    if (which === view) freshAt = Date.now();
+    if (which === view || (view === 'all' && ALL_OF.includes(which))) freshAt = Date.now();
     goMine();
   } catch (err) {
     if (err.status === 401) { const s = await api('api/status').catch(() => null); if (s) show(s); }
@@ -422,6 +450,7 @@ function render(d) {
   for (const r of [...chosen]) if (!known.has(r)) chosen.delete(r);
   const byWho = i => !whoSet.size || whoSet.has((i.author || '').toLowerCase());
   const byRepo = i => !chosen.size || chosen.has(repoKey(i));
+  const byMine = i => !mineOnly() || createdByMe(i, d);
   const allWho = authorsOf(d), allRepo = new Map(reposOf(d, () => true).map(([r, n]) => [r.toLowerCase(), n]));
   const whoN = new Map(authorsOf({ groups: Object.fromEntries(Object.entries(d.groups).map(([g, l]) => [g, l.filter(byRepo)])) }).map(([p, n]) => [p.toLowerCase(), n]));
   const repoN = new Map(reposOf(d, byWho).map(([r, n]) => [r.toLowerCase(), n]));
@@ -431,13 +460,14 @@ function render(d) {
   chipRow('who', whoSet, people);
   chipRow('repo', chosen, repos);
   filteredLine(whoSet, chosen, people, repos);
+  mineBtn(d.view !== 'goals');
   const goals = d.view === 'goals';
   el('lists').classList.toggle('bd-goalsview', goals);
   // 0.50.0 (Miguel, 21 Nov): a tab opens on the pipeline alone. Tap a stage for its cards, tap it again to put them away.
   el('lists').classList.toggle('bd-pipeonly', !goals && !stage[d.view]);
   el('sort-btn').replaceChildren(make('span', 'bd-sort-k', 'Sort: '), (SORTS.find(([k]) => k === sortBy[d.view]) || SORTS[0])[1]);   // 0.22: phones drop 'Sort: '
   el('sort-btn').hidden = stage[d.view] === 'done';   // Done lists newest closed first
-  const keep = i => byWho(i) && byRepo(i);
+  const keep = i => byWho(i) && byRepo(i) && (d.view === 'goals' || byMine(i));
   const order = SORT_FN[sortBy[d.view]];
   if (goals) return renderGoals(d, keep, order);
   const groups = Object.fromEntries(GROUPS.map(g => { const l = (d.groups[g] || []).filter(keep); return [g, order ? l.sort(order) : l]; }));
@@ -446,22 +476,24 @@ function render(d) {
   groups.nextrel = groups.test.filter(i => i.nextrel);
   groups.test = groups.test.filter(i => !i.nextrel);
   // 0.18: Shipping = open approved items + closed items not yet in a release for everyone; Done = shipped (from api/done)
-  const dc = doneCache[d.view] || {};
+  const dc = d.view === 'all' ? doneAll() : doneCache[d.view] || {};
   for (const i of groups.shipping) if (dc.open_ship && dc.open_ship[i.id]) i.ship = dc.open_ship[i.id];
   const closed = dc.items ? dc.items.filter(keep) : null;
   groups.shipping = [...groups.shipping, ...(closed || []).filter(i => i.group === 'shipping')];
   groups.done = closed ? closed.filter(i => i.group === 'done') : null;
   if (d.view === 'bugs') bucketBugs(groups, dc);
-  if (window.FeedbackStage) groups.feedback = FeedbackStage.items(d.view);   // 0.26.5: Pending approval, first
+  if (window.FeedbackStage) groups.feedback = d.view === 'all' ? [...FeedbackStage.items('apps'), ...FeedbackStage.items('bugs')] : FeedbackStage.items(d.view);   // 0.26.5: Pending approval, first
   const st = d.stats || {}, hist = (st.items || []).filter(keep);
   const doneN = st.pending || st.error ? null : hist.filter(i => i.state === 'closed').length;
   let bins = window.FeedbackStage ? FeedbackStage.bins(d.view, binsOf(d.view)) : binsOf(d.view);
   // 0.41.0: once the old backlog is approved, Waiting for approval leaves the strip
-  if (d.view === 'core' && !(groups.james || []).length && stage[d.view] !== 'james') bins = bins.filter(b => b.key !== 'james');
+  if ((d.view === 'core' || d.view === 'all') && !(groups.james || []).length && stage[d.view] !== 'james') bins = bins.filter(b => b.key !== 'james');
   // 0.49.0 (Miguel, 21 Nov): a stage nothing goes through any more leaves the strip while it is empty
   bins = bins.filter(b => !(b.key === 'airev' || b.key === 'test') || stage[d.view] === b.key || b.groups.some(g => (groups[g] || []).length));
   strip(d, bins, groups);
-  flow(d, groups, doneN, st, hist, bins);
+  const statsOff = d.view === 'all';   // 0.64.0: each pipeline keeps its own stats
+  el('stats-btn').hidden = statsOff; el('stats').hidden = statsOff;
+  if (!statsOff) flow(d, groups, doneN, st, hist, bins);
   const only = stage[d.view];
   const bin = bins.find(b => b.key === only);
   const showing = g => !!only && !!bin && bin.groups.includes(g);
@@ -495,11 +527,20 @@ function render(d) {
   if (askOn.length) setTimeout(() => checkOnBox(askOn), 0);
   if (refocus) backTo();   // 0.21: just closed an app sheet: stay on the same card and button through repaints
   el('empty').hidden = any;
-  if (!only) { el('empty').hidden = false; el('empty').textContent = whoSet.size || chosen.size ? 'Tap a stage to see what’s in it with this filter.' : 'Tap a stage to see what’s in it.'; return; }
+  if (!only) { el('empty').hidden = false; el('empty').textContent = whoSet.size || chosen.size || mineOnly() ? 'Tap a stage to see what’s in it with this filter.' : 'Tap a stage to see what’s in it.'; return; }
   if (only === 'done' && !groups.done) { el('empty').hidden = false; el('empty').textContent = dc.error || 'Loading…'; return; }
-  el('empty').textContent = `Nothing in ${(bin || {}).word || ''} here${whoSet.size || chosen.size ? ' with this filter' : ''}.`;
+  const fil = whoSet.size || chosen.size || mineOnly();
+  el('empty').textContent = `Nothing in ${(bin || {}).word || ''} here${fil ? ' with this filter' : ''}.`;
 }
 // 0.26: a shipped bug's stage from the release lookup (api/done): Merged (waiting) -> For testers -> For everyone.
+// 0.64.0: All's Shipping and Done: the three tabs' recently closed lists, once each
+function doneAll() {
+  const parts = ALL_OF.map(v => doneCache[v] || {}), seen = new Set(), items = [];
+  if (parts.some(p => !p.items)) { const e = parts.find(p => p.error); return { items: null, error: e && e.error, open_ship: Object.assign({}, ...parts.map(p => p.open_ship || {})) }; }
+  for (const p of parts) for (const i of p.items) if (!seen.has(i.id)) { seen.add(i.id); items.push(i); }
+  items.sort((a, b) => ts(b.closed_at) - ts(a.closed_at));
+  return { items, open_ship: Object.assign({}, ...parts.map(p => p.open_ship || {})) };
+}
 function relStage(i) {
   const s = i.ship;
   if (!s) return 'relwait';
@@ -518,20 +559,35 @@ function bucketBugs(groups, dc) {
   if (!dc.open_ship) { out.relwait.pending = true; out.testers.pending = true; }   // 0.26.2: '—' until the lookup lands
   groups.done = groups.done ? [...out.done, ...groups.done] : out.done.length ? out.done : null;
 }
+// 0.64.0 (wizardos-tracker#69, Jan): Created by me. One pill in the tools row, on every list tab at once, remembered on
+// this device. 'Me' is the signed-in login, the person's own agents (their filings are theirs) and items refiled for them.
+const mineOnly = () => store.get('board.mine') === true;
+function createdByMe(i, d) {
+  const a = String(i.author || '').toLowerCase(), mine = String((d && d.login) || (me && me.account && me.account.login) || '').toLowerCase();
+  if (!a) return false;
+  if (a === mine) return true;
+  const person = (d && d.me_person) || Object.values(cache).map(c => c && c.me_person).find(Boolean) || '';
+  return !!person && (i.opener === person || (d && d.agents_of && (d.agents_of[person] || []).includes(a)));
+}
+function mineBtn(on) {
+  const b = el('mine-btn'); if (!b) return;
+  b.hidden = !on; b.setAttribute('aria-pressed', String(mineOnly())); b.classList.toggle('on', mineOnly());
+}
+el('mine-btn').onclick = () => { store.set('board.mine', !mineOnly()); unpop(); if (cache[view]) render(cache[view]); };
 // 0.17: 'Filtered: Jan · wizard-ux ×' only when a filter is set; × clears it.
 function filteredLine(whoSet, chosen, people, repos) {
   const p = el('filtered');
-  const names = [...people.filter(([k]) => whoSet.has(k)).map(x => x[1].replace(' (you)', '')), ...repos.filter(([k]) => chosen.has(k)).map(x => x[1])];
+  const names = [...(mineOnly() && view !== 'goals' ? ['Created by me'] : []),...people.filter(([k]) => whoSet.has(k)).map(x => x[1].replace(' (you)', '')), ...repos.filter(([k]) => chosen.has(k)).map(x => x[1])];
   p.hidden = !names.length;
   el('filter-btn').classList.toggle('on', !!names.length);
   if (!names.length) return p.replaceChildren();
   const x = make('button', 'bd-x', '×'); x.type = 'button'; x.setAttribute('aria-label', 'Clear the filter');
-  x.onclick = () => { whoSet.clear(); chosen.clear(); saveFilter('who'); saveFilter('repo'); };
+  x.onclick = () => { whoSet.clear(); chosen.clear(); store.set('board.mine', false); saveFilter('who'); saveFilter('repo'); };
   p.replaceChildren(document.createTextNode('Filtered: ' + names.join(' · ') + ' '), x);
 }
 el('filter-btn').onclick = () => { unpop(); if (cache[view]) render(cache[view]); WzSheet.open(el('filter')); };
 el('filter-done').onclick = () => WzSheet.close(el('filter'));
-el('filter-clear').onclick = () => { pickedWho[view].clear(); picked[view].clear(); saveFilter('who'); saveFilter('repo'); };
+el('filter-clear').onclick = () => { pickedWho[view].clear(); picked[view].clear(); store.set('board.mine', false); saveFilter('who'); saveFilter('repo'); };
 // 0.17.1: Show stats / Hide stats expands the stats inline under the strip; collapsed by default, remembered on this device.
 function statsShown(on, animate) {
   const s = el('stats'), b = el('stats-btn');
@@ -568,6 +624,7 @@ async function loadDone(which, force) {
     try { store.set('board.done2', Object.fromEntries(Object.entries(doneCache).filter(([, v]) => v.items).map(([k, v]) => [k, { items: v.items.slice(0, 80), open_ship: v.open_ship }]))); } catch (_) {}
   } catch (err) { doneCache[which] = { at: Date.now(), items: null, error: err.message }; }
   if (which === view && cache[which] && !typing()) render(cache[which]);
+  if (view === 'all' && ALL_OF.includes(which) && cache.all && !typing()) render(cache.all);
 }
 
 // ---------- Bugs filters: chip rows (tap to add/remove, All resets) and a tiny sort control ----------
@@ -794,7 +851,7 @@ function binsOf(v) {
   const tail = [{ key: 'airev', word: 'AI review', groups: ['airev'] }, { key: 'test', word: 'Tested', groups: ['test', 'nextrel'], tip: 'Tried by the builder’s tester before merge' }];
   const end = [{ key: 'shipping', word: 'Shipping', groups: ['shipping'] }, { key: 'done', word: 'Done', groups: ['done'] }];
   // 0.41.0 (Miguel, 20 Nov): new core features need no approval; Waiting for approval holds only the older backlog
-  if (v === 'core') return [{ key: 'james', word: 'Waiting for approval', groups: ['james'], tip: 'Older core features: James or Miguel approves' },
+  if (v === 'core' || v === 'all') return [{ key: 'james', word: 'Waiting for approval', groups: ['james'], tip: 'Older core features: James or Miguel approves' },
     // 0.36.6 (James, 17 Nov): Building is its own stage again, so you see whether the builder is working
     { key: 'queued', word: 'Queued', groups: ['sorting', 'queued'], info: 'corebuild', tip: 'Waiting for the builder' },
     { key: 'building', word: 'Building', groups: ['building'], info: 'building', tip: 'The builder is on it' }, ASK, ...tail,
@@ -815,7 +872,7 @@ function sectionsOf(v) {
     ['sorting', 'Sorting…'], ['done', 'In the release for everyone']];
   return [['test', 'Tested by the builder'], ['answer', 'Needs an answer'], ['nextrel', 'Coming in the next release'], ['show', 'Final approval'], ['james', 'Waiting for approval'], ['airev', 'AI review'],
     ['building', 'Building'], ['queued', 'Queued'], ['sorting', 'Sorting…'], ['shipping', 'Shipping'], ['done', 'Done']]
-    .filter(([g]) => v === 'core' || g !== 'james' && (v !== 'bugs' || g !== 'show'));
+    .filter(([g]) => v === 'core' || v === 'all' || g !== 'james' && (v !== 'bugs' || g !== 'show'));
 }
 // 0.59.0: an item the builder folded into another one ('Folded into #N') is listed under Done but is not done: no count has it
 const notFolded = l => l.filter(i => !i.folded).length;
@@ -1714,6 +1771,8 @@ function itemCard(i) {
   if (dp) c.append(dp);
   const tag = checkTag(i);
   if (tag) c.append(tag);
+  const tr = triedLine(i, 'bd-hint bd-tried');   // 0.64.0 (#86)
+  if (tr) c.append(tr);
   const rel = i.kind === 'bug' && i.shipped ? '' : releaseOf(i);   // 0.20: a bug's line already names it
   if (rel && rel !== (i.ship && i.ship.text)) c.append(make('p', 'bd-hint bd-rel', rel));   // Shipping/Done say it above
   const act = actionArea(i);
@@ -1765,6 +1824,39 @@ async function openPart(p) {
   if (hit) return openDetail(hit);
   try { openDetail(await api(`api/issue?repo=${encodeURIComponent(p.repo)}&number=${p.number}`)); }
   catch (err) { say(`Couldn’t open ${p.id}: ${err.message}`, 'error'); }
+}
+// 0.64.0 (wizardos-tracker#86): 'Tried by N · 👍 N · 👎 N' on an item behind a feature switch, from the anonymous Try new
+// features counts the boxes send (GET api/switch-counts: by issue, or by the item's switch id). Nothing shows until
+// someone tried it or voted; the line is plain text, never a badge.
+let tried = { counts: {}, switches: {} }, triedAt = 0;
+function triedOf(i) {
+  if (!i) return null;
+  const k = `${i.repo || ''}#${i.number || ''}`.toLowerCase();
+  const c = tried.counts[k] || (i.switch && tried.switches[i.switch]) || null;
+  return c && (c.tried || c.up || c.down) ? c : null;
+}
+function triedText(c) { return `Tried by ${c.tried} · 👍 ${c.up} · 👎 ${c.down}`; }
+function triedLine(i, cls) {
+  const c = triedOf(i); if (!c) return null;
+  const p = make('p', cls, triedText(c));
+  p.title = 'Boxes that turned this switch on, and their thumbs up or down (anonymous, from Try new features)';
+  p.setAttribute('aria-label', `Tried on ${c.tried} ${c.tried === 1 ? 'box' : 'boxes'}, ${c.up} thumbs up, ${c.down} thumbs down`);
+  return p;
+}
+async function loadTried(force) {
+  if (!(me && me.connected) || (!force && Date.now() - triedAt < 5 * 60000)) return;
+  triedAt = Date.now();
+  try {
+    const r = await api('api/switch-counts' + (force ? '?refresh=1' : ''));
+    const was = JSON.stringify(tried);
+    tried = { counts: r.counts || {}, switches: r.switches || {} };
+    if (JSON.stringify(tried) !== was) { if (cache[view] && !typing()) render(cache[view]); if (openItem) detailTried(openItem); }
+  } catch (_) {}   // the relay down or not on the team: no line, nothing else changes
+}
+function detailTried(i) {
+  const p = el('d-tried'); if (!p) return;
+  const c = triedOf(i);
+  p.hidden = !c; p.textContent = c ? triedText(c) : '';
 }
 // 0.47.0 (Miguel, 21 Nov): what a show-and-tell card asks a yes or no for, on the card: the builder's pitch, then its
 // screenshots (After first, then Before). The pictures come through the Tracker (api/shot); one that does not load
@@ -2227,7 +2319,7 @@ function noteAsk(area, placeholder, yesText, fn, opt = {}) {
 function afterAct(i, msg) {
   hold(false);
   for (const v of Object.keys(cache)) { const d = cache[v]; if (d && d.groups) for (const g of Object.keys(d.groups)) d.groups[g] = d.groups[g].filter(x => x.id !== i.id); }
-  details.delete(i.id); onbox.delete(i.id); delete doneCache[view];
+  details.delete(i.id); onbox.delete(i.id); for (const v of view === 'all' ? ALL_OF : [view]) delete doneCache[v];
   if (el('detail').open) WzSheet.close(el('detail'));
   if (el('appmodal').open) closeApp();   // 0.23.1: the check was made from the pop-up's bar
   if (cache[view]) render(cache[view]);
@@ -2276,7 +2368,7 @@ function tested(i, works, note, b, screenshots) {
   api(works ? 'api/test/works' : 'api/test/fails', { repo: i.repo, number: i.number, note, screenshots })
     .then(r => {
       pendingChecks.delete(i.id);
-      details.delete(i.id); onbox.delete(i.id); delete doneCache[view];
+      details.delete(i.id); onbox.delete(i.id); for (const v of view === 'all' ? ALL_OF : [view]) delete doneCache[v];
       if (r && r.warning) toast(r.warning);
       setTimeout(() => load(view, true), 1500);
     }, err => {
@@ -2556,7 +2648,7 @@ function checkMode(on) {
 el('d-more').addEventListener('click', () => checkMode(!el('detail').classList.contains('bd-checkmode')));
 function openDetail(i, toAct) {
   const dlg = el('detail');
-  openId = i.id; openItem = i;
+  openId = i.id; openItem = i; detailAt = Date.now();
   el('d-title').textContent = i.title;
   el('d-meta').textContent = [`${i.repo}#${i.number}`, i.author].filter(Boolean).join(' · ');
   el('d-gh').href = i.url;
@@ -2574,6 +2666,7 @@ function openDetail(i, toAct) {
   if (i.kind === 'bug' && i.shipped && i.can_review && i.state_reason !== 'not_planned') bugCheckLines(i);
   if (i.group === 'answer' && i.question) { el('d-steps').hidden = false; el('d-steps').textContent = 'The builder asks: ' + i.question + ' Its full comment is below.'; }
   detailSwitch(i);
+  detailTried(i);
   detailGoal(i, null);
   detailAct(i);
   el('d-body').replaceChildren(make('p', 'bd-empty', 'Loading…'));
@@ -2591,6 +2684,26 @@ function openDetail(i, toAct) {
     .then(d => { details.set(i.id, { at: Date.now(), data: d }); if (openId === i.id) fill(d); })
     .catch(err => { if (openId === i.id) el('d-body').replaceChildren(make('p', 'wz-status error', err.message)); });
 }
+// 0.64.0 (wizardos-tracker#68, Jan): the item's sheet refreshes itself every 30 s while it is open and in view, and its
+// own refresh button (next to the item number) reads it again at once: the description, comments, its line, and the
+// card's stage from the list. A refresh never touches what you are typing in the reply box.
+let detailAt = 0, detailBusy = false;
+async function refreshDetail(force) {
+  const i = openItem; if (!i || detailBusy || !el('detail').open) return;
+  detailBusy = true; const b = el('d-reload'); if (b) { b.classList.add('spin'); b.setAttribute('aria-busy', 'true'); }
+  try {
+    const q = `repo=${encodeURIComponent(i.repo)}&number=${i.number}&refresh=1`;
+    const [d, f] = await Promise.all([api('api/detail?' + q), api('api/flow?' + q).catch(() => null)]);
+    details.set(i.id, { at: Date.now(), data: d }); if (f) flows.set(i.id, { at: Date.now(), data: f });
+    if (openId !== i.id) return;
+    fill(d); if (f) drawItemFlow(f);
+    if (force) { await load(view); const now = cardsOf(i.id).find(x => x !== i); if (now && openId === i.id) { openItem = now; releaseLine(now); detailSwitch(now); detailTried(now); detailAct(now); } }
+    detailAt = Date.now();
+  } catch (err) { if (force && b) pop(b, '', err.message); }
+  finally { detailBusy = false; if (b) { b.classList.remove('spin'); b.setAttribute('aria-busy', 'false'); } }
+}
+el('d-reload').onclick = () => refreshDetail(true);
+setInterval(() => { if (el('detail').open && !document.hidden && !el('pop').contains(document.activeElement) && Date.now() - detailAt >= 30000) refreshDetail(false); }, 5000);
 // 0.12.2: Mark done / Reopen shows for everyone; only the opener may use it (the server refuses anyone else).
 let detailNow = null;
 // 0.36.6 (wizardos-tracker issue 103): an open bug or feature waiting for its check has one way to finish it: Works (it
@@ -3154,6 +3267,12 @@ const noStartRoute = e => (e.status === 400 && /bad app id/.test(e.message)) || 
 const NO_START = name => `${name} is stopped, and this Wizard can’t start apps from the Tracker yet: update WizardOS, then tap Start.`;
 const STORE_POST = body => ({ method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Wizard-Store': '1' }, body: JSON.stringify(body) });
 const fresh = id => ((catalog && catalog.apps) || []).find(x => x.id === id) || null;
+// 0.64.0 (#74): an Update offer that turned out stale goes away at once (no failure, no 'Try again')
+const catalogAge = () => typeof catalogAt === 'number' ? Date.now() - catalogAt : 0;
+function staleOffer(id) {
+  if (wizFail[id]) { delete wizFail[id]; store.set('board.wizfail', wizFail); }
+  try { if (typeof selfUpdate === 'function') selfUpdate(); paintWizards(); } catch (_) {}
+}
 async function startJob(a, r, step) {
   runStep(r, step || 'Starting app', 'Starting its containers');
   const url = STORE_INSTALL + '_start/' + encodeURIComponent(a.id);
@@ -3267,10 +3386,15 @@ async function updateApp(id, btn, item) {
 // ended stopped or on the old version -> start it and update once more (its images are cached, so the second try is
 // quick). Still not there -> one plain line and Retry.
 async function updateApp_(id, btn, item) {
-  await loadCatalog();
-  const a = fresh(id);
+  // 0.64.0 (wizardos-tracker#74): decide on what the box runs now, not on a list read minutes ago (after a restart, or an
+  // update that finished elsewhere, the offer was stale and the tap said 'already the latest' as a failure)
+  if (catalogAge() > 15000) { catalog = null; await Promise.all([loadCatalog(true), id === 'wizardos-tracker' && typeof checkVersion === 'function' ? checkVersion() : null]); }
+  else await loadCatalog();
+  let a = fresh(id);
+  if (a && id === 'wizardos-tracker' && selfVer()) a = runningSelf(a);
   const stopped = isStopped(a);
   if (!a || (!a.release && !stopped)) return btn && pop(btn, '', 'The Store has no newer release of this app for this Wizard. Update in Settings › Apps.');
+  if (!a.update && !stopped) { staleOffer(id); }
   if (!a.update && !stopped) return btn && pop(btn, '', a.held ? `WizardOS keeps ${a.name} at ${a.version}. ${a.latest} is in the Store but only comes with a WizardOS release.` : a.pinned ? `${a.name} updates with WizardOS.` : `${a.name} is already the latest (${a.version}).`);
   if (runs.get(id) && runs.get(id).state === 'running') return;
   if (busyStatus(a)) return btn && pop(btn, '', `${a.name} is ${String(a.status).replace(/_/g, ' ')} right now. Wait for that to finish.`);
@@ -3749,7 +3873,7 @@ function tryList() {
 el('settings-btn').onclick = () => { unpop(); umFocus = null; tryList(); WzSheet.open(el('settings')); showWizards(false); if (!box || !box.ok) loadSwitches(); };
 
 // ---------- 0.19: 'Tracker updated · Reload' when the server runs another version than this page (healthz every 2 min) ----------
-const PAGE_VERSION = '0.63.0';
+const PAGE_VERSION = '0.64.0';
 function newerBar(v) {
   let b = el('newer');
   if (!b) {
@@ -3769,7 +3893,7 @@ async function checkVersion() {
     const h = await getJSON('healthz'); if (!h || !h.version) return;
     const was = liveSelf; liveSelf = h.version;
     if (h.version !== PAGE_VERSION) newerBar(h.version);
-    if (was && was !== liveSelf) { catalog = null; checkSelfUpdate(false).then(() => paintWizards()); }
+    if (was && was !== liveSelf) { if (wizFail['wizardos-tracker'] && vcmp(liveSelf, wizFail['wizardos-tracker'].to || liveSelf) >= 0) { delete wizFail['wizardos-tracker']; store.set('board.wizfail', wizFail); } catalog = null; checkSelfUpdate(false).then(() => paintWizards()); }
   } catch (_) {}
 }
 setInterval(checkVersion, 120000);
@@ -3902,7 +4026,7 @@ setInterval(() => { const b = el('selfupd'); if (!document.hidden && b && !b.hid
 if (!window.WizardApp || WizardApp.version !== 1) {
   say('Wizard system functions are unavailable. Open this preview through Wizard.', 'error');
 } else {
-  WizardApp.ready({ name: 'wizardos-tracker', version: '0.63.0' });
+  WizardApp.ready({ name: 'wizardos-tracker', version: '0.64.0' });
   if (/^#(updates|wizards)$/.test(location.hash)) setTimeout(() => openUM(), 300);
 }
 markView();
@@ -3945,21 +4069,22 @@ async function openLinked(fresh) {
     const want = got.type === 'goal' ? 'goals' : VIEWS.includes(got.category) ? got.category : got.type === 'bug' ? 'bugs' : null;
     const first = find(want || view);
     openDetail(first || got);
-    if (want && want !== view) { view = want; markView(); await load(view); }
+    if (want && want !== view && !(view === 'all' && ALL_OF.includes(want))) { view = want; markView(); await load(view); }   // 0.64.0: All already lists it
     else if (!first) await listIn(want || view);   // 0.52.0: the tab was already this one, so nothing waited for its list
     const hit = find(view);
     if (hit && !first && openId === id && el('detail').open) openDetail(hit);
   } catch (err) { say(`Couldn’t open ${id}: ${err.message}`, 'error'); }
 }
 window.addEventListener('hashchange', () => { if (ITEM_RE.test(location.hash)) openLinked(); });
-api('api/status').then(s => { show(s); needsBadge(); if (s.connected) { load(view); openLinked(true); loadSide(); setTimeout(() => { for (const other of VIEWS) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; if (other === 'goals') goalsBadge(); waitBadges(); goMine(); }).catch(() => {}); }, 600); } })
+api('api/status').then(s => { show(s); needsBadge(); if (s.connected) { load(view); openLinked(true); loadSide(); loadTried(false); setTimeout(() => { for (const other of VIEWS) if (other !== view && !cache[other]) api('api/split?view=' + other).then(d => { cache[other] = d; if (other === 'goals') goalsBadge(); waitBadges(); goMine(); }).catch(() => {}); }, 600); } })
   .catch(err => { el('loading').hidden = true; say(err.message, 'error'); });
 const quiet = () => me && me.connected && !document.hidden && !typing() && !sheetOpen() && !popFor;
-const tick = () => { if (quiet() && Date.now() - lastLoad > 20000) load(view, true); };
+const tick = () => { if (quiet() && Date.now() - lastLoad > 20000) load(view, view !== 'all'); };
 window.addEventListener('focus', tick);
 document.addEventListener('visibilitychange', tick);
-setInterval(() => { if (quiet()) load(view, true); }, 30000);
-el('reload').onclick = () => { if (!inflight) { load(view, true); loadSide(); } };
+setInterval(() => { if (quiet()) load(view, view !== 'all'); }, 30000);
+el('reload').onclick = () => { if (!inflight) { load(view, true); loadSide(); loadTried(true); } };
+setInterval(() => { if (!document.hidden) loadTried(false); }, 60000);
 
 // ---------- 0.34.0 Needs you badge (switch needs-you-badge, humanitylabs-org/wizardos-tracker#87) ----------
 // The Wizard app badge shows how many items actually wait on the signed-in person (GET api/needs-you: the server's
