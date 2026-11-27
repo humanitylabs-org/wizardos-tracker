@@ -1202,3 +1202,16 @@ html[data-color-scheme="light"] .bd-pop .bd-bn-s.tight { color: var(--wz-warning
 }
 /* 0.55.0: the Builder pop-up grew a server part; a pop-up never runs off a phone screen */
 .bd-pop { max-height: calc(100dvh - 16px); overflow-y: auto; }
+
+/* 0.64.0 (wizardos-tracker#68, #69, #70, #86) */
+.bd-hbar > .bd-switch { grid-template-columns: repeat(4, auto); }   /* All · Core · Apps · Bugs */
+.bd-statsx[hidden] { display: none; }
+@media (max-width: 430px) { .bd-hbar .bd-switch button { padding: 0 6px; } }   /* All · Core · Apps · Bugs fit at 390px */
+.bd-mine-s { display: none; }
+@media (max-width: 520px) { .bd-mine-l { display: none; } .bd-mine-s { display: inline; } }
+.bd-tool.bd-mine[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, var(--fill)); }
+.bd-d-metarow { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.bd-d-metarow > #d-meta { flex: 1 1 auto; min-width: 0; }
+.bd-d-reload { flex: none; width: 28px; min-height: 28px; }
+.bd-tried { margin: 2px 0 0; font-size: .75rem; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+#d-tried { margin-top: 4px; }

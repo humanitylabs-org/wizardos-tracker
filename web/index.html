@@ -30,6 +30,7 @@
         <!-- 0.50.0 (Miguel, 21 Nov): no separate Waiting on me screen. An orange count sits on the tab and on the
              stage that hold what waits on you; a count anywhere else is never a badge (Goals says '8 goals'). -->
         <div class="bd-switch" role="tablist" aria-label="Show" hidden>
+          <button type="button" role="tab" data-view="all" aria-selected="false" aria-label="All items"><span class="bd-tab-l">All</span><span class="bd-tab-s" aria-hidden="true">All</span></button>
           <button type="button" role="tab" data-view="core" aria-selected="true" aria-label="Core features"><span class="bd-tab-l">Core features</span><span class="bd-tab-s" aria-hidden="true">Core</span><b class="bd-wait-n" data-wait="core" hidden></b></button>
           <button type="button" role="tab" data-view="apps" aria-selected="false" aria-label="App features"><span class="bd-tab-l">App features</span><span class="bd-tab-s" aria-hidden="true">Apps</span><b class="bd-wait-n" data-wait="apps" hidden></b></button>
           <button type="button" role="tab" data-view="bugs" aria-selected="false" aria-label="Bugs"><span class="bd-tab-l">Bugs</span><span class="bd-tab-s" aria-hidden="true">Bugs</span><b class="bd-wait-n" data-wait="bugs" hidden></b></button>
@@ -89,6 +90,7 @@
           <!-- 0.22: one tools row: Filter, Sort, Stats, and the refresh (how fresh the list is) -->
           <div class="bd-tools">
             <button type="button" class="bd-tool" id="filter-btn" aria-haspopup="dialog">Filter</button>
+            <button type="button" class="bd-tool bd-mine" id="mine-btn" aria-pressed="false" title="Only items you created"><span class="bd-mine-l">Created by me</span><span class="bd-mine-s" aria-hidden="true">By me</span></button>
             <button type="button" class="bd-tool" id="sort-btn" aria-haspopup="menu">Sort: Your turn first</button>
             <button type="button" class="bd-tool bd-tool-link" id="stats-btn" aria-expanded="false" aria-controls="stats">Show stats</button>
             <span class="bd-fresh" id="fresh" aria-live="polite"></span><button type="button" class="bd-reload" id="reload" aria-label="Refresh now" title="Refresh now" hidden><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"/></svg></button>
@@ -119,10 +121,11 @@
     <!-- The one pop-up: the issue in full. Bottom sheet on phones, side panel on wide screens. -->
     <dialog id="detail" class="wz-sheet bd-detail" aria-labelledby="d-title">
       <h2 id="d-title" class="bd-d-title"></h2>
-      <p id="d-meta" class="bd-meta"></p>
+      <div class="bd-d-metarow"><p id="d-meta" class="bd-meta"></p><button type="button" class="bd-reload bd-d-reload" id="d-reload" aria-label="Refresh this item" title="Refresh this item"><svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M20 12a8 8 0 1 1-2.34-5.66M20 4v4h-4"/></svg></button></div>
       <p id="d-still" class="bd-still" hidden></p>
       <p id="d-labels" class="bd-meta bd-labels"></p>
       <p id="d-roles" class="bd-d-roles" hidden></p>
+      <p id="d-tried" class="bd-meta bd-tried" hidden></p>
       <p id="d-onbox" class="bd-d-onbox" hidden></p>
       <p id="d-release" class="bd-d-onbox bd-d-rel" hidden></p>
       <div id="d-switch" class="bd-d-switch" hidden></div>

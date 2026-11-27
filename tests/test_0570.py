@@ -102,7 +102,7 @@ class Bottlenecks(unittest.TestCase):
 class Words(unittest.TestCase):
     def test_version_and_tool(self):
         s = fresh()
-        self.assertEqual(s.VERSION, '0.63.0')
+        self.assertEqual(s.VERSION, '0.64.0')
         d = next(t for t in s.TOOLS if t['name'] == 'builder_status')['description']
         self.assertIn('whenever it holds a big share of the queue', d); self.assertIn('workers_enabled', d)
         self.assertIn('0.58.0', (ROOT / 'skill' / 'SKILL.md').read_text())

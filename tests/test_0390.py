@@ -57,7 +57,7 @@ class WaitingOnMe(unittest.TestCase):
             self.assertNotIn(k, JS)
 
     def test_default_view_is_core(self):
-        self.assertIn("return VIEWS.includes(v) ? v : 'core'; } catch (_) { return 'core'; }", JS)
+        self.assertIn("return TABS.includes(v) ? v : 'core'; } catch (_) { return 'core'; }", JS)
 
 
 if __name__ == '__main__':

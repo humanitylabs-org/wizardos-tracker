@@ -127,8 +127,8 @@ class Switch(Fixture):
         self.assertFalse(sw['default'])
         self.assertEqual(sw['issues'], ['humanitylabs-org/wizardos-tracker#87'])
         self.assertIn('switches:\n  contract: wizard.app-switches/1', (ROOT / 'wizard.md').read_text())
-        self.assertIn('uses: []', (ROOT / 'wizard.md').read_text())   # 0.34.1: badge only, no alerts
-        self.assertFalse(hasattr(S, 'needs_you_tick'))
+        self.assertIn('uses: [notifications]', (ROOT / 'wizard.md').read_text())   # 0.64.0: one alert when the count rises (#87)
+        self.assertTrue(hasattr(S, 'needs_you_tick'))   # 0.64.0: back, one alert when the count rises
 
     def test_on_shows_in_answer(self):
         S._sw_set('needs-you-badge', True)

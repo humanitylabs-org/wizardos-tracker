@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "WizardOS Tracker",
-    "version": "0.63.0",
+    "version": "0.64.0",
     "description": "Goals and Bugs on GitHub. Writes need application/json and a trusted Origin. 0.12: the human routes are for active members of humanitylabs-org signing in with their own (non-agent) GitHub account; refusals are 403 {error, reason: \"not_member\" | \"agent\"} and sign the saved account out. MCP (/mcp) is unchanged. 0.13: two-step review (Queued → Building → AI review [label ai-review] → Human review [label ready-to-test] → Done; AI review is agents-only via MCP ai_review_pass / ai_review_fail; policy human_reviews 1|2) and Sign in with GitHub via the OAuth device flow (no client secret).",
     "contact": {
       "name": "WizardOS Tracker",
@@ -1932,6 +1932,38 @@
           },
           "409": {
             "description": "not waiting for show-and-tell"
+          }
+        }
+      }
+    },
+    "/api/switch-counts": {
+      "get": {
+        "summary": "0.64.0 (wizardos-tracker#86): the anonymous Try new features counts, for 'Tried by N · 👍 N · 👎 N' on items with a feature switch. boxes (boxes that sent counts in the last weeks), counts {'owner/repo#n' (lower case): {tried, up, down, switch}}, switches {'<app>:<switch>': {tried, up, down, issues}}. Read through the Feedback relay with your own token (team members only); kept 5 minutes; refresh=1 skips it.",
+        "parameters": [
+          {
+            "name": "refresh",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "1"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The counts."
+          },
+          "401": {
+            "description": "Sign in with GitHub first."
+          },
+          "403": {
+            "description": "Only WizardOS team members can read the counts."
+          },
+          "502": {
+            "description": "The Feedback relay can’t be reached."
           }
         }
       }
